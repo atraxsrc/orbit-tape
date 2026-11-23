@@ -1,0 +1,195 @@
+// Enhanced Roman Order Block (rev 3), ported from the Pine Script original.
+// Copyright (c) 2026 Atrax. MIT licensed, see indicators/LICENSE-MIT.
+//
+// Pattern (bullish, bearish is the mirror):
+//   A  candle before the OB
+//   B  the OB candle: makes a lower low than A
+//   C  candle after B: holds a higher low than B
+//   X  first candle whose low clears B's high (the displacement)
+// The OB is drawn on the bar where X closes, and is "mitigated" when price
+// comes back to B's high.
+//
+// Differences from the Pine version:
+//   - The settings guide table is left out.
+//   - Alerts are boolean outputs (bull_formed, bear_formed, mitigated) for
+//     Flowsurface alerts instead of alert() calls.
+//   - "Higher Timeframe for Confirmation" takes the engine's timeframe names
+//     (240, 4H, D, W, M) and is not checked against the chart timeframe.
+
+language(1)
+indicator("Enhanced Roman Order Block", id = "roman.enhanced-ob", max_bars_back = 32)
+display(view = "primary_overlay")
+style("main", title = "Order blocks", role = "primary", shade = "base")
+
+// ============================= INPUTS ========================================
+showBullishOB = input.bool(true, "Show Bullish Order Blocks", group = "Order Block Settings")
+showBearishOB = input.bool(true, "Show Bearish Order Blocks", group = "Order Block Settings")
+showMitigatedOB = input.bool(true, "Show Mitigated Order Blocks", group = "Order Block Settings",
+    tooltip = "Off = a block is removed from the chart the moment it is mitigated.")
+mitigationType = input.string("Wick", "Mitigation Type", options = ["Wick", "Close"],
+    group = "Order Block Settings",
+    tooltip = "Wick = any touch of the block's near edge. Close = a bar must close at or beyond it (stricter, blocks live longer).")
+minOBSizeATR = input.float(0.5, "Min OB Size (ATR Multiple)", min = 0.0, step = 0.1,
+    group = "Order Block Settings",
+    tooltip = "Ignores OB candles smaller than this multiple of ATR(14). Raise it to keep only big candles, 0 = no filter.")
+lookback = input.int(3, "Lookback Candles", min = 2, max = 10, group = "Order Block Settings",
+    tooltip = "How many bars price gets to clear the OB candle. 2 = only an immediate gap, 3 = classic pattern, higher = slower displacements also count (more blocks).")
+
+extendBars = input.int(499, "Box Extension Bars", min = 0, max = 499, group = "Display Settings",
+    tooltip = "How far an unmitigated block reaches past the current bar.")
+drawLines = input.bool(true, "Draw Price Lines from OBs", group = "Display Settings")
+maxOBs = input.int(20, "Max OBs to Show", min = 1, max = 200, group = "Display Settings",
+    tooltip = "When the limit is hit, mitigated blocks are dropped first, then the oldest.")
+cBull = input.color(color.rgb(137, 180, 250), "Bullish color", group = "Display Settings")
+cBear = input.color(color.rgb(250, 179, 135), "Bearish color", group = "Display Settings")
+cLabelTx = input.color(color.rgb(255, 255, 255), "Label text", group = "Display Settings")
+
+htf = input.string("", "Higher Timeframe for Confirmation", group = "Multi-Timeframe",
+    tooltip = "Empty = off. When set, a bullish OB candle must trade at or below the previous HTF candle's low (a sweep of HTF liquidity), a bearish one at or above its high.")
+useHTF = htf != ""
+
+// Previous CLOSED HTF candle, like request.security(htf, [high[1], low[1]],
+// lookahead_on). An empty or unknown timeframe gives na.
+htfPrev = htf.bars(htf, 1)
+htfHigh = 0.0 + record.get(array.get(htfPrev, 0), "high")
+htfLow = 0.0 + record.get(array.get(htfPrev, 0), "low")
+
+// ============================= ATR ===========================================
+// Pine's ta.atr(14): an RMA of the true range, seeded with the SMA of the
+// first 14 values.
+tr = ta.tr(chart.high, chart.low, chart.close)
+trSma = ta.sma(tr, 14)
+var atrVal = na
+atrVal := select(na(atrVal), trSma, (1.0 / 14.0) * tr + (1.0 - 1.0 / 14.0) * atrVal)
+minSize = atrVal * minOBSizeATR
+pad = atrVal * 0.1
+
+high = chart.high
+low = chart.low
+close = chart.close
+
+// ============================= STATE =========================================
+// One record per block: bull, left, top, bot, level (price that mitigates
+// it), mitigated, right (bar where it was mitigated).
+var obs = array.new()
+
+// ============================= MANAGE EXISTING BLOCKS ========================
+// Runs before detection, so a block is never tested on its own creation bar.
+mitigatedNow = false
+mitigatedLevel = na
+kept = array.new()
+for o in obs {
+    keep = true
+    next = o
+    if !o.mitigated {
+        hit = false
+        if mitigationType == "Wick" {
+            hit := select(o.bull, low <= o.level, high >= o.level)
+        } else {
+            hit := barstate.isconfirmed && select(o.bull, close <= o.level, close >= o.level)
+        }
+        if hit {
+            next := record.set(record.set(o, "mitigated", true), "right", bar_index)
+            mitigatedNow := true
+            mitigatedLevel := o.level
+            if !showMitigatedOB {
+                keep := false
+            }
+        }
+    }
+    if keep {
+        kept := array.push(kept, next)
+    }
+}
+obs := kept
+
+// ============================= DETECT NEW BLOCKS =============================
+// k = how many bars back the OB candle (B) sits. The current bar is the one
+// that clears it, and no earlier bar may have cleared it already, so every OB
+// candle is reported exactly once.
+bullFormed = false
+bearFormed = false
+formedLevel = na
+if barstate.isconfirmed {
+    for k = 1 to lookback - 1 {
+        bH = high[k]
+        bL = low[k]
+        if bH - bL >= minSize {
+            bull = showBullishOB && bL < low[k + 1] && low[k - 1] > bL && low > bH
+            bear = showBearishOB && bH > high[k + 1] && high[k - 1] < bH && high < bL
+            if (bull || bear) && k > 1 {
+                for j = 1 to k - 1 {
+                    if low[j] > bH {
+                        bull := false
+                    }
+                    if high[j] < bL {
+                        bear := false
+                    }
+                }
+            }
+            if bull && (!useHTF || bL <= htfLow[k]) {
+                obs := array.push(obs, { bull: true, left: bar_index - k, top: bH, bot: bL,
+                                         level: bH, mitigated: false, right: na, pad: pad })
+                bullFormed := true
+                formedLevel := bL
+            }
+            if bear && (!useHTF || bH >= htfHigh[k]) {
+                obs := array.push(obs, { bull: false, left: bar_index - k, top: bH, bot: bL,
+                                         level: bL, mitigated: false, right: na, pad: pad })
+                bearFormed := true
+                formedLevel := bH
+            }
+        }
+    }
+}
+
+// ============================= ENFORCE MAX ===================================
+// Drop the oldest mitigated block first. Only when none is mitigated does the
+// oldest live block go.
+while array.size(obs) > maxOBs {
+    idx = 0
+    found = false
+    j = 0
+    for o in obs {
+        if !found && o.mitigated {
+            idx := j
+            found := true
+        }
+        j := j + 1
+    }
+    rest = array.new()
+    j := 0
+    for o in obs {
+        if j != idx {
+            rest := array.push(rest, o)
+        }
+        j := j + 1
+    }
+    obs := rest
+}
+
+// ============================= DRAW ==========================================
+for o in obs {
+    c = select(o.bull, cBull, cBear)
+    right = select(o.mitigated, o.right, bar_index + extendBars)
+    region(key = o.left, upper = o.top, lower = o.bot, left_index = o.left, right_index = right,
+           id = "ob_box", border_color = c, fill_color = color.new(c, 90))
+    region(key = o.left, upper = o.top, lower = o.top, left_index = o.left, right_index = right,
+           id = "ob_top", visible = drawLines, border_color = c, border_style = "dashed")
+    region(key = o.left, upper = o.bot, lower = o.bot, left_index = o.left, right_index = right,
+           id = "ob_bot", visible = drawLines, border_color = c, border_style = "dashed")
+    labelY = select(o.bull, o.bot - o.pad, o.top + o.pad)
+    region(key = o.left, upper = labelY, lower = labelY, left_index = o.left,
+           right_index = o.left, id = "ob_label_up", visible = o.bull, text = "OB",
+           text_position = "below", text_color = cLabelTx, fill_color = c)
+    region(key = o.left, upper = labelY, lower = labelY, left_index = o.left,
+           right_index = o.left, id = "ob_label_down", visible = !o.bull, text = "OB",
+           text_position = "above", text_color = cLabelTx, fill_color = c)
+}
+
+// ============================= ALERT OUTPUTS =================================
+plot(bullFormed, id = "bull_formed", title = "Bullish OB formed")
+plot(bearFormed, id = "bear_formed", title = "Bearish OB formed")
+plot(mitigatedNow, id = "mitigated", title = "OB mitigated")
+plot(formedLevel, id = "formed_level", title = "Formed OB level", display = "none")
+plot(mitigatedLevel, id = "mitigated_level", title = "Mitigated OB level", display = "none")
