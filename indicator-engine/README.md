@@ -1,12 +1,15 @@
 # Orbit Tape indicator engine
 
 The Rust library and `orbit-tape-indicator` CLI compile and run `.ind` chart
-indicators. See [LANGUAGE.md](LANGUAGE.md) for authoring and
-[indicator catalog](https://github.com/flowsurface-rs/indicators#install-and-run) for installation.
+indicators. See [LANGUAGE.md](LANGUAGE.md) for authoring,
+[docs/custom-indicators.md](../docs/custom-indicators.md) for the full workflow
+(where files go, checking, loading in the app), and the
+[indicator catalog](https://github.com/flowsurface-rs/indicators#install-and-run) for shared indicators.
 
 ## CLI
 
-Build once with Rust, then use the native executable:
+The `.deb` installs `orbit-tape-indicator` in `/usr/bin`. From a source
+checkout, build it once with Rust:
 
 ```sh
 cargo build --locked -p orbit-tape-indicator-engine --bin orbit-tape-indicator

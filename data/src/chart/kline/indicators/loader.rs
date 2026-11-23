@@ -324,6 +324,47 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// The example indicators in the repository load the way a user's
+    /// indicators folder does, and the crossover's alert plots survive.
+    #[test]
+    fn example_indicators_load_as_installed_sources() {
+        let examples =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/indicators");
+        let paths = IndicatorCatalogPaths {
+            bundled_directory: None,
+            installed_directory: examples,
+            additional_files: Vec::new(),
+        };
+        let sources = load_catalog_sources(&paths).unwrap();
+        assert!(sources.diagnostics.is_empty(), "{:?}", sources.diagnostics);
+        let mut ids = sources
+            .installed
+            .iter()
+            .map(|registration| registration.id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(
+            ids,
+            [
+                "example.ema-crossover",
+                "example.volume-delta",
+                "example.vwap-bands"
+            ]
+        );
+        let crossover = sources
+            .installed
+            .iter()
+            .find(|registration| registration.id.as_str() == "example.ema-crossover")
+            .unwrap();
+        let alerts = crossover
+            .definition
+            .outputs
+            .iter()
+            .filter(|output| output.alert)
+            .count();
+        assert_eq!(alerts, 2);
+    }
+
     #[test]
     fn embedded_bundle_initializes_without_a_source_directory() {
         let root =

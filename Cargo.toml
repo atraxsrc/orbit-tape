@@ -50,6 +50,8 @@ assets = [
     ["exchange/LICENSE", "usr/share/doc/orbit-tape/LICENSE-MIT-exchange", "644"],
     ["indicators/LICENSE-MIT", "usr/share/doc/orbit-tape/LICENSE-MIT-roman-indicators", "644"],
     ["indicators/roman/*.ind", "usr/share/doc/orbit-tape/indicators/roman/", "644"],
+    ["examples/indicators/*.ind", "usr/share/doc/orbit-tape/examples/indicators/", "644"],
+    ["docs/custom-indicators.md", "usr/share/doc/orbit-tape/custom-indicators.md", "644"],
     ["README.md", "usr/share/doc/orbit-tape/README.md", "644"],
 ]
 

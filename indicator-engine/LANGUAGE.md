@@ -1,8 +1,10 @@
 # Indicator language
 
 A `.ind` file defines an indicator's inputs, calculations, and presentation.
-See [installation](https://github.com/flowsurface-rs/indicators#install-and-run) and the [CLI](README.md#cli) for
-file naming, collections, and validation.
+See [custom indicators](../docs/custom-indicators.md) for where files go and
+how to load them in Orbit Tape, and the [CLI](README.md#cli) for file naming,
+collections, and validation. The [examples](../examples/indicators/) are short
+commented sources.
 
 ## Contents
 

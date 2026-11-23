@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// EMA crossover: a fast and a slow exponential moving average on the price
+// chart, plus alert conditions for when the fast one crosses the slow one.
+//
+// Shows: inputs, ta.ema, history references (x[1]), two overlay lines with
+// their own colors, and boolean plots marked as alerts.
+
+language(1)
+indicator("EMA Crossover", id = "example.ema-crossover", max_bars_back = 1,
+    description = "Fast and slow EMA with crossover alerts.")
+// Draw over the price chart instead of in a separate panel. A source input
+// can also take another indicator's output, which needs this plot view.
+display(view = "plot", attachment = "overlay", layer_name = "EMA Crossover")
+format(precision = "base_ticker_min_tick")
+
+// Inputs appear in the indicator's settings dialog.
+fast_length = input.int(9, "Fast length", min = 1, max = 500)
+slow_length = input.int(21, "Slow length", min = 2, max = 500)
+source = input.source(chart.close, "Source")
+
+fast = ta.ema(source, fast_length)
+slow = ta.ema(source, slow_length)
+
+// `x[1]` is the value on the previous bar. A cross happens when the order of
+// the two lines differs from the bar before.
+cross_up = fast > slow && fast[1] <= slow[1]
+cross_down = fast < slow && fast[1] >= slow[1]
+
+plot(fast, id = "fast", title = "Fast EMA", precision = "instrument", color_slot = "fast", layer_title = "Fast", width = 1.4, pane = "main")
+plot(slow, id = "slow", title = "Slow EMA", precision = "instrument", color_slot = "slow", layer_title = "Slow", width = 1.4, pane = "main")
+
+// Boolean plots are not drawn. `alert = true` makes Orbit Tape send a desktop
+// notification when one is true on a newly closed bar.
+plot(cross_up, id = "cross_up", title = "Fast EMA crossed above slow", alert = true)
+plot(cross_down, id = "cross_down", title = "Fast EMA crossed below slow", alert = true)
+
+// Color slots follow the theme; users can change them per chart.
+style("fast", title = "Fast EMA", role = "success")
+style("slow", title = "Slow EMA", role = "danger")
