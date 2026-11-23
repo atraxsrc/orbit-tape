@@ -104,6 +104,7 @@ pub enum Event {
     Opened(window::Id),
     Rescaled(window::Id, WindowScaleFactor),
     CloseRequested(window::Id),
+    Closed(window::Id),
 }
 
 pub fn events() -> Subscription<Event> {
@@ -124,6 +125,7 @@ fn filtered_events(
         iced::Event::Window(iced::window::Event::CloseRequested) => {
             Some(Event::CloseRequested(window))
         }
+        iced::Event::Window(iced::window::Event::Closed) => Some(Event::Closed(window)),
         _ => None,
     }
 }
@@ -190,6 +192,12 @@ pub fn settings() -> Settings {
             ..Default::default()
         },
         min_size: Some(Size::new(800.0, 600.0)),
+        // Glass: the surface can be see-through, and the compositor is asked to
+        // blur what is behind it (org_kde_kwin_blur, which COSMIC supports).
+        // Neither can change after the window exists, so they are always on; with
+        // glass off the background is opaque and nothing shows through.
+        transparent: true,
+        blur: true,
         ..Default::default()
     }
 }

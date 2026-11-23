@@ -22,6 +22,62 @@ pub const TITLE_PADDING_TOP: f32 = if cfg!(target_os = "macos") { 20.0 } else { 
 
 /// Corner radii for widget borders.
 ///
+/// Window glass: like the radius, styles are plain functions of the theme, so
+/// the active window opacity lives here. [`ThemeState`](crate::theme::ThemeState)
+/// sets it from the glass setting.
+pub mod glass {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static OPACITY: AtomicU32 = AtomicU32::new(1.0f32.to_bits());
+
+    /// Pane bodies at full glass keep this much of their own color over the
+    /// see-through window, so they stay a shade apart from the gaps.
+    const LAYER_MIN: f32 = 0.25;
+    /// Window opacity at and below which pane bodies use `LAYER_MIN`.
+    const LAYER_FADE_FROM: f32 = 0.9;
+
+    /// Sets the window background opacity, `1.0` = opaque.
+    pub fn set(opacity: f32) {
+        OPACITY.store(opacity.to_bits(), Ordering::Relaxed);
+    }
+
+    /// The window background opacity, `1.0` = opaque.
+    pub fn opacity() -> f32 {
+        f32::from_bits(OPACITY.load(Ordering::Relaxed))
+    }
+
+    /// Alpha of a body drawn on the window background, such as a pane.
+    ///
+    /// Stacked translucent layers add up (two at 0.87 are 0.98 together), so
+    /// bodies fade out faster than the window does. The result is 1 for an
+    /// opaque window, so the look without glass is unchanged.
+    pub fn layer_alpha() -> f32 {
+        layer(opacity())
+    }
+
+    fn layer(opacity: f32) -> f32 {
+        if opacity >= 1.0 {
+            return 1.0;
+        }
+        let fade = ((opacity - LAYER_FADE_FROM) / (1.0 - LAYER_FADE_FROM)).clamp(0.0, 1.0);
+        LAYER_MIN + (1.0 - LAYER_MIN) * fade
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn layer_is_opaque_without_glass_and_fades_smoothly() {
+            assert_eq!(layer(1.0), 1.0);
+            assert!((layer(0.999) - 1.0).abs() < 0.01);
+            assert_eq!(layer(0.9), LAYER_MIN);
+            assert_eq!(layer(0.5), LAYER_MIN);
+            assert!(layer(0.95) > LAYER_MIN && layer(0.95) < 1.0);
+        }
+    }
+}
+
 /// Styles are plain functions of the iced theme, which has no radius, so the
 /// active scale lives here. It holds the old fixed radii unless the COSMIC theme
 /// is followed, in which case [`set_cosmic`](radius::set_cosmic) maps them onto
@@ -705,7 +761,14 @@ pub fn pane_background(theme: &Theme, is_focused: bool) -> Style {
 
     Style {
         text_color: Some(palette.background.base.text),
-        background: Some(palette.background.weakest.color.into()),
+        background: Some(
+            palette
+                .background
+                .weakest
+                .color
+                .scale_alpha(glass::layer_alpha())
+                .into(),
+        ),
         border: {
             if is_focused {
                 Border {

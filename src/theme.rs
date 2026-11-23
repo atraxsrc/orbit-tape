@@ -1,4 +1,5 @@
-use data::config::cosmic::{CosmicTheme, ThemeSource, ThemeStamp};
+use data::config::cosmic::{CosmicGlass, CosmicTheme, ThemeSource, ThemeStamp};
+use data::config::glass::Glass;
 use data::config::theme::{ACCENT_COUNT, generated_theme_accents};
 use iced_core::{Color, Theme};
 
@@ -26,7 +27,7 @@ impl ThemeAccents {
 }
 
 /// The app theme: the user's selected theme, optionally overridden by the
-/// COSMIC desktop theme.
+/// COSMIC desktop theme, plus the window glass.
 #[derive(Debug, Clone)]
 pub struct ThemeState {
     /// The built-in or custom theme picked in the settings. This is what gets
@@ -40,10 +41,13 @@ pub struct ThemeState {
     /// The theme actually in use.
     effective: Theme,
     accents: ThemeAccents,
+    glass: Glass,
+    /// COSMIC's frosted glass setting, read while the glass follows it.
+    cosmic_glass: Option<CosmicGlass>,
 }
 
 impl ThemeState {
-    pub fn new(selected: data::Theme, source: ThemeSource) -> Self {
+    pub fn new(selected: data::Theme, source: ThemeSource, glass: Glass) -> Self {
         let cosmic_stamp = ThemeStamp::read();
         let cosmic = source.follows_cosmic().then(load_cosmic).flatten();
         let effective = effective_theme(&selected, source, cosmic.as_ref());
@@ -57,14 +61,20 @@ impl ThemeState {
             }
         );
 
-        Self {
+        let state = Self {
             accents: ThemeAccents::from_theme(&effective, 0),
             selected,
             source,
             cosmic,
             cosmic_stamp,
             effective,
-        }
+            glass,
+            cosmic_glass: follows_cosmic_glass(glass)
+                .then(load_cosmic_glass)
+                .flatten(),
+        };
+        state.apply_glass();
+        state
     }
 
     /// Selects a built-in or custom theme. Returns whether the effective theme
@@ -85,10 +95,51 @@ impl ThemeState {
         self.recompute()
     }
 
+    /// Changes the glass setting; takes effect on the next redraw.
+    pub fn set_glass(&mut self, glass: Glass) {
+        let newly_follows = follows_cosmic_glass(glass) && !follows_cosmic_glass(self.glass);
+        self.glass = glass;
+        if newly_follows {
+            self.cosmic_glass = load_cosmic_glass();
+        }
+        self.apply_glass();
+    }
+
+    pub fn glass(&self) -> Glass {
+        self.glass
+    }
+
+    /// COSMIC's frosted glass setting, if the glass follows it and it could be
+    /// read.
+    pub fn cosmic_glass(&self) -> Option<CosmicGlass> {
+        self.cosmic_glass
+            .filter(|_| follows_cosmic_glass(self.glass))
+    }
+
+    /// Window background opacity in use, `1.0` = opaque. Only Linux gets a
+    /// see-through window (see `window::settings`).
+    pub fn window_opacity(&self) -> f32 {
+        if cfg!(target_os = "linux") {
+            self.glass
+                .effective_opacity(self.cosmic_glass().map(CosmicGlass::window_opacity))
+        } else {
+            1.0
+        }
+    }
+
+    fn apply_glass(&self) {
+        crate::style::glass::set(self.window_opacity());
+    }
+
+    /// Whether anything is read from COSMIC's config, so it needs polling.
+    pub fn polls_cosmic(&self) -> bool {
+        self.source.follows_cosmic() || follows_cosmic_glass(self.glass)
+    }
+
     /// Reads the COSMIC theme again if its files changed since the last read.
     /// Returns whether the effective theme changed.
     pub fn poll_cosmic(&mut self) -> bool {
-        if !self.source.follows_cosmic() {
+        if !self.polls_cosmic() {
             return false;
         }
 
@@ -97,7 +148,13 @@ impl ThemeState {
             return false;
         }
         self.cosmic_stamp = stamp;
-        self.cosmic = load_cosmic();
+        if self.source.follows_cosmic() {
+            self.cosmic = load_cosmic();
+        }
+        if follows_cosmic_glass(self.glass) {
+            self.cosmic_glass = load_cosmic_glass();
+            self.apply_glass();
+        }
         self.recompute()
     }
 
@@ -158,6 +215,23 @@ fn apply_radii(source: ThemeSource, cosmic: Option<&CosmicTheme>) {
     crate::style::radius::set_cosmic(radii);
 }
 
+fn follows_cosmic_glass(glass: Glass) -> bool {
+    glass.enabled && glass.follow_cosmic
+}
+
+fn load_cosmic_glass() -> Option<CosmicGlass> {
+    match CosmicGlass::load() {
+        Ok(glass) => {
+            log::info!("Read COSMIC frosted glass: {glass:?}");
+            Some(glass)
+        }
+        Err(err) => {
+            log::warn!("COSMIC frosted glass setting unavailable, window stays opaque: {err}");
+            None
+        }
+    }
+}
+
 fn load_cosmic() -> Option<CosmicTheme> {
     match CosmicTheme::load() {
         Ok(theme) => {
@@ -192,6 +266,43 @@ mod tests {
         }
     }
 
+    fn manual_glass() -> Glass {
+        Glass {
+            follow_cosmic: false,
+            opacity: 0.6,
+            ..Glass::default()
+        }
+    }
+
+    #[test]
+    fn glass_follows_cosmic_only_when_asked() {
+        let mut state = ThemeState::new(
+            data::Theme(Theme::Nord),
+            ThemeSource::Selected,
+            manual_glass(),
+        );
+        assert!(!state.polls_cosmic());
+        state.cosmic_glass = Some(CosmicGlass {
+            frosted_windows: true,
+            alpha: 0.8,
+        });
+        // A COSMIC reading is ignored while the glass is set by hand.
+        assert!(state.cosmic_glass().is_none());
+        if cfg!(target_os = "linux") {
+            assert_eq!(state.window_opacity(), 0.6);
+        }
+
+        state.glass.follow_cosmic = true;
+        assert!(state.polls_cosmic());
+        if cfg!(target_os = "linux") {
+            assert_eq!(state.window_opacity(), 0.8);
+        }
+
+        state.glass.enabled = false;
+        assert!(!state.polls_cosmic());
+        assert_eq!(state.window_opacity(), 1.0);
+    }
+
     #[test]
     fn effective_theme_follows_source() {
         let selected = data::Theme(Theme::Nord);
@@ -214,7 +325,11 @@ mod tests {
 
     #[test]
     fn selecting_a_theme_bumps_the_accent_generation() {
-        let mut state = ThemeState::new(data::Theme(Theme::Nord), ThemeSource::Selected);
+        let mut state = ThemeState::new(
+            data::Theme(Theme::Nord),
+            ThemeSource::Selected,
+            manual_glass(),
+        );
         let before = state.accents().generation();
 
         assert!(!state.select(Theme::Nord));
@@ -228,7 +343,11 @@ mod tests {
 
     #[test]
     fn cosmic_theme_is_not_persisted() {
-        let mut state = ThemeState::new(data::Theme(Theme::Nord), ThemeSource::Selected);
+        let mut state = ThemeState::new(
+            data::Theme(Theme::Nord),
+            ThemeSource::Selected,
+            manual_glass(),
+        );
         state.source = ThemeSource::Cosmic;
         state.cosmic = Some(cosmic());
         assert!(state.recompute());

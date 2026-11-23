@@ -22,14 +22,18 @@ const MODE: &str = "com.system76.CosmicTheme.Mode";
 const DARK: &str = "com.system76.CosmicTheme.Dark";
 const LIGHT: &str = "com.system76.CosmicTheme.Light";
 
-/// Theme keys read from the active theme directory.
-const THEME_KEYS: [&str; 6] = [
+/// Theme keys read from the active theme directory, including the frosted
+/// glass ones.
+const THEME_KEYS: [&str; 9] = [
     "background",
     "accent",
     "success",
     "warning",
     "destructive",
     "corner_radii",
+    "frosted",
+    "frosted_windows",
+    "alpha_map",
 ];
 
 /// Name of the iced theme built from the COSMIC palette.
@@ -66,6 +70,11 @@ pub enum CosmicThemeError {
     Parse {
         path: PathBuf,
         source: Box<ron::error::SpannedError>,
+    },
+    #[error("unexpected contents in {path}, expected {expected}")]
+    Invalid {
+        path: PathBuf,
+        expected: &'static str,
     },
 }
 
@@ -130,6 +139,96 @@ impl CosmicTheme {
     pub fn to_iced_theme(&self) -> iced_core::Theme {
         iced_core::Theme::Custom(Custom::new(THEME_NAME.to_string(), self.palette()).into())
     }
+}
+
+/// COSMIC's frosted glass setting for application windows (schema `v2` on).
+///
+/// COSMIC Settings > Appearance stores a frost level (`frosted`, e.g. `Low`),
+/// whether app windows get it (`frosted_windows`), and the opacity of every
+/// level (`alpha_map`, e.g. `low: 0.86769`). A higher level is more see-through.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CosmicGlass {
+    pub frosted_windows: bool,
+    /// Window background opacity of the chosen level, `1.0` = opaque.
+    pub alpha: f32,
+}
+
+impl CosmicGlass {
+    pub fn load() -> Result<Self, CosmicThemeError> {
+        Self::load_from(&config_root()?)
+    }
+
+    pub fn load_from(root: &Path) -> Result<Self, CosmicThemeError> {
+        let is_dark = read_is_dark(root)?;
+        let dir = versioned_dir(root, if is_dark { DARK } else { LIGHT });
+
+        let frosted_windows: bool = read_ron(&dir.join("frosted_windows"))?;
+        let level = read_text(&dir.join("frosted"))?;
+        let alpha_map_path = dir.join("alpha_map");
+        let alpha_map = read_text(&alpha_map_path)?;
+        let alpha_map = parse_alpha_map(&alpha_map).ok_or(CosmicThemeError::Invalid {
+            path: alpha_map_path,
+            expected: "(name: opacity, ...)",
+        })?;
+
+        // A level without an entry (COSMIC's "off") means no frost.
+        let key = snake_case(level.trim());
+        let alpha = alpha_map
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map_or(1.0, |(_, alpha)| *alpha);
+
+        Ok(Self {
+            frosted_windows,
+            alpha,
+        })
+    }
+
+    /// The opacity COSMIC asks app windows to use.
+    pub fn window_opacity(self) -> f32 {
+        if self.frosted_windows {
+            self.alpha
+        } else {
+            1.0
+        }
+    }
+}
+
+fn read_text(path: &Path) -> Result<String, CosmicThemeError> {
+    std::fs::read_to_string(path).map_err(|source| CosmicThemeError::Read {
+        path: path.to_owned(),
+        source,
+    })
+}
+
+/// Parses COSMIC's `alpha_map`, a RON struct of `name: opacity` pairs.
+fn parse_alpha_map(text: &str) -> Option<Vec<(String, f32)>> {
+    let inner = text.trim().strip_prefix('(')?.strip_suffix(')')?;
+    inner
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let (name, value) = entry.split_once(':')?;
+            Some((name.trim().to_owned(), value.trim().parse().ok()?))
+        })
+        .collect()
+}
+
+/// `VeryLow` -> `very_low`, matching the `alpha_map` keys.
+fn snake_case(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 /// The `cosmic` directory under the user's config directory.
@@ -502,6 +601,69 @@ mod tests {
         assert_ne!(with_mode, ThemeStamp::read_from(&fx.0));
     }
 
+    const ALPHA_MAP: &str = "( extremely_low: 0.96, very_low: 0.91385, low: 0.86769, \
+         low_2: 0.84461, medium: 0.82154, very_high: 0.72023, )";
+
+    fn write_glass(fx: &Fixture, dir: &str, level: &str, windows: bool) {
+        fx.write(&format!("{dir}/frosted"), level);
+        fx.write(&format!("{dir}/frosted_windows"), &windows.to_string());
+        fx.write(&format!("{dir}/alpha_map"), ALPHA_MAP);
+    }
+
+    #[test]
+    fn reads_frosted_glass() {
+        let fx = Fixture::new("glass");
+        fx.write_mode("v1", true);
+        write_glass(&fx, &format!("{DARK}/v2"), "Low\n", true);
+        write_glass(&fx, &format!("{LIGHT}/v2"), "VeryHigh", true);
+
+        let glass = CosmicGlass::load_from(&fx.0).unwrap();
+        assert_eq!(glass.alpha, 0.86769);
+        assert_eq!(glass.window_opacity(), 0.86769);
+
+        fx.write_mode("v1", false);
+        assert_eq!(CosmicGlass::load_from(&fx.0).unwrap().alpha, 0.72023);
+    }
+
+    #[test]
+    fn frosted_glass_off() {
+        let fx = Fixture::new("glass-off");
+        fx.write_mode("v1", true);
+        write_glass(&fx, &format!("{DARK}/v2"), "Low", false);
+        let glass = CosmicGlass::load_from(&fx.0).unwrap();
+        assert_eq!(glass.window_opacity(), 1.0);
+
+        // A level with no opacity entry means no frost at all.
+        write_glass(&fx, &format!("{DARK}/v2"), "None", true);
+        assert_eq!(CosmicGlass::load_from(&fx.0).unwrap().window_opacity(), 1.0);
+    }
+
+    #[test]
+    fn frosted_glass_needs_v2_files() {
+        // v1 themes have no frost level or alpha map.
+        let fx = Fixture::new("glass-v1");
+        fx.write_mode("v1", true);
+        fx.write_theme(&format!("{DARK}/v1"), Format::Floats, (26, 27, 38), 4.0);
+        assert!(matches!(
+            CosmicGlass::load_from(&fx.0),
+            Err(CosmicThemeError::Read { .. })
+        ));
+
+        write_glass(&fx, &format!("{DARK}/v2"), "Low", true);
+        fx.write(&format!("{DARK}/v2/alpha_map"), "( low: high )");
+        assert!(matches!(
+            CosmicGlass::load_from(&fx.0),
+            Err(CosmicThemeError::Invalid { .. })
+        ));
+    }
+
+    #[test]
+    fn snake_cases_levels() {
+        assert_eq!(snake_case("Low"), "low");
+        assert_eq!(snake_case("ExtremelyHigh"), "extremely_high");
+        assert_eq!(snake_case("very_low"), "very_low");
+    }
+
     /// Parses the theme of the machine running the tests:
     /// `cargo test -p flowsurface-data cosmic -- --ignored --nocapture`.
     #[test]
@@ -509,6 +671,7 @@ mod tests {
     fn reads_local_theme() {
         let theme = CosmicTheme::load().unwrap();
         println!("{theme:#?}");
+        println!("{:#?}", CosmicGlass::load());
     }
 
     #[test]
