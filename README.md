@@ -38,6 +38,10 @@ aims to look native on the [COSMIC](https://system76.com/cosmic) desktop. Change
   radii, and follows changes live. Picking a built-in theme turns it off. On other desktops,
   or when the COSMIC config can't be read, the selected theme is used. Candle and indicator
   colors follow the palette roles and can still be set per chart.
+- **Higher-timeframe data in indicators**: `.ind` scripts can read candles of a larger
+  timeframe (for example 12H on a 1H chart) with `htf.bars`, `htf.new_bar` and
+  `htf.forming`. Only closed candles count, so values don't repaint. See
+  [Higher timeframes](indicator-engine/LANGUAGE.md#higher-timeframes).
 
 ## Market Data
 
