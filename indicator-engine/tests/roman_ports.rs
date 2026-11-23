@@ -1,9 +1,12 @@
 //! Regression tests for the Roman indicator ports in `indicators/roman`.
 //!
-//! The candles are 3000 Binance BTCUSDT perpetual 1H bars. Roman Setup is
+//! The candles are 3000 Binance perpetual 1H bars per fixture. Roman Setup is
 //! checked against values exported from the original Pine script on
-//! TradingView (rev 5 of the script, so the rev 6 additions are switched off),
-//! and Enhanced OB against an independent re-implementation of its Pine logic.
+//! TradingView: a rev 5 export (rev 6 additions switched off) and rev 7
+//! exports with every default on, with and without counter-trend mode. The
+//! TRXUSDT export covers HTF pivots with equal highs or lows, which pins down
+//! the pivot tie rule. Enhanced OB is checked against an independent
+//! re-implementation of its Pine logic.
 
 use flowsurface_indicator_engine::{
     ChartFrame, FrameOutput, IndicatorConfig, IndicatorFrame, InputValue, InstrumentContext,
@@ -39,8 +42,10 @@ fn read_csv(name: &str) -> Vec<BTreeMap<String, String>> {
         .collect()
 }
 
-/// Runs a script over the candle fixture and returns each bar's output by time.
-fn run(script: &str, config: IndicatorConfig) -> BTreeMap<i64, FrameOutput> {
+const BTC_CANDLES: &str = "tests/binance-btcusdt-perp-1h.csv";
+
+/// Runs a script over a candle fixture and returns each bar's output by time.
+fn run(script: &str, candles: &str, config: IndicatorConfig) -> BTreeMap<i64, FrameOutput> {
     let source = std::fs::read_to_string(fixture(script)).expect("script should exist");
     let mut instance = compile(&source, script)
         .unwrap_or_else(|diagnostics| panic!("{script} should compile: {diagnostics:?}"))
@@ -49,7 +54,7 @@ fn run(script: &str, config: IndicatorConfig) -> BTreeMap<i64, FrameOutput> {
     let field = |bar: &BTreeMap<String, String>, name: &str| -> f64 {
         bar[name].parse().expect("candle values are numbers")
     };
-    read_csv("tests/binance-btcusdt-perp-1h.csv")
+    read_csv(candles)
         .iter()
         .enumerate()
         .map(|(index, bar)| {
@@ -110,7 +115,7 @@ fn roman_setup_matches_tradingview() {
         .with("mssGate", InputValue::String("None".to_owned()))
         .with("thinBody", InputValue::Float(0.0))
         .with("brkTap", InputValue::Bool(false));
-    let outputs = run("roman-setup.ind", config);
+    let outputs = run("roman-setup.ind", BTC_CANDLES, config);
     let expected = read_csv("tests/tradingview-roman-setup-rev5.csv");
     assert!(expected.len() > 900);
 
@@ -170,9 +175,118 @@ fn roman_setup_matches_tradingview() {
     );
 }
 
+/// Compares the port with a rev 7 TradingView export (closed bars only) and
+/// returns how often each event fired, so callers can check coverage.
+fn check_rev7(
+    candles: &str,
+    export: &str,
+    config: IndicatorConfig,
+) -> BTreeMap<&'static str, usize> {
+    let outputs = run("roman-setup.ind", candles, config);
+    let expected = read_csv(export);
+    assert!(expected.len() > 900);
+
+    let mut series = [
+        ("dbg_bias", "x_bias"),
+        ("dbg_fib50", "x_fib50"),
+        ("dbg_broken_level", "x_brkLvl"),
+        ("dbg_broken_away", "x_brkAway"),
+        ("dbg_up_flip", "x_upFlip"),
+        ("dbg_dn_flip", "x_dnFlip"),
+        ("dbg_ct_arm_up", "x_ctArmUp"),
+        ("dbg_ct_arm_down", "x_ctArmDn"),
+    ]
+    .map(|(ours, theirs)| (ours.to_owned(), theirs.to_owned()))
+    .to_vec();
+    for slot in ["b1", "b2", "s1", "s2"] {
+        for (ours, theirs) in [("top", "Top"), ("bot", "Bot"), ("brk", "Brk")] {
+            series.push((format!("dbg_{slot}_{ours}"), format!("x_{slot}{theirs}")));
+        }
+    }
+    let events = [
+        ("HTF MSS up", "htf_bias_bullish", "x_evBull"),
+        ("HTF MSS down", "htf_bias_bearish", "x_evBear"),
+        ("SFP up", "htf_sfp_bullish", "x_sfpBull"),
+        ("SFP down", "htf_sfp_bearish", "x_sfpBear"),
+        ("MSS up", "ltf_mss_up", "x_alnUp"),
+        ("MSS down", "ltf_mss_down", "x_alnDn"),
+        ("CT MSS up", "ltf_ct_mss_up", "x_mssCtUp"),
+        ("CT MSS down", "ltf_ct_mss_down", "x_mssCtDn"),
+    ];
+
+    let mut counts = BTreeMap::new();
+    let mut mismatches = Vec::new();
+    for row in &expected {
+        let time: i64 = row["time"].parse().unwrap();
+        let output = outputs
+            .get(&time)
+            .expect("TradingView bar is in the candles");
+        let value = |name: &str| row[name].parse::<f64>().ok();
+        for (ours, theirs) in &series {
+            let (ours_value, theirs_value) = (plot(output, ours), value(theirs));
+            if !same(ours_value, theirs_value) {
+                mismatches.push(format!(
+                    "{time} {ours}: ours {ours_value:?}, TradingView {theirs_value:?}"
+                ));
+            }
+        }
+        for (what, ours, theirs) in events {
+            let (ours, theirs) = (flag(output, ours), value(theirs) == Some(1.0));
+            if ours != theirs {
+                mismatches.push(format!("{time} {what}: ours {ours}, TradingView {theirs}"));
+            }
+            *counts.entry(what).or_default() += usize::from(theirs);
+        }
+        if value("x_brkAway") == Some(1.0) {
+            *counts.entry("broken away").or_default() += 1;
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{export}: {} mismatches, first: {:#?}",
+        mismatches.len(),
+        &mismatches[..mismatches.len().min(10)]
+    );
+    counts
+}
+
+#[test]
+fn roman_setup_rev7_matches_tradingview() {
+    let counts = check_rev7(
+        "tests/binance-btcusdt-perp-1h-20261123.csv",
+        "tests/tradingview-roman-setup-rev7-btc.csv",
+        IndicatorConfig::default(),
+    );
+    // Most of these MSS signals only pass the filter through a broken-level retest.
+    assert!(counts["MSS down"] > 10, "{counts:?}");
+    assert!(counts["broken away"] > 0, "{counts:?}");
+    assert_eq!(counts["CT MSS up"] + counts["CT MSS down"], 0);
+}
+
+#[test]
+fn roman_setup_rev7_counter_trend_matches_tradingview() {
+    for (candles, export) in [
+        (
+            "tests/binance-btcusdt-perp-1h-20261123.csv",
+            "tests/tradingview-roman-setup-rev7-btc-ct.csv",
+        ),
+        (
+            "tests/binance-trxusdt-perp-1h-20261123.csv",
+            "tests/tradingview-roman-setup-rev7-trx-ct.csv",
+        ),
+    ] {
+        let config = IndicatorConfig::default().with("ctMode", InputValue::Bool(true));
+        let counts = check_rev7(candles, export, config);
+        assert!(
+            counts["CT MSS up"] + counts["CT MSS down"] > 0,
+            "{export}: {counts:?}"
+        );
+    }
+}
+
 #[test]
 fn enhanced_ob_matches_the_reference() {
-    let outputs = run("enhanced-ob.ind", IndicatorConfig::default());
+    let outputs = run("enhanced-ob.ind", BTC_CANDLES, IndicatorConfig::default());
     let expected = read_csv("tests/reference-enhanced-ob.csv");
     let mut events = 0;
     for row in &expected {
