@@ -50,6 +50,9 @@ work; see [Credits](#credits).
   and "Remove alert" deletes the line; to keep the line, untick "Alert" in its
   toolbar. Any horizontal line can be turned into an alert from its toolbar.
   The same menu can remove all alerts, drawings, indicators or studies at once.
+- **Alert history:** the bell in the sidebar lists the last 500 fired alerts
+  (time, symbol, condition, price) with an unread count, kept across
+  restarts in `alert-history.json`. Click an entry to focus its chart.
 - **Trade sound effects** driven by the live trade stream.
 - **Multi-window:** pop panes out into their own windows.
 - **Pane linking:** panes in the same link group switch ticker together.
@@ -208,7 +211,6 @@ Stored proxy and server credentials are read from the old keyring entries too.
 - `.deb` releases on GitHub for every version
 - A Flatpak, possibly
 - More example indicators
-- An in-app list of fired alerts
 
 ## Contributing and building
 

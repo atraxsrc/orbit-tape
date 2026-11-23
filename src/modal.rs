@@ -1,3 +1,4 @@
+pub mod alert_history;
 pub mod audio;
 pub mod layout_manager;
 pub mod network_editor;

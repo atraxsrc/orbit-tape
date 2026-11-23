@@ -6,6 +6,7 @@
 //! the rest the way the alert settings ask.
 
 use data::chart::kline::alerts::{AlertHit, AlertSource};
+use data::config::alert_history::FiredAlert;
 use data::config::alerts::Alerts;
 use rodio::Source;
 use std::collections::VecDeque;
@@ -21,11 +22,16 @@ pub struct AlertCenter {
 }
 
 impl AlertCenter {
-    /// Delivers new hits. Returns an error message for the user when the
-    /// chime could not be played.
-    pub fn deliver(&mut self, hits: Vec<AlertHit>, settings: &Alerts) -> Option<String> {
+    /// Delivers new hits. Returns the hits that were delivered (for the
+    /// alert history) and an error message for the user when the chime could
+    /// not be played.
+    pub fn deliver(
+        &mut self,
+        hits: Vec<AlertHit>,
+        settings: &Alerts,
+    ) -> (Vec<FiredAlert>, Option<String>) {
         if !settings.enabled {
-            return None;
+            return (Vec::new(), None);
         }
         let mut fresh = Vec::new();
         for hit in hits {
@@ -49,7 +55,7 @@ impl AlertCenter {
             fresh.push(hit);
         }
         if fresh.is_empty() {
-            return None;
+            return (Vec::new(), None);
         }
 
         for hit in &fresh {
@@ -64,10 +70,13 @@ impl AlertCenter {
                 notify(summary(hit), body(hit));
             }
         }
-        if settings.sound {
-            return self.play_chime(settings.volume).err();
-        }
-        None
+        let fired = fresh.iter().map(fired_alert).collect();
+        let error = if settings.sound {
+            self.play_chime(settings.volume).err()
+        } else {
+            None
+        };
+        (fired, error)
     }
 
     /// Sends a sample notification and chime so the user can check both.
@@ -114,6 +123,20 @@ fn chime(gain: f32) -> impl Source + Send + 'static {
     note(784.0, 0, 260)
         .mix(note(1175.0, 140, 380))
         .amplify(0.35 * gain)
+}
+
+/// The history entry for a delivered hit.
+fn fired_alert(hit: &AlertHit) -> FiredAlert {
+    FiredAlert {
+        fired_at: exchange::UnixMs::now().as_u64(),
+        ticker: hit.ticker_info.ticker,
+        basis: hit.basis,
+        symbol: symbol(hit),
+        exchange: exchange_name(hit),
+        source: hit.source_name.clone(),
+        condition: hit.title.clone(),
+        price: hit.close.to_string(hit.ticker_info.min_ticksize),
+    }
 }
 
 fn symbol(hit: &AlertHit) -> String {

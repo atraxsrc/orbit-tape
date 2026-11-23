@@ -1102,6 +1102,39 @@ impl Dashboard {
         Task::batch(tasks)
     }
 
+    /// Focus a chart pane showing `ticker`, preferring one on `basis`.
+    /// Returns the window that holds it, or `None` when no pane shows the
+    /// ticker.
+    pub fn focus_chart(
+        &mut self,
+        main_window: window::Id,
+        ticker: exchange::Ticker,
+        basis: data::chart::Basis,
+    ) -> Option<window::Id> {
+        let mut best: Option<(window::Id, pane_grid::Pane, bool)> = None;
+        for (window, pane, state) in self.iter_all_panes(main_window) {
+            if let pane::Content::Kline {
+                chart: Some(chart), ..
+            } = &state.content
+                && chart.base_ticker_info().ticker == ticker
+            {
+                let same_basis = chart.basis() == basis;
+                if best.is_none_or(|(_, _, best_same)| same_basis && !best_same) {
+                    best = Some((window, pane, same_basis));
+                }
+            }
+        }
+        let (window, pane, _) = best?;
+        if window == main_window
+            && let Some(maximized) = self.panes.maximized()
+            && maximized != pane
+        {
+            self.panes.restore();
+        }
+        self.set_focus(window, pane);
+        Some(window)
+    }
+
     /// Tell every chart pane, including popouts, that the indicator catalog
     /// was reloaded.
     pub fn indicator_catalog_reloaded(&mut self) {
