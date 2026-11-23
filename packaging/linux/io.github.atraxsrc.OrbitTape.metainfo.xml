@@ -57,6 +57,12 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.10.0" date="2026-11-24">
+      <description>
+        <p>Drawing, indicator and series colors follow the COSMIC theme
+        palette while the app follows COSMIC.</p>
+      </description>
+    </release>
     <release version="0.9.1" date="2026-11-24">
       <description>
         <p>Right-click price alerts on the chart, and chart menu entries to

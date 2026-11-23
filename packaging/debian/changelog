@@ -1,3 +1,11 @@
+orbit-tape (0.10.0-1) unstable; urgency=medium
+
+  * Drawing, indicator and series colors follow the COSMIC theme palette
+    (accent_blue, indigo, purple, pink, red, orange, yellow, green) while
+    the app follows COSMIC.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Tue, 24 Nov 2026 22:00:00 +1100
+
 orbit-tape (0.9.1-1) unstable; urgency=medium
 
   * Right-click price alerts on the chart: an alert line fires once when the

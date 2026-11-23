@@ -104,7 +104,9 @@ What is COSMIC-specific today:
 - **Wayland-native** rendering (X11 remains as a fallback).
 - **COSMIC theme** (Settings → Theme, on by default): the app reads COSMIC's
   theme files and follows its light/dark mode, accent, background, text,
-  success/warning/destructive colors and corner radii live.
+  success/warning/destructive colors and corner radii live. The 8 color
+  swatches for drawings, indicators and series come from the COSMIC palette
+  (accent_blue, indigo, purple, pink, red, orange, yellow, green).
 - **Frosted glass:** a see-through, compositor-blurred window that follows
   COSMIC's frosted-window setting, or a hand-set opacity.
 - **Desktop notifications** through the freedesktop notification service that
