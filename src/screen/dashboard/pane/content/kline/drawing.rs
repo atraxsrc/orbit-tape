@@ -9,8 +9,8 @@ use crate::widget::chart::kline::drawing::{
     MIN_DRAWING_STROKE_WIDTH, MeasureState,
 };
 use crate::widget::{color_swatch_button, tooltip};
-use data::chart::kline::DrawingSettings;
 use data::chart::kline::composition::{ChartComposition, PanelId};
+use data::chart::kline::{DrawingSettings, PriceAlert};
 use data::config::theme::{ThemeAccent, ThemeColor, ThemeColorRole, ThemeColorShade};
 
 use iced::widget::{checkbox, pick_list, row, text, tooltip::Position as TooltipPosition};
@@ -272,6 +272,7 @@ impl DrawingState {
                 | DrawingMessage::SetSelectedDrawingStrokeWidth(_)
                 | DrawingMessage::SetHorizontalLineRay(_)
                 | DrawingMessage::SetBoxExtendRight(_)
+                | DrawingMessage::SetSelectedAlert(_)
                 | DrawingMessage::DeleteSelectedDrawing
                 | DrawingMessage::DeleteDrawing(_)
                 | DrawingMessage::DeleteAllDrawings),
@@ -297,6 +298,43 @@ impl DrawingState {
         };
         self.history.finish_if_idle(&self.tools);
         update
+    }
+
+    /// Adds a horizontal line with an armed price alert at `anchor`.
+    pub(super) fn add_price_alert(
+        &mut self,
+        anchor: DrawingAnchor,
+        settings: &DrawingSettings,
+    ) -> DrawingUpdate {
+        let before = self.tools.edit_state();
+        let update = if self.tools.add_price_alert(anchor, settings) {
+            DrawingUpdate::AtomicEdit
+        } else {
+            DrawingUpdate::None
+        };
+        self.record_update(update, before)
+    }
+
+    /// Deletes every unlocked line that carries a price alert.
+    pub(super) fn remove_alert_lines(&mut self) -> DrawingUpdate {
+        let before = self.tools.edit_state();
+        let update = if self.tools.remove_alert_lines() {
+            DrawingUpdate::AtomicEdit
+        } else {
+            DrawingUpdate::None
+        };
+        self.record_update(update, before)
+    }
+
+    /// Arms (true) or removes (false) the price alert on one line.
+    pub(super) fn set_alert(&mut self, id: DrawingId, armed: bool) -> DrawingUpdate {
+        let before = self.tools.edit_state();
+        let update = if self.tools.set_alerts(&[id], armed) {
+            DrawingUpdate::AtomicEdit
+        } else {
+            DrawingUpdate::None
+        };
+        self.record_update(update, before)
     }
 
     fn record_update(&mut self, update: DrawingUpdate, before: DrawingEditState) -> DrawingUpdate {
@@ -499,11 +537,16 @@ struct DrawingSelectionSummary<'a> {
     fill_shade: SharedValue<ThemeColorShade>,
     box_extend_right: SharedValue<bool>,
     horizontal_line_ray: SharedValue<bool>,
+    /// Armed state of the selected lines that can carry a price alert.
+    price_alert: SharedValue<bool>,
 }
 
 impl DrawingSelectionSummary<'_> {
     fn title(&self) -> String {
         if self.selected.len() == 1 {
+            if self.selected[0].alert.is_some() {
+                return "Price alert".to_string();
+            }
             self.selected[0].object.title().to_string()
         } else {
             format!("{} drawings", self.selected.len())
@@ -584,6 +627,8 @@ pub enum DrawingMessage {
     SelectBoxFillStyle,
     SetHorizontalLineRay(bool),
     SetBoxExtendRight(bool),
+    /// Arm (true) or remove (false) the price alert on the selected lines.
+    SetSelectedAlert(bool),
     DeleteSelectedDrawing,
     DeleteDrawing(DrawingId),
     DeleteAllDrawings,
@@ -877,6 +922,13 @@ impl DrawingTools {
                     }),
             );
 
+        let price_alert = shared_value(
+            horizontal_lines
+                .iter()
+                .filter(|drawing| drawing.supports_price_alert())
+                .map(|drawing| drawing.alert.is_some_and(|alert| alert.armed)),
+        );
+
         Some(DrawingSelectionSummary {
             selected,
             capabilities,
@@ -887,6 +939,7 @@ impl DrawingTools {
             fill_shade,
             box_extend_right,
             horizontal_line_ray,
+            price_alert,
         })
     }
 
@@ -1001,6 +1054,18 @@ impl DrawingTools {
                 if self
                     .update_selected_object(DrawingObjectChange::BoxExtendRight(extend), settings)
                 {
+                    DrawingUpdate::AtomicEdit
+                } else {
+                    DrawingUpdate::None
+                }
+            }
+            DrawingMessage::SetSelectedAlert(armed) => {
+                let ids = self
+                    .selected_editable_indices()
+                    .into_iter()
+                    .map(|index| self.drawings[index].id)
+                    .collect::<Vec<_>>();
+                if self.set_alerts(&ids, armed) {
                     DrawingUpdate::AtomicEdit
                 } else {
                     DrawingUpdate::None
@@ -1144,6 +1209,14 @@ impl DrawingTools {
                         DrawingMessage::SetHorizontalLineRay,
                         on_sidebar_message,
                     ));
+                if !matches!(selection.price_alert, SharedValue::Unavailable) {
+                    controls = controls.push(drawing_extend_checkbox(
+                        selection.price_alert,
+                        "Alert",
+                        DrawingMessage::SetSelectedAlert,
+                        on_sidebar_message,
+                    ));
+                }
             }
         }
 
@@ -2179,11 +2252,85 @@ impl DrawingTools {
             style,
             locked: false,
             visible: true,
+            alert: None,
         });
 
         self.selected_drawings = vec![id];
         self.interaction = DrawingInteraction::Idle;
         id
+    }
+
+    /// Drawings of the current basis (time or tick).
+    pub(super) fn active_drawings(&self) -> &[DrawingEntity] {
+        &self.drawings
+    }
+
+    /// Adds a horizontal line with an armed price alert at `anchor` and
+    /// selects it.
+    fn add_price_alert(&mut self, anchor: DrawingAnchor, settings: &DrawingSettings) -> bool {
+        if !self.accepts_anchor(anchor) || anchor.panel_id != PanelId::Main {
+            return false;
+        }
+        let object = DrawingObject::HorizontalLine {
+            panel_id: anchor.panel_id,
+            y_unit: anchor.y_unit,
+            x: anchor.x,
+            ray: settings.horizontal_line_ray,
+        };
+        let id = self.push_drawing(
+            object,
+            settings
+                .style_defaults
+                .style_for(DrawingTool::HorizontalLine),
+        );
+        self.set_alerts(&[id], true)
+    }
+
+    /// Arms (true) or removes (false) price alerts on the given lines.
+    /// Locked lines and drawings that cannot carry an alert are skipped.
+    fn set_alerts(&mut self, ids: &[DrawingId], armed: bool) -> bool {
+        let alert = armed.then_some(PriceAlert { armed: true });
+        let mut changed = false;
+        for drawing in self
+            .drawings
+            .iter_mut()
+            .filter(|drawing| ids.contains(&drawing.id) && !drawing.locked)
+            .filter(|drawing| drawing.supports_price_alert())
+        {
+            if drawing.alert != alert {
+                drawing.alert = alert;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn remove_alert_lines(&mut self) -> bool {
+        let before = self.drawings.len();
+        self.drawings
+            .retain(|drawing| drawing.locked || drawing.alert.is_none());
+        let drawings = &self.drawings;
+        self.selected_drawings
+            .retain(|id| drawings.iter().any(|drawing| drawing.id == *id));
+        self.drawings.len() != before
+    }
+
+    /// Disarms alerts that fired. The lines and their tags stay.
+    pub(super) fn disarm_alerts(&mut self, ids: &[DrawingId]) -> bool {
+        let mut changed = false;
+        for drawing in self
+            .drawings
+            .iter_mut()
+            .filter(|drawing| ids.contains(&drawing.id))
+        {
+            if let Some(alert) = &mut drawing.alert
+                && alert.armed
+            {
+                alert.armed = false;
+                changed = true;
+            }
+        }
+        changed
     }
 
     fn allocate_drawing_id(&mut self) -> DrawingId {
@@ -2203,5 +2350,70 @@ impl DrawingTools {
             SidebarPage::Tools => SIDEBAR_WIDTH,
             SidebarPage::ObjectList => OBJECT_LIST_SIDEBAR_WIDTH,
         }
+    }
+}
+
+#[cfg(test)]
+mod price_alert_tests {
+    use super::*;
+    use data::chart::kline::YUnit;
+
+    fn anchor() -> DrawingAnchor {
+        DrawingAnchor {
+            panel_id: PanelId::Main,
+            x: DrawingX::Time(exchange::UnixMs::new(60_000)),
+            y_unit: YUnit(1000),
+        }
+    }
+
+    #[test]
+    fn remove_alert_clears_it() {
+        let mut state = DrawingState::default();
+        let settings = DrawingSettings::default();
+        assert!(matches!(
+            state.add_price_alert(anchor(), &settings),
+            DrawingUpdate::AtomicEdit
+        ));
+        let id = state.tools.active_drawings()[0].id;
+        assert!(
+            state.tools.active_drawings()[0]
+                .armed_alert_level()
+                .is_some()
+        );
+        let update = state.set_alert(id, false);
+        assert!(matches!(update, DrawingUpdate::AtomicEdit), "{update:?}");
+        assert_eq!(state.tools.active_drawings()[0].alert, None);
+        assert_eq!(state.tools.time_drawings()[0].alert, None);
+    }
+
+    #[test]
+    fn deleting_alert_line_removes_it() {
+        let mut state = DrawingState::default();
+        let mut settings = DrawingSettings::default();
+        state.add_price_alert(anchor(), &settings);
+        let id = state.tools.active_drawings()[0].id;
+        let update = state.update(
+            Event::Tools(DrawingMessage::DeleteDrawing(id)),
+            &mut settings,
+        );
+        assert!(matches!(update, DrawingUpdate::AtomicEdit), "{update:?}");
+        assert!(state.tools.time_drawings().is_empty());
+    }
+
+    #[test]
+    fn remove_all_alerts_keeps_plain_lines() {
+        let mut state = DrawingState::default();
+        let settings = DrawingSettings::default();
+        state.add_price_alert(anchor(), &settings);
+        state.add_price_alert(anchor(), &settings);
+        let plain = state.tools.active_drawings()[1].id;
+        state.set_alert(plain, false);
+        assert!(matches!(
+            state.remove_alert_lines(),
+            DrawingUpdate::AtomicEdit
+        ));
+        let left = state.tools.active_drawings();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, plain);
     }
 }

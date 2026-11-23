@@ -1441,7 +1441,7 @@ pub enum ValuePrecision {
 
 pub use drawing::{
     DrawingAnchor, DrawingColor, DrawingEntity, DrawingObject, DrawingSettings, DrawingStyle,
-    DrawingStyleDefaults, DrawingTool,
+    DrawingStyleDefaults, DrawingTool, PriceAlert,
 };
 pub type DrawingConfig = DrawingEntity;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -44,6 +44,12 @@ work; see [Credits](#credits).
 - **Indicator alerts:** boolean plots marked `alert = true` send a desktop
   notification and a chime when they are true on a newly closed bar
   (Settings → Alerts).
+- **Price alerts:** right-click the price chart and pick "Add alert at <price>".
+  The alert line fires once when the live price crosses it, then stays on the
+  chart as "Alert fired" until you right-click it and re-arm it. Right-click
+  and "Remove alert" deletes the line; to keep the line, untick "Alert" in its
+  toolbar. Any horizontal line can be turned into an alert from its toolbar.
+  The same menu can remove all alerts, drawings, indicators or studies at once.
 - **Trade sound effects** driven by the live trade stream.
 - **Multi-window:** pop panes out into their own windows.
 - **Pane linking:** panes in the same link group switch ticker together.

@@ -241,6 +241,14 @@ pub enum KlineWidgetEvent {
     IndicatorRemove(PanelValueId),
     XAxisDoubleClick,
     DeletePressed,
+    /// Right click on a chart panel. `position` is in widget coordinates;
+    /// `anchor` is the point under the cursor in the price panel, and
+    /// `drawing` the drawing under the cursor, if any.
+    ContextMenu {
+        position: Point,
+        anchor: Option<data::chart::kline::DrawingAnchor>,
+        drawing: Option<data::chart::kline::drawing::DrawingId>,
+    },
 }
 
 impl From<KlineWidgetDrawingEvent> for KlineWidgetEvent {
@@ -248,6 +256,9 @@ impl From<KlineWidgetDrawingEvent> for KlineWidgetEvent {
         Self::Drawing(event)
     }
 }
+
+/// How far from an alert line a right click still picks it, in pixels.
+const ALERT_LINE_PICK_PX: f32 = 12.0;
 
 pub struct KlineWidget<'a> {
     series: &'a [KlineSeries],
@@ -2034,7 +2045,9 @@ where
                         return;
                     }
                     mouse::Event::WheelScrolled { .. }
-                    | mouse::Event::ButtonPressed(mouse::Button::Left) => Vector::new(0.0, 0.0),
+                    | mouse::Event::ButtonPressed(mouse::Button::Left | mouse::Button::Right) => {
+                        Vector::new(0.0, 0.0)
+                    }
                     _ => return,
                 };
 
@@ -2226,6 +2239,43 @@ where
                                 },
                             );
                         }
+                    }
+                    mouse::Event::ButtonPressed(mouse::Button::Right) => {
+                        let LayoutHitZone::PanelPlot(panel_index) = zone else {
+                            return;
+                        };
+                        if state.interaction.motion().is_some() {
+                            return;
+                        }
+                        let anchor = (self.panel_id(panel_index)
+                            == Some(composition::PanelId::Main))
+                        .then_some(())
+                        .and(scene.as_ref())
+                        .and_then(|scene| {
+                            self.drawing_view(scene).drawing_anchor_from_scene_point(
+                                composition::PanelId::Main,
+                                cursor_pos,
+                            )
+                        });
+                        let drawing = match cursor_target {
+                            Some(CursorTarget::Drawing(
+                                drawing::DrawingHit::Body { id, .. }
+                                | drawing::DrawingHit::Handle { id, .. },
+                            )) => Some(id),
+                            _ => None,
+                        }
+                        .or_else(|| {
+                            scene.as_ref().and_then(|scene| {
+                                self.drawing_view(scene)
+                                    .nearest_alert_line(cursor_pos, ALERT_LINE_PICK_PX)
+                            })
+                        });
+                        shell.publish(M::from(KlineWidgetEvent::ContextMenu {
+                            position: cursor_pos,
+                            anchor,
+                            drawing,
+                        }));
+                        shell.capture_event();
                     }
                     mouse::Event::CursorMoved { .. } => {
                         if let Some(DrawingMeasure::Pending(measure_state)) =

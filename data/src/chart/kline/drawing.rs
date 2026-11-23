@@ -467,6 +467,16 @@ pub struct DrawingEntity {
     pub style: DrawingStyle,
     pub locked: bool,
     pub visible: bool,
+    /// Price alert on a horizontal line in the price panel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert: Option<PriceAlert>,
+}
+
+/// A price alert attached to a horizontal line. It fires once when the live
+/// price crosses the line, then stays on the chart disarmed until re-armed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriceAlert {
+    pub armed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -956,5 +966,29 @@ impl DrawingObject {
 impl DrawingEntity {
     pub fn belongs_to_panel(&self, panel_id: PanelId) -> bool {
         self.object.belongs_to_panel(panel_id)
+    }
+
+    /// Whether this drawing can carry a price alert: a horizontal line in the
+    /// price panel.
+    pub fn supports_price_alert(&self) -> bool {
+        matches!(
+            self.object,
+            DrawingObject::HorizontalLine {
+                panel_id: PanelId::Main,
+                ..
+            }
+        )
+    }
+
+    /// The line's level when it carries an armed price alert.
+    pub fn armed_alert_level(&self) -> Option<YUnit> {
+        match self.object {
+            DrawingObject::HorizontalLine {
+                panel_id: PanelId::Main,
+                y_unit,
+                ..
+            } if self.alert.is_some_and(|alert| alert.armed) => Some(y_unit),
+            _ => None,
+        }
     }
 }
