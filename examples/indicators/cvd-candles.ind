@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// CVD candles: cumulative volume delta (buy volume minus sell volume, added
+// up bar after bar) drawn as candles in its own panel. Each candle opens where
+// the previous one closed and closes at the new total, so green candles are
+// bars where buyers won. Optionally the total restarts every UTC day. A small
+// panel on the price chart shows the running total and today's buy share.
+//
+// Shows: a structured output (plotcandle) built from persistent state,
+// input.bool with a setting that only appears when it applies
+// (visible_when), and an info panel (info_row) with runtime text and colors.
+
+language(1)
+indicator("CVD Candles", id = "example.cvd-candles", max_bars_back = 1, bases = ["time"],
+    optional_trades = true,
+    description = "Cumulative volume delta as candles, with an optional daily reset.")
+display(layer_name = "CVD Candles")
+format(precision = "base_ticker_min_qty", axis_labels = "abbreviated", header_labels = "commas")
+
+reset_daily = input.bool(false, "Restart every day (UTC)")
+show_panel = input.bool(true, "Show summary panel")
+panel_position = input.string("Top right", "Panel position",
+    options = ["Top right", "Top left", "Bottom right", "Bottom left"],
+    visible_when = "show_panel")
+
+// Without trade data there is no delta: that bar's candle stays flat and the
+// total carries on.
+has_trades = chart.directional_volume_available
+delta = select(has_trades, chart.buy_qty - chart.sell_qty, na)
+
+// A new UTC day starts when the forming daily candle's start time changes
+// (the same session clock as the Session VWAP example).
+day_start = htf.forming("D").time
+state previous_day = na
+new_day = !na(previous_day) && day_start != previous_day
+previous_day := day_start
+
+state total = 0.0
+state day_buy = 0.0
+state day_sell = 0.0
+if new_day {
+    day_buy := 0.0
+    day_sell := 0.0
+    if reset_daily {
+        total := 0.0
+    }
+}
+open_value = total
+if !na(delta) {
+    total := total + delta
+    day_buy := day_buy + chart.buy_qty
+    day_sell := day_sell + chart.sell_qty
+}
+
+// The candle body runs from the previous total to the new one.
+plotcandle(open_value, math.max(open_value, total), math.min(open_value, total), total,
+    id = "cvd", title = "CVD", precision = "instrument")
+
+// The info panel shows the latest bar's values.
+day_volume = day_buy + day_sell
+buy_share = select(day_volume > 0, day_buy / day_volume * 100, na)
+info_row(select(show_panel, "CVD", ""), select(show_panel, str.tostring(total, "#,###.##"), ""),
+    right_color = select(total >= 0, color.teal, color.red), position = panel_position, size = "small")
+info_row(select(show_panel, "Buy share today", ""),
+    select(show_panel && !na(buy_share), str.tostring(buy_share, "0.0") + "%", ""),
+    right_color = select(nz(buy_share, 50) >= 50, color.teal, color.red))

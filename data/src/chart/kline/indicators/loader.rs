@@ -541,7 +541,10 @@ mod tests {
         assert_eq!(
             ids,
             [
+                "example.cvd-candles",
                 "example.ema-crossover",
+                "example.rsi-divergence",
+                "example.session-vwap",
                 "example.volume-delta",
                 "example.vwap-bands"
             ]

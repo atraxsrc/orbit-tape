@@ -64,9 +64,17 @@ Open the file in any editor. The language basics:
 - `htf.bars("720")` reads closed candles of a higher timeframe (here 12H).
 
 The full reference is [LANGUAGE.md](../indicator-engine/LANGUAGE.md). The
-[examples](../examples/indicators/) are commented and cover overlay lines with
-alerts (`ema-crossover.ind`), bands with a fill (`vwap-bands.ind`) and a
-trade-based histogram (`volume-delta.ind`).
+[examples](../examples/indicators/) are commented; each shows a different
+part of the language:
+
+| Example | Shows |
+| --- | --- |
+| `ema-crossover.ind` | Overlay lines and boolean alert plots |
+| `vwap-bands.ind` | Rolling bands with a fill |
+| `volume-delta.ind` | Trade-based histogram colored by a boolean output |
+| `session-vwap.ind` | Session VWAP with σ bands: `state` reset on a session change (`htf.forming`), a user function with a bounded loop |
+| `cvd-candles.ind` | Cumulative volume delta as candles: `plotcandle`, `visible_when`, an `info_row` panel |
+| `rsi-divergence.ind` | RSI divergence: `ta.pivotlow`/`ta.pivothigh`, `ta.previous_when`, input history offsets, persistent `region` labels, alerts |
 
 ## 3. Check and test
 
