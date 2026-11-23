@@ -18,9 +18,13 @@ The app reads every `.ind` file below the indicators folder, including
 subfolders. Keep one folder per namespace, for example
 `indicators/community/example.ind` for the ID `community.example`.
 
-Indicators are loaded **once at startup**. After adding or editing a file,
-restart Orbit Tape. A broken file does not stop the app: it is skipped and a
-"quarantined" notice with the error appears.
+Indicators **reload live**: Orbit Tape watches the indicators folder (and
+every `--indicator-path` file) and recompiles a file a moment after you save
+it. Charts that show the indicator recalculate; unchanged indicators are left
+alone. If a save does not compile, the chart keeps the last good version and
+the error appears as a notice and in a red box at the bottom of the
+indicator list, until the file compiles again. A file that has never compiled
+is skipped.
 
 ## 1. Create a file
 
@@ -92,7 +96,7 @@ every plot.
 
 ## 4. Load it in the app
 
-1. Restart Orbit Tape.
+1. Save the file in the indicators folder (no restart needed).
 2. Open a candlestick chart pane.
 3. In the chart's indicator sidebar, press **+** and pick your indicator from
    the list (your own indicators are listed with the built-in ones).
@@ -108,7 +112,7 @@ orbit-tape --indicator-path ./example.ind
 
 A collection is a folder of `.ind` files under one namespace, for example a
 Git repository with `mytools/*.ind`. Others copy the folder into their
-indicators folder and restart. Before publishing:
+indicators folder. Before publishing:
 
 ```sh
 orbit-tape-indicator test mytools --namespace mytools
@@ -125,7 +129,7 @@ files; the examples and built-in indicators are GPL-3.0-or-later.
 
 | Problem | What to do |
 | --- | --- |
-| Indicator missing from the list | Restart the app. Check the file ends in `.ind` and is below `~/.local/share/orbit-tape/indicators/`. |
+| Indicator missing from the list | Check the file ends in `.ind`, is below `~/.local/share/orbit-tape/indicators/` and compiles (see the error box in the indicator list). |
 | "Indicator source quarantined" notice | The file failed to load; run `orbit-tape-indicator check` on it for the exact error. |
 | `source filename ... must be ...` error | Rename the file to the part of the ID after the last dot. |
 | Duplicate ID | Two files declare the same ID; IDs must be unique across the folder. |

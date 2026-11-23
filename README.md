@@ -162,7 +162,8 @@ build. To build the `.deb` yourself: `scripts/package-deb.sh` (installs
 ## Custom indicators
 
 Indicators are `.ind` text files. Put them in
-`~/.local/share/orbit-tape/indicators/`, then restart the app:
+`~/.local/share/orbit-tape/indicators/`; the app picks up new and edited
+files while it runs:
 
 ```sh
 orbit-tape-indicator new ~/.local/share/orbit-tape/indicators/community --id community.example --title "Example"
@@ -207,7 +208,6 @@ Stored proxy and server credentials are read from the old keyring entries too.
 - `.deb` releases on GitHub for every version
 - A Flatpak, possibly
 - More example indicators
-- Live reloading of user indicators without a restart
 - An in-app list of fired alerts
 
 ## Contributing and building

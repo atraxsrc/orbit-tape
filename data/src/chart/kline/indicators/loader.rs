@@ -1,9 +1,10 @@
 use super::{IndicatorRegistration, language};
 use crate::data_path;
 use log::warn;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 static INSTALLED_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
 
@@ -212,6 +213,169 @@ struct IndicatorCatalogSources {
     diagnostics: Vec<String>,
 }
 
+/// The last version of a watched source file that compiled, kept so a broken
+/// save does not take the indicator off the chart.
+#[derive(Debug, Clone)]
+struct LastGood {
+    hash: u64,
+    registration: IndicatorRegistration,
+}
+
+/// What live reload needs to rebuild the catalog without touching bundled
+/// sources.
+#[derive(Debug)]
+struct LoaderState {
+    paths: IndicatorCatalogPaths,
+    bundled: Vec<IndicatorRegistration>,
+    last_good: HashMap<PathBuf, LastGood>,
+}
+
+static LOADER_STATE: Mutex<Option<LoaderState>> = Mutex::new(None);
+static SOURCE_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Compile errors from the latest scan of the user's indicator files. Files
+/// listed here either kept their last good version or are not loaded.
+pub fn indicator_source_errors() -> Vec<String> {
+    lock(&SOURCE_ERRORS).clone()
+}
+
+/// Directories and files the live reload watcher should observe: the
+/// installed indicators directory (recursive) and each `--indicator-path`
+/// file.
+pub fn watched_indicator_paths() -> Option<(PathBuf, Vec<PathBuf>)> {
+    lock(&LOADER_STATE).as_ref().map(|state| {
+        (
+            state.paths.installed_directory.clone(),
+            state.paths.additional_files.clone(),
+        )
+    })
+}
+
+/// Outcome of a live reload.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct IndicatorReloadReport {
+    /// IDs whose source changed (or that are new) and compiled.
+    pub reloaded: Vec<String>,
+    /// IDs that are no longer provided by any file.
+    pub removed: Vec<String>,
+    /// Compile errors. A file with an earlier good version keeps it.
+    pub errors: Vec<String>,
+}
+
+impl IndicatorReloadReport {
+    pub fn is_empty(&self) -> bool {
+        self.reloaded.is_empty() && self.removed.is_empty() && self.errors.is_empty()
+    }
+}
+
+/// Load one watched source file. Unchanged files reuse their previous
+/// registration, so running charts are not recomputed. A file that no longer
+/// compiles falls back to its last good version, with the errors returned.
+fn load_watched_file(
+    path: &Path,
+    origin: language::PackageOrigin,
+    previous: Option<&LastGood>,
+) -> (Option<LastGood>, Vec<String>) {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => return (None, vec![format!("{}: {error}", path.display())]),
+    };
+    let hash = crate::util::stable_hash(&bytes);
+    if let Some(previous) = previous.filter(|previous| previous.hash == hash) {
+        return (Some(previous.clone()), Vec::new());
+    }
+    let compiled = match std::str::from_utf8(&bytes) {
+        Ok(text) => indicator_engine::compile(text, path),
+        Err(error) => {
+            return (
+                previous.cloned(),
+                vec![format!("{}: not valid UTF-8: {error}", path.display())],
+            );
+        }
+    };
+    let mut report = language::load_compiled_report([(path.to_path_buf(), compiled)], origin);
+    match report.registrations.pop() {
+        Some(registration) if report.diagnostics.is_empty() => {
+            (Some(LastGood { hash, registration }), Vec::new())
+        }
+        _ => (previous.cloned(), report.diagnostics),
+    }
+}
+
+/// Load every watched file. Returns the registrations, the new last-good
+/// table and the compile errors.
+fn load_watched_files(
+    files: &[(PathBuf, language::PackageOrigin)],
+    previous: &HashMap<PathBuf, LastGood>,
+) -> (
+    Vec<IndicatorRegistration>,
+    HashMap<PathBuf, LastGood>,
+    Vec<String>,
+) {
+    let mut registrations = Vec::new();
+    let mut last_good = HashMap::new();
+    let mut errors = Vec::new();
+    for (path, origin) in files {
+        let (loaded, file_errors) = load_watched_file(path, *origin, previous.get(path));
+        if !file_errors.is_empty() {
+            let kept = loaded.is_some();
+            for error in file_errors {
+                errors.push(if kept {
+                    format!("{error} (keeping the last good version)")
+                } else {
+                    error
+                });
+            }
+        }
+        if let Some(loaded) = loaded {
+            registrations.push(loaded.registration.clone());
+            last_good.insert(path.clone(), loaded);
+        }
+    }
+    (registrations, last_good, errors)
+}
+
+fn watched_files(
+    paths: &IndicatorCatalogPaths,
+) -> (Vec<(PathBuf, language::PackageOrigin)>, Vec<String>) {
+    let mut diagnostics = Vec::new();
+    let installed_files = if let Err(error) = fs::create_dir_all(&paths.installed_directory) {
+        diagnostics.push(format!(
+            "could not create installed indicator directory {}: {error}",
+            paths.installed_directory.display()
+        ));
+        Vec::new()
+    } else {
+        match language::indicator_files_in_directory(&paths.installed_directory) {
+            Ok((files, discovery_diagnostics)) => {
+                diagnostics.extend(discovery_diagnostics);
+                files
+            }
+            Err(error) => {
+                diagnostics.push(error);
+                Vec::new()
+            }
+        }
+    };
+    let files = installed_files
+        .into_iter()
+        .map(|path| (path, language::PackageOrigin::Installed))
+        .chain(
+            paths
+                .additional_files
+                .iter()
+                .map(|path| (path.clone(), language::PackageOrigin::Bundled)),
+        )
+        .collect();
+    (files, diagnostics)
+}
+
 fn load_catalog_sources(paths: &IndicatorCatalogPaths) -> Result<IndicatorCatalogSources, String> {
     let bundled_report = match &paths.bundled_directory {
         Some(directory) => {
@@ -233,45 +397,75 @@ fn load_catalog_sources(paths: &IndicatorCatalogPaths) -> Result<IndicatorCatalo
         return Err("bundled indicator collection contains no valid sources".to_owned());
     }
 
-    let mut diagnostics = Vec::new();
-    let installed_files = if let Err(error) = fs::create_dir_all(&paths.installed_directory) {
-        diagnostics.push(format!(
-            "could not create installed indicator directory {}: {error}",
-            paths.installed_directory.display()
-        ));
-        Vec::new()
-    } else {
-        match language::indicator_files_in_directory(&paths.installed_directory) {
-            Ok((files, discovery_diagnostics)) => {
-                diagnostics.extend(discovery_diagnostics);
-                files
-            }
-            Err(error) => {
-                diagnostics.push(error);
-                Vec::new()
-            }
-        }
-    };
-    let mut installed_report =
-        language::load_from_files_report(&installed_files, language::PackageOrigin::Installed);
-    let additional_report =
-        language::load_from_files_report(&paths.additional_files, language::PackageOrigin::Bundled);
-    installed_report
-        .registrations
-        .extend(additional_report.registrations);
-    installed_report
-        .diagnostics
-        .extend(additional_report.diagnostics);
-
-    for diagnostic in &installed_report.diagnostics {
+    let (files, mut diagnostics) = watched_files(paths);
+    let (installed, last_good, errors) = load_watched_files(&files, &HashMap::new());
+    for diagnostic in &errors {
         warn!("Ignoring invalid installed indicator source: {diagnostic}");
     }
-    diagnostics.extend(installed_report.diagnostics);
+    *lock(&SOURCE_ERRORS) = errors.clone();
+    diagnostics.extend(errors);
+
+    *lock(&LOADER_STATE) = Some(LoaderState {
+        paths: paths.clone(),
+        bundled: bundled_report.registrations.clone(),
+        last_good,
+    });
 
     Ok(IndicatorCatalogSources {
         bundled: bundled_report.registrations,
-        installed: installed_report.registrations,
+        installed,
         diagnostics,
+    })
+}
+
+/// Rescan the user's indicator files and install a new catalog. Bundled
+/// sources are not recompiled. Call it from a worker thread; it reads and
+/// compiles files.
+pub fn reload_indicator_catalog() -> Result<IndicatorReloadReport, String> {
+    let mut guard = lock(&LOADER_STATE);
+    let state = guard
+        .as_mut()
+        .ok_or_else(|| "Indicator catalog is not initialized".to_owned())?;
+
+    let (files, mut diagnostics) = watched_files(&state.paths);
+    let (installed, last_good, errors) = load_watched_files(&files, &state.last_good);
+
+    let old_ids = |table: &HashMap<PathBuf, LastGood>| {
+        table
+            .values()
+            .map(|entry| (entry.registration.id.as_str().to_owned(), entry.hash))
+            .collect::<HashMap<_, _>>()
+    };
+    let before = old_ids(&state.last_good);
+    let after = old_ids(&last_good);
+    let mut reloaded = after
+        .iter()
+        .filter(|(id, hash)| before.get(*id) != Some(*hash))
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    reloaded.sort();
+    let mut removed = before
+        .keys()
+        .filter(|id| !after.contains_key(*id))
+        .cloned()
+        .collect::<Vec<_>>();
+    removed.sort();
+
+    for error in &errors {
+        warn!("indicator live reload: {error}");
+    }
+    *lock(&SOURCE_ERRORS) = errors.clone();
+    diagnostics.extend(errors.iter().cloned());
+    state.last_good = last_good;
+
+    if !reloaded.is_empty() || !removed.is_empty() {
+        super::registry::replace_catalog(state.bundled.clone(), installed, diagnostics);
+    }
+
+    Ok(IndicatorReloadReport {
+        reloaded,
+        removed,
+        errors,
     })
 }
 
@@ -279,6 +473,7 @@ fn load_catalog_sources(paths: &IndicatorCatalogPaths) -> Result<IndicatorCatalo
 mod tests {
     use super::super::{catalog, language::PackageOrigin};
     use super::*;
+    use std::sync::Arc;
 
     fn source(id: &str) -> String {
         format!(
@@ -363,6 +558,60 @@ mod tests {
             .filter(|output| output.alert)
             .count();
         assert_eq!(alerts, 2);
+    }
+
+    /// Live reload: unchanged files keep their compiled program, a broken
+    /// save keeps the last good version and reports the error, and a fixed
+    /// save replaces it.
+    #[test]
+    fn watched_files_keep_last_good_version() {
+        let root =
+            std::env::temp_dir().join(format!("orbit-tape-live-reload-{}", std::process::id()));
+        let dir = root.join("demo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("line.ind");
+        std::fs::write(&path, source("demo.line")).unwrap();
+        let files = vec![(path.clone(), PackageOrigin::Installed)];
+
+        let (first, table, errors) = load_watched_files(&files, &HashMap::new());
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(first.len(), 1);
+
+        let (again, table, errors) = load_watched_files(&files, &table);
+        assert!(errors.is_empty());
+        assert!(Arc::ptr_eq(&first[0].compiled, &again[0].compiled));
+
+        std::fs::write(&path, "language(1)\nindicator(").unwrap();
+        let (broken, table, errors) = load_watched_files(&files, &table);
+        assert_eq!(broken.len(), 1, "last good version stays loaded");
+        assert!(Arc::ptr_eq(&first[0].compiled, &broken[0].compiled));
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .all(|error| error.contains("keeping the last good version"))
+        );
+
+        std::fs::write(
+            &path,
+            source("demo.line").replace("chart.close", "chart.open"),
+        )
+        .unwrap();
+        let (fixed, table, errors) = load_watched_files(&files, &table);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(!Arc::ptr_eq(&first[0].compiled, &fixed[0].compiled));
+
+        std::fs::remove_file(&path).unwrap();
+        let (gone, _, errors) = load_watched_files(&[], &table);
+        assert!(gone.is_empty() && errors.is_empty());
+
+        // A file that never compiled is reported and not loaded.
+        std::fs::write(&path, "language(1)\nindicator(").unwrap();
+        let (none, _, errors) = load_watched_files(&files, &HashMap::new());
+        assert!(none.is_empty());
+        assert!(!errors.is_empty());
+        assert!(errors.iter().all(|error| !error.contains("keeping")));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

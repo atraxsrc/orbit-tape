@@ -133,7 +133,7 @@ impl ViewState {
                 )
                 .padding([0, 2])
                 .style(|theme, status| style::button::modifier(theme, status, true)),
-                Some("Restart required"),
+                Some("Not loaded yet"),
                 iced::widget::tooltip::Position::Top,
             ));
         }

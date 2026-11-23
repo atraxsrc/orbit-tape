@@ -24,8 +24,8 @@ orbit-tape-indicator-engine --test roman_ports` checks:
 
 ## Install
 
-Copy a script into the app's indicators folder, keeping its namespace folder,
-then restart Orbit Tape:
+Copy a script into the app's indicators folder, keeping its namespace folder.
+A running Orbit Tape loads it within a second:
 
 ```sh
 mkdir -p ~/.local/share/orbit-tape/indicators/roman
@@ -46,7 +46,7 @@ SFPs, LTF MSS and counter-trend MSS (Roman Setup), and OB formed / mitigated
 (Enhanced OB). With a chart showing the indicator, Orbit Tape sends a desktop
 notification and a chime when one is true on a newly closed bar. Turn single
 conditions off under Settings > Alerts. After updating a script, copy it again
-(or load it with `--indicator-path`) and restart.
+(or load it with `--indicator-path`); the app reloads it live.
 
 ## Check a script against candles
 

@@ -1,7 +1,7 @@
 use super::{IndicatorId, catalog, language::PackageOrigin};
 use serde::Deserialize;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     time::{Duration, Instant},
 };
 
@@ -101,7 +101,10 @@ pub enum Message {
 pub struct State {
     catalog: Option<Catalog>,
     status: Status,
-    pending: BTreeSet<IndicatorId>,
+    /// Install/remove actions taken from the browser. One is pending while the
+    /// loaded catalog does not reflect it yet; live reload catches up on its
+    /// own, so this is checked against the current catalog every time.
+    changes: BTreeMap<IndicatorId, SourceChange>,
     operation: SourceOperation,
 }
 
@@ -220,10 +223,10 @@ impl State {
             return Installation::Bundled;
         }
 
-        let pending = self.pending.contains(&entry.id);
-        let present = match origin {
-            Some(_) => !pending,
-            None => pending,
+        let present = match self.changes.get(&entry.id) {
+            Some(SourceChange::Installed) => true,
+            Some(SourceChange::Removed) => false,
+            None => origin.is_some(),
         };
         if present {
             Installation::Installed
@@ -233,11 +236,16 @@ impl State {
     }
 
     pub fn restart_pending(&self) -> bool {
-        !self.pending.is_empty()
+        self.changes.keys().any(|id| self.restart_pending_for(id))
     }
 
     pub fn restart_pending_for(&self, id: &IndicatorId) -> bool {
-        self.pending.contains(id)
+        let loaded = catalog().get(id).is_some();
+        match self.changes.get(id) {
+            Some(SourceChange::Installed) => !loaded,
+            Some(SourceChange::Removed) => loaded,
+            None => false,
+        }
     }
 
     pub fn can_refresh(&self) -> bool {
@@ -321,15 +329,6 @@ impl State {
     }
 
     fn record_change(&mut self, id: IndicatorId, change: SourceChange) {
-        let loaded = catalog().get(&id).is_some();
-        let pending = match change {
-            SourceChange::Installed => !loaded,
-            SourceChange::Removed => loaded,
-        };
-        if pending {
-            self.pending.insert(id);
-        } else {
-            self.pending.remove(&id);
-        }
+        self.changes.insert(id, change);
     }
 }

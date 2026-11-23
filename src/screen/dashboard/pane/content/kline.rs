@@ -786,6 +786,16 @@ impl KlineChart {
         }
     }
 
+    /// Live reload installed a new indicator catalog: indicators whose
+    /// source changed are rebuilt, removed ones drop off the chart.
+    pub fn indicator_catalog_reloaded(&mut self) {
+        self.indicators.instances.renormalize();
+        self.settings_reconfigure_pending = true;
+        self.flush_settings_update();
+        self.reconcile_settings_target();
+        self.render_invalidation.invalidate();
+    }
+
     fn flush_settings_update(&mut self) -> bool {
         if !std::mem::take(&mut self.settings_reconfigure_pending) {
             return false;

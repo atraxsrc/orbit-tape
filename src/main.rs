@@ -7,6 +7,7 @@ mod audio;
 mod blur;
 mod connector;
 mod deferred;
+mod indicator_watch;
 mod layout;
 mod logger;
 mod modal;
@@ -158,6 +159,9 @@ enum Message {
     AudioStream(modal::audio::Message),
     /// Periodic check for COSMIC theme changes.
     PollCosmicTheme,
+    /// Indicator source files changed on disk (debounced).
+    IndicatorFilesChanged,
+    IndicatorsReloaded(Result<data::chart::kline::indicators::IndicatorReloadReport, String>),
 }
 
 impl OrbitTape {
@@ -575,6 +579,13 @@ impl OrbitTape {
                 self.theme_changed(changed);
                 self.sync_blur();
             }
+            Message::IndicatorFilesChanged => {
+                return Task::perform(
+                    async { data::chart::kline::indicators::reload_indicator_catalog() },
+                    Message::IndicatorsReloaded,
+                );
+            }
+            Message::IndicatorsReloaded(result) => self.indicators_reloaded(result),
             Message::ThemeEditor(msg) => {
                 let action = self.theme_editor.update(msg, self.theme.current());
 
@@ -723,6 +734,41 @@ impl OrbitTape {
             }
         }
         Task::none()
+    }
+
+    /// Live reload finished: refresh every chart and say what happened.
+    fn indicators_reloaded(
+        &mut self,
+        result: Result<data::chart::kline::indicators::IndicatorReloadReport, String>,
+    ) {
+        let report = match result {
+            Ok(report) => report,
+            Err(error) => {
+                self.notifications
+                    .push(Toast::error(format!("Indicator reload failed: {error}")));
+                return;
+            }
+        };
+        if !report.reloaded.is_empty() || !report.removed.is_empty() {
+            for layout in &mut self.layout_manager.layouts {
+                layout.dashboard.indicator_catalog_reloaded();
+            }
+        }
+        if !report.reloaded.is_empty() {
+            self.notifications.push(Toast::info(format!(
+                "Reloaded {}",
+                report.reloaded.join(", ")
+            )));
+        }
+        if !report.removed.is_empty() {
+            self.notifications.push(Toast::info(format!(
+                "Indicator removed: {}",
+                report.removed.join(", ")
+            )));
+        }
+        for error in report.errors {
+            self.notifications.push(Toast::error(error));
+        }
     }
 
     /// Collects alert conditions from the charts and delivers them. Runs at
@@ -885,6 +931,9 @@ impl OrbitTape {
             Subscription::none()
         };
 
+        let indicator_files =
+            indicator_watch::subscription().map(|()| Message::IndicatorFilesChanged);
+
         Subscription::batch(vec![
             exchange_streams,
             sidebar,
@@ -892,6 +941,7 @@ impl OrbitTape {
             tick,
             hotkeys,
             cosmic_theme,
+            indicator_files,
         ])
     }
 
