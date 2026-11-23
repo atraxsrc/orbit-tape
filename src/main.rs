@@ -86,6 +86,8 @@ fn main() {
     }
 }
 
+const COSMIC_THEME_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
 struct Flowsurface {
     main_window: window::Window,
     sidebar: screen::sidebar::Sidebar,
@@ -126,6 +128,8 @@ enum Message {
     Layouts(modal::layout_manager::Message),
     SharedChartResources(manifest::Message),
     AudioStream(modal::audio::Message),
+    /// Periodic check for COSMIC theme changes.
+    PollCosmicTheme,
 }
 
 impl Flowsurface {
@@ -530,6 +534,10 @@ impl Flowsurface {
                     }
                 }
             }
+            Message::PollCosmicTheme => {
+                let changed = self.theme.poll_cosmic();
+                self.theme_changed(changed);
+            }
             Message::ThemeEditor(msg) => {
                 let action = self.theme_editor.update(msg, self.theme.current());
 
@@ -810,12 +818,21 @@ impl Flowsurface {
             }
         });
 
+        // COSMIC rewrites its theme files on a change; polling their mtimes is
+        // cheap and needs no file watcher.
+        let cosmic_theme = if self.theme.source().follows_cosmic() {
+            iced::time::every(COSMIC_THEME_POLL_INTERVAL).map(|_| Message::PollCosmicTheme)
+        } else {
+            Subscription::none()
+        };
+
         Subscription::batch(vec![
             exchange_streams,
             sidebar,
             window_events,
             tick,
             hotkeys,
+            cosmic_theme,
         ])
     }
 

@@ -1,4 +1,4 @@
-use data::config::cosmic::{CosmicTheme, ThemeSource};
+use data::config::cosmic::{CosmicTheme, ThemeSource, ThemeStamp};
 use data::config::theme::{ACCENT_COUNT, generated_theme_accents};
 use iced_core::{Color, Theme};
 
@@ -35,6 +35,8 @@ pub struct ThemeState {
     source: ThemeSource,
     /// The last COSMIC theme read, if it could be read.
     cosmic: Option<CosmicTheme>,
+    /// Modification times of the COSMIC files when `cosmic` was read.
+    cosmic_stamp: ThemeStamp,
     /// The theme actually in use.
     effective: Theme,
     accents: ThemeAccents,
@@ -42,6 +44,7 @@ pub struct ThemeState {
 
 impl ThemeState {
     pub fn new(selected: data::Theme, source: ThemeSource) -> Self {
+        let cosmic_stamp = ThemeStamp::read();
         let cosmic = source.follows_cosmic().then(load_cosmic).flatten();
         let effective = effective_theme(&selected, source, cosmic.as_ref());
 
@@ -50,6 +53,7 @@ impl ThemeState {
             selected,
             source,
             cosmic,
+            cosmic_stamp,
             effective,
         }
     }
@@ -66,17 +70,24 @@ impl ThemeState {
     pub fn set_source(&mut self, source: ThemeSource) -> bool {
         self.source = source;
         if source.follows_cosmic() {
+            self.cosmic_stamp = ThemeStamp::read();
             self.cosmic = load_cosmic();
         }
         self.recompute()
     }
 
-    /// Reads the COSMIC theme again after its files changed. Returns whether the
-    /// effective theme changed.
-    pub fn reload_cosmic(&mut self) -> bool {
+    /// Reads the COSMIC theme again if its files changed since the last read.
+    /// Returns whether the effective theme changed.
+    pub fn poll_cosmic(&mut self) -> bool {
         if !self.source.follows_cosmic() {
             return false;
         }
+
+        let stamp = ThemeStamp::read();
+        if stamp == self.cosmic_stamp {
+            return false;
+        }
+        self.cosmic_stamp = stamp;
         self.cosmic = load_cosmic();
         self.recompute()
     }
