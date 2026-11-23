@@ -584,7 +584,7 @@ impl WsAdapter for KlineAdapter {
                         log::error!("Ticker info not found for ticker: {}", ticker);
                     }
                 } else {
-                    log::error!("Failed to find timeframe: {}", &de_kline.interval);
+                    log::error!("Failed to find timeframe: {}", de_kline.interval);
                 }
             }
             return Ok(events);

@@ -751,7 +751,7 @@ impl WsAdapter for KlineAdapter {
                 let Some(timeframe) = string_to_timeframe(&de_kline.interval) else {
                     log::error!(
                         "Failed to find timeframe: {}, {:?}",
-                        &de_kline.interval,
+                        de_kline.interval,
                         self.streams
                     );
                     continue;
