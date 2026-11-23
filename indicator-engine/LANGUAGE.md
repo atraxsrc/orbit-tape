@@ -635,7 +635,7 @@ require hoisting, even when their expression looks constant.
 | --- | --- |
 | `array.new(...)` | Array containing zero or more positional initial values of any kind |
 | `array.push(array, value)` | Updated array with one appended value |
-| `array.get(array, index)` | Element of dynamic kind `Any`; integer index; `na` outside the array |
+| `array.get(array, index)` | Element of dynamic kind `Any`; integer index; `na` outside the array or for an `na` array |
 | `array.size(array)` | Integer element count |
 | `record.new()` | Empty record |
 | `record.set(record, key, value)` | Updated record; string key; adds or replaces a field |

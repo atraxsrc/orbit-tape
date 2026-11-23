@@ -1130,10 +1130,15 @@ fn eval_array_get(
     _site: CallSiteId,
     args: &[Value],
 ) -> Result<Value, IntrinsicError> {
-    let Some(Value::Array(values)) = args.first() else {
-        return Err(IntrinsicError::InvalidArguments(
-            "array.get expects an array",
-        ));
+    let values = match args.first() {
+        Some(Value::Array(values)) => values,
+        // Like record.get, a missing collection reads as missing.
+        Some(Value::Na) => return Ok(Value::Na),
+        _ => {
+            return Err(IntrinsicError::InvalidArguments(
+                "array.get expects an array",
+            ));
+        }
     };
     let Some(index) = args
         .get(1)

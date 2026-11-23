@@ -51,7 +51,7 @@ impl LoweringContext {
                 let operand = self.compile_expression(expression);
                 let operand_type = self.ir.program.expressions[operand.0].ty;
                 let result = match operator {
-                    UnaryOperator::Not if operand_type.value == ValueType::Bool => Type {
+                    UnaryOperator::Not if is_boolean_type(operand_type.value) => Type {
                         value: ValueType::Bool,
                         qualifier: operand_type.qualifier,
                     },
@@ -59,6 +59,15 @@ impl LoweringContext {
                         if matches!(operand_type.value, ValueType::Int | ValueType::Float) =>
                     {
                         operand_type
+                    }
+                    // Dynamic record fields and array elements are checked at runtime.
+                    UnaryOperator::Plus | UnaryOperator::Minus
+                        if operand_type.value == ValueType::Any =>
+                    {
+                        Type {
+                            value: ValueType::Float,
+                            qualifier: operand_type.qualifier,
+                        }
                     }
                     _ => {
                         self.error(*span, "invalid unary operand");
