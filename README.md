@@ -25,7 +25,7 @@ An open-source native desktop charting application for crypto markets. Supports 
     - **Heatmap (Historical DOM):** Uses live trades and orderbook to display a time-series heatmap chart. Supports customizable price grouping and different timeframes.
     - **Candlestick:** Footprints, profiles, scriptable indicators, custom tick-based intervals. See [Indicators](#indicators) and [Studies](#studies).
 - Real-time sound effects driven by trade streams
-- Multi window/monitor support on macOS and Linux.[\*](#platform-notes)
+- Multi window/monitor support.
 - Persistent layouts, chart presets, themes with editable color palettes.
 
 ## Fork changes
@@ -114,16 +114,7 @@ visible. Backfill is optional and is configured in **Settings → Network**. Som
 
 Downloads are available on the [Releases page](https://github.com/flowsurface-rs/flowsurface/releases).
 
-- **macOS**: Open the universal DMG and drag Flowsurface into Applications. Supports Apple Silicon and Intel Macs running macOS 11 or newer.
-- **Windows**: Run the x64 MSIX to install for your current user, then launch Flowsurface from the Start menu. No administrator approval is required.
 - **Linux**: Extract the archive and run `./install.sh` without sudo, then launch Flowsurface from the application menu. Run `./install.sh` from a newer archive to upgrade, or `./uninstall.sh` to remove the app. Settings and credentials are preserved. For portable use, run `./bin/flowsurface` directly.
-
-<details><summary><strong>Having trouble running the file? (Permission/Security warnings)</strong></summary>
- 
-Windows executables and MSIX installers are code-signed; macOS apps have no Apple Developer ID signature or notarization. Security warnings may still appear.
-
-- **Windows**: If App Installer cannot verify the publisher or signing certificate, [report the installation error](https://github.com/flowsurface-rs/flowsurface/issues).
-- **macOS**: If you see "Developer cannot be verified", control-click (right-click) the app and select **Open**, or go to _System Settings > Privacy & Security_ to allow it.</details>
 
 ### Method 2: Build from Source
 
@@ -136,8 +127,6 @@ Windows executables and MSIX installers are code-signed; macOS apps have no Appl
         - Debian/Ubuntu: `sudo apt install build-essential pkg-config libasound2-dev`
         - Arch: `sudo pacman -S base-devel alsa-lib`
         - Fedora: `sudo dnf install gcc make alsa-lib-devel`
-    - **macOS**: Install Xcode Command Line Tools: `xcode-select --install`
-    - **Windows**: No additional dependencies required
 
 #### Option A: `cargo install`
 
@@ -162,22 +151,12 @@ cargo build --release
 cargo run --release
 ```
 
-### Platform Notes
-
-<details open>
-<summary><strong>Windows</strong></summary>
-
-> ⚠️ Multi-window support is disabled on Windows due to a [redraw issue](https://github.com/rust-windowing/winit/issues/3648) affecting iced’s current winit backend.
-
-</details>
-
 ## Community
 
 Discord: https://discord.gg/RN2XAF7ZuR
 
 ## Acknowledgments
 
-- Free code signing for Windows releases is provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/)
 - [Kraken Desktop](https://www.kraken.com/desktop) (formerly [Cryptowatch](https://blog.kraken.com/product/cryptowatch-to-sunset-kraken-pro-to-integrate-cryptowatch-features)), the main inspiration that sparked this project
 - [Halloy](https://github.com/squidowl/halloy), an excellent open-source IRC client, the main reference for the foundational code design
 - And of course, [iced](https://github.com/iced-rs/iced), the GUI library that makes this possible

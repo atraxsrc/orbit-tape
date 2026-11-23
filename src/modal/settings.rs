@@ -200,11 +200,7 @@ impl Settings {
             col.spacing(4)
         };
 
-        let glass_section: Element<'_, Message> = if cfg!(target_os = "linux") {
-            glass_view(theme)
-        } else {
-            column![].into()
-        };
+        let glass_section = glass_view(theme);
 
         let toggle_theme_editor = button(text("Theme editor")).on_press(Message::Sidebar(
             sidebar::Message::ToggleSidebarMenu(Some(Menu::ThemeEditor)),

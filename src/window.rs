@@ -5,9 +5,6 @@ use iced::{Point, Size, Subscription, Task, window};
 
 pub use iced::window::{Id, Position, Settings, close, open};
 
-// Windows popout rendering can freeze, enable when upstream rendering is fixed.
-pub const MULTI_WINDOW_SUPPORTED: bool = !cfg!(target_os = "windows");
-
 const DEFAULT_SCALE: f32 = 1.0;
 
 #[derive(Debug, Clone, Copy)]
@@ -184,7 +181,6 @@ where
         })
 }
 
-#[cfg(target_os = "linux")]
 pub fn settings() -> Settings {
     Settings {
         platform_specific: iced::window::settings::PlatformSpecific {
@@ -198,37 +194,6 @@ pub fn settings() -> Settings {
         // glass off the background is opaque and nothing shows through.
         transparent: true,
         blur: true,
-        ..Default::default()
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub fn settings() -> Settings {
-    use iced::window;
-
-    Settings {
-        platform_specific: window::settings::PlatformSpecific {
-            title_hidden: true,
-            titlebar_transparent: true,
-            fullsize_content_view: true,
-        },
-        min_size: Some(Size::new(800.0, 600.0)),
-        ..Default::default()
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub fn settings() -> Settings {
-    Settings {
-        icon: Some(
-            window::icon::from_rgba(
-                include_bytes!("../assets/app-icon/windows-window.rgba").to_vec(),
-                64,
-                64,
-            )
-            .expect("embedded Windows window icon must be valid"),
-        ),
-        min_size: Some(Size::new(800.0, 600.0)),
         ..Default::default()
     }
 }

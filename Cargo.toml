@@ -71,8 +71,8 @@ fern = "0.7.1"
 reqwest.workspace = true
 tokio.workspace = true
 rodio = { version = "0.22.2", default-features = false, features = [ "playback", "wav" ]}
-# Desktop notifications for indicator alerts (freedesktop spec over zbus on
-# Linux), see src/alerts.rs.
+# Desktop notifications for indicator alerts (freedesktop spec over zbus), see
+# src/alerts.rs.
 notify-rust = { version = "4.11", default-features = false, features = ["z"] }
 
 bytemuck = "1.25.0"
@@ -84,11 +84,6 @@ arrow-schema.workspace = true
 bytes = "1.11.1"
 data.workspace = true
 indicator_engine.workspace = true
-
-[features]
-debug = ["iced/hot"]
-
-[target.'cfg(target_os = "linux")'.dependencies]
 # Window blur on compositors without KDE's blur protocol (COSMIC), see src/blur.rs.
 # All already in the tree through winit.
 raw-window-handle = "0.6.2"
@@ -96,8 +91,9 @@ wayland-backend = { version = "0.3.15", features = ["client_system"] }
 wayland-client = "0.31.14"
 wayland-protocols = { version = "0.32.12", features = ["client", "staging"] }
 
-[target.'cfg(windows)'.build-dependencies]
-embed-resource = "3.0.2"
+[features]
+debug = ["iced/hot"]
+
 
 [profile.packaging]
 inherits = "release"

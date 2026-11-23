@@ -1,8 +1,5 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 mod alerts;
 mod audio;
-#[cfg(target_os = "linux")]
 mod blur;
 mod connector;
 mod deferred;
@@ -759,27 +756,7 @@ impl Flowsurface {
                     event: msg,
                 });
 
-            let header_title = {
-                #[cfg(target_os = "macos")]
-                {
-                    iced::widget::center(
-                        text("FLOWSURFACE")
-                            .font(iced::Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            })
-                            .size(crate::style::text_size::TITLE)
-                            .style(style::title_text),
-                    )
-                    .height(20)
-                    .align_y(Alignment::Center)
-                    .padding(padding::top(4))
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    column![]
-                }
-            };
+            let header_title = { column![] };
 
             let dashboard_row = match sidebar_pos {
                 sidebar::Position::Left => row![sidebar_view, dashboard_view],
@@ -810,7 +787,6 @@ impl Flowsurface {
                         event: msg,
                     }),
             )
-            .padding(padding::top(style::TITLE_PADDING_TOP))
             .into()
         };
 
@@ -959,7 +935,6 @@ impl Flowsurface {
 
     /// Blurs what is behind the windows while their background is see-through.
     fn sync_blur(&self) {
-        #[cfg(target_os = "linux")]
         blur::set_all(self.theme.window_opacity() < 1.0);
     }
 
@@ -984,7 +959,6 @@ impl Flowsurface {
                         scale_factor,
                     }
                 });
-                #[cfg(target_os = "linux")]
                 let blur = {
                     let blurred = self.theme.window_opacity() < 1.0;
                     iced::window::run(window_id, move |window| {
@@ -992,13 +966,10 @@ impl Flowsurface {
                     })
                     .discard()
                 };
-                #[cfg(not(target_os = "linux"))]
-                let blur = Task::none();
                 Task::batch([scale_factor, blur])
             }
-            window::Event::Closed(_window_id) => {
-                #[cfg(target_os = "linux")]
-                blur::detach(_window_id);
+            window::Event::Closed(window_id) => {
+                blur::detach(window_id);
                 Task::none()
             }
             window::Event::Rescaled(window_id, scale_factor) => {

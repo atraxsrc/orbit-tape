@@ -1270,11 +1270,8 @@ mod tests {
         let report = load_sources(&[short_first_path, short_second_path], None);
         assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
         assert_eq!(report.sources.len(), 2);
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(&root, root.join("cycle")).unwrap();
-            assert_eq!(source_paths(&root).unwrap(), paths);
-        }
+        std::os::unix::fs::symlink(&root, root.join("cycle")).unwrap();
+        assert_eq!(source_paths(&root).unwrap(), paths);
 
         let _ = fs::remove_dir_all(root);
     }

@@ -79,19 +79,6 @@ jobs:
         strategy:
             matrix:
                 target:
-                    - target: macos-arm
-                      os: macos-latest
-                      make: bash scripts/build-macos.sh aarch64
-                      artifact_path: |
-                          echo "ARTIFACT_PATH=target/packaging/flowsurface-aarch64-macos.tar.gz" >> "$GITHUB_ENV"
-                    - target: macos-x64
-                      os: macos-15-intel
-                      make: bash scripts/build-macos.sh x86_64
-                      artifact_path: |
-                          echo "ARTIFACT_PATH=target/packaging/flowsurface-x86_64-macos.tar.gz" >> "$GITHUB_ENV"
-                    - target: windows-x64
-                      os: windows-latest
-                      make: bash scripts/build-windows.sh x86_64
                     - target: linux-x64
                       os: ubuntu-24.04
                       make: bash scripts/package-linux.sh package x86_64
@@ -128,7 +115,6 @@ jobs:
                   toolchain: ${{ steps.rust_toolchain.outputs.channel }}
 
             - name: Install linux deps
-              if: startsWith(matrix.target.target, 'linux')
               run: |
                   sudo apt update
                   sudo apt install -y \
@@ -139,94 +125,13 @@ jobs:
                     libxkbcommon-dev \
                     libasound2-dev
 
-            - name: Use thin LTO for Intel macOS
-              if: matrix.target.target == 'macos-x64'
-              shell: bash
-              run: echo 'CARGO_PROFILE_PACKAGING_LTO=thin' >> "$GITHUB_ENV"
-
             - name: Build
               run: ${{ matrix.target.make }}
 
             - name: Set artifact path
-              if: matrix.target.target != 'windows-x64'
               run: ${{ matrix.target.artifact_path }}
 
-            - name: Upload unsigned Windows executable for SignPath
-              if: matrix.target.target == 'windows-x64'
-              id: upload-unsigned-windows
-              uses: actions/upload-artifact@v7
-              with:
-                  path: target/packaging/win-unsigned/flowsurface.exe
-                  archive: false
-                  if-no-files-found: error
-
-            - name: Submit SignPath signing request
-              if: matrix.target.target == 'windows-x64'
-              uses: signpath/github-action-submit-signing-request@v2
-              with:
-                  api-token: "${{ secrets.SIGNPATH_API_TOKEN }}"
-                  organization-id: "${{ secrets.SIGNPATH_ORG_ID }}"
-                  project-slug: "flowsurface"
-                  signing-policy-slug: "release-signing"
-                  artifact-configuration-slug: "windows-exe"
-                  github-artifact-id: "${{ steps.upload-unsigned-windows.outputs.artifact-id }}"
-                  wait-for-completion: true
-                  wait-for-completion-timeout-in-seconds: 1800
-                  output-artifact-directory: "target/packaging/win-signed"
-                  skip-decompress: true
-
-            - name: Build Windows installer from signed executable
-              if: matrix.target.target == 'windows-x64'
-              shell: pwsh
-              run: |
-                  $signature = Get-AuthenticodeSignature target/packaging/win-signed/flowsurface.exe
-                  if ($signature.Status -ne 'Valid') { throw "Invalid executable signature: $($signature.Status)" }
-                  ./scripts/package-windows.ps1 -Output target/packaging/flowsurface-x86_64-windows-unsigned.msix
-
-            - name: Upload unsigned MSIX for SignPath
-              if: matrix.target.target == 'windows-x64'
-              id: upload-unsigned-msix
-              uses: actions/upload-artifact@v7
-              with:
-                  path: target/packaging/flowsurface-x86_64-windows-unsigned.msix
-                  archive: false
-                  if-no-files-found: error
-
-            - name: Sign Windows installer
-              if: matrix.target.target == 'windows-x64'
-              uses: signpath/github-action-submit-signing-request@v2
-              with:
-                  api-token: "${{ secrets.SIGNPATH_API_TOKEN }}"
-                  organization-id: "${{ secrets.SIGNPATH_ORG_ID }}"
-                  project-slug: "flowsurface"
-                  signing-policy-slug: "release-signing"
-                  artifact-configuration-slug: "windows-msix"
-                  github-artifact-id: "${{ steps.upload-unsigned-msix.outputs.artifact-id }}"
-                  wait-for-completion: true
-                  wait-for-completion-timeout-in-seconds: 1800
-                  output-artifact-directory: "target/packaging/msix-signed"
-                  skip-decompress: true
-
-            - name: Verify signed installer
-              if: matrix.target.target == 'windows-x64'
-              shell: pwsh
-              run: |
-                  Move-Item target/packaging/msix-signed/flowsurface-x86_64-windows-unsigned.msix target/packaging/msix-signed/flowsurface-x86_64-windows.msix
-                  $sdk = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/signtool.exe" | Sort-Object { [version]$_.Directory.Parent.Name } -Descending | Select-Object -First 1
-                  if (!$sdk) { throw "SignTool not found" }
-                  & $sdk.FullName verify /pa /v target/packaging/msix-signed/flowsurface-x86_64-windows.msix
-                  if ($LASTEXITCODE -ne 0) { throw "Invalid MSIX signature" }
-
-            - name: Upload signed installer
-              if: matrix.target.target == 'windows-x64'
-              uses: actions/upload-artifact@v7
-              with:
-                  path: target/packaging/msix-signed/flowsurface-x86_64-windows.msix
-                  archive: false
-                  if-no-files-found: error
-
             - name: Upload artifact
-              if: matrix.target.target != 'windows-x64'
               uses: actions/upload-artifact@v7
               env:
                   ARTIFACT_PATH: ${{ env.ARTIFACT_PATH }}
@@ -237,26 +142,12 @@ jobs:
 
     publish-release:
         name: Publish Release
-        needs: [build, create-universal]
+        needs: build
         runs-on: ubuntu-latest
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
         steps:
-            - name: Download Windows installer
-              uses: actions/download-artifact@v8
-              with:
-                  name: flowsurface-x86_64-windows.msix
-                  path: release-artifacts
-                  skip-decompress: true
-
-            - name: Download macOS installer
-              uses: actions/download-artifact@v8
-              with:
-                  name: flowsurface-universal-macos.dmg
-                  path: release-artifacts
-                  skip-decompress: true
-
             - name: Download Linux x64 package
               uses: actions/download-artifact@v8
               with:
@@ -274,8 +165,6 @@ jobs:
             - name: Generate checksums
               working-directory: release-artifacts
               run: |
-                  sha256sum flowsurface-universal-macos.dmg | awk '{print $1 "  flowsurface-universal-macos.dmg"}' >> SHA256SUMS
-                  sha256sum flowsurface-x86_64-windows.msix | awk '{print $1 "  flowsurface-x86_64-windows.msix"}' >> SHA256SUMS
                   sha256sum flowsurface-x86_64-linux.tar.gz | awk '{print $1 "  flowsurface-x86_64-linux.tar.gz"}' >> SHA256SUMS
                   sha256sum flowsurface-aarch64-linux.tar.gz | awk '{print $1 "  flowsurface-aarch64-linux.tar.gz"}' >> SHA256SUMS
 
@@ -307,50 +196,3 @@ jobs:
                   overwrite_files: true
                   fail_on_unmatched_files: true
                   files: release-artifacts/*
-
-    create-universal:
-        name: Package Universal macOS App
-        needs: build
-        runs-on: macos-latest
-        steps:
-            - uses: actions/checkout@v7
-              with:
-                  ref: refs/tags/${{ github.event.inputs.tag }}
-
-            - name: Download arm artifact
-              uses: actions/download-artifact@v8
-              with:
-                  name: flowsurface-aarch64-macos.tar.gz
-                  path: macos-arm
-                  skip-decompress: true
-
-            - name: Download x64 artifact
-              uses: actions/download-artifact@v8
-              with:
-                  name: flowsurface-x86_64-macos.tar.gz
-                  path: macos-x64
-                  skip-decompress: true
-
-            - name: Extract macOS arm artifact
-              run: |
-                  mkdir -p macos-arm/extracted
-                  tar -xzf macos-arm/flowsurface-aarch64-macos.tar.gz -C macos-arm/extracted
-
-            - name: Extract macOS x64 artifact
-              run: |
-                  mkdir -p macos-x64/extracted
-                  tar -xzf macos-x64/flowsurface-x86_64-macos.tar.gz -C macos-x64/extracted
-
-            - name: Create universal binary
-              run: |
-                  mkdir -p target/packaging
-                  lipo macos-arm/extracted/flowsurface macos-x64/extracted/flowsurface -create -output target/packaging/flowsurface
-                  lipo target/packaging/flowsurface -verify_arch arm64 x86_64
-                  bash scripts/package-macos.sh
-
-            - name: Upload universal artifact
-              uses: actions/upload-artifact@v7
-              with:
-                  path: target/packaging/flowsurface-universal-macos.dmg
-                  archive: false
-                  if-no-files-found: error
