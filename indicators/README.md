@@ -6,7 +6,21 @@ source file in Flowsurface's indicator language
 
 | Script | ID | Ported from |
 | --- | --- | --- |
+| [roman/roman-setup.ind](roman/roman-setup.ind) | `roman.roman-setup` | Roman Trade Setup (H12 to H1) (Pine v6, rev 7) |
 | [roman/enhanced-ob.ind](roman/enhanced-ob.ind) | `roman.enhanced-ob` | Enhanced Roman Order Block (Pine v6, rev 3) |
+
+## Tests
+
+`roman/tests/` holds 3000 Binance BTCUSDT perpetual 1H candles. `cargo test -p
+flowsurface-indicator-engine --test roman_ports` checks:
+
+- Roman Setup against values exported from the original Pine script on TradingView
+  (bias, 50% fib, all four zone slots with breaker state, HTF MSS, SFP and LTF MSS events)
+  on the last 999 bars. That export came from rev 5 of the script, so the test turns off
+  the rev 6 additions (thin-body wick, broken-level retest); those, counter-trend mode and
+  the rev 7 flip levels are not checked against TradingView yet.
+- Enhanced OB against an independent re-implementation of its Pine logic: every
+  formation and mitigation event.
 
 ## Install
 
