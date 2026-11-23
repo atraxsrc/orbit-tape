@@ -125,6 +125,7 @@ pub struct SavedState {
     pub sidebar: data::Sidebar,
     pub theme: data::Theme,
     pub custom_theme: Option<data::Theme>,
+    pub theme_source: data::config::cosmic::ThemeSource,
     pub audio_cfg: data::AudioStream,
     pub volume_size_unit: exchange::SizeUnit,
     pub network: data::Network,
@@ -155,6 +156,7 @@ impl Default for SavedState {
             sidebar: data::Sidebar::default(),
             theme: data::Theme::default(),
             custom_theme: None,
+            theme_source: data::config::cosmic::ThemeSource::default(),
             audio_cfg: data::AudioStream::default(),
             volume_size_unit: exchange::SizeUnit::default(),
             network: data::Network::default(),
@@ -402,6 +404,7 @@ pub fn load_saved_state() -> SavedState {
             SavedState {
                 theme: state.selected_theme,
                 custom_theme: state.custom_theme,
+                theme_source: state.theme_source,
                 layout_manager,
                 main_window: state.main_window,
                 timezone: state.timezone,

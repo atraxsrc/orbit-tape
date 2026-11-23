@@ -5,6 +5,7 @@ use crate::{
 };
 
 use data::{
+    config::cosmic::ThemeSource,
     config::theme::default_theme,
     sidebar::{Menu, Position as SidebarPosition},
 };
@@ -17,6 +18,7 @@ use iced::{
 #[derive(Debug, Clone)]
 pub enum Message {
     ThemeSelected(iced::Theme),
+    SetFollowCosmic(bool),
     TimezoneChanged(data::UserTimezone),
     SetMetadataCaching(bool),
     RefreshMetadata,
@@ -34,6 +36,7 @@ pub enum Action {
     /// A restart-gated setting changed, so what is on disk is now stale.
     Persist,
     ThemeSelected(iced::Theme),
+    SetThemeSource(ThemeSource),
     SetMetadataCaching(bool),
     RefreshMetadata,
     OpenDataFolder,
@@ -83,6 +86,13 @@ impl Settings {
                 self.scale_factor = value;
             }
             Message::ThemeSelected(theme) => return Some(Action::ThemeSelected(theme)),
+            Message::SetFollowCosmic(follow) => {
+                return Some(Action::SetThemeSource(if follow {
+                    ThemeSource::Cosmic
+                } else {
+                    ThemeSource::Selected
+                }));
+            }
             Message::SetMetadataCaching(enabled) => {
                 return Some(Action::SetMetadataCaching(enabled));
             }
@@ -116,6 +126,29 @@ impl Settings {
                 Some(theme.current().clone()),
                 Message::ThemeSelected,
             )
+        };
+
+        let follow_cosmic = {
+            let follows = theme.source().follows_cosmic();
+            let checkbox = tooltip(
+                checkbox(follows)
+                    .label("Follow COSMIC theme")
+                    .on_toggle(Message::SetFollowCosmic),
+                Some(
+                    "Use the COSMIC desktop's colors and light/dark mode.\n- Picking a theme below turns this off.",
+                ),
+                Position::Top,
+            );
+
+            let mut col = column![row![checkbox].height(24).align_y(Alignment::Center)];
+            if follows && theme.active_cosmic().is_none() {
+                col = col.push(
+                    text("COSMIC theme not found, using the selected theme")
+                        .size(crate::style::text_size::SMALL)
+                        .style(style::secondary_text),
+                );
+            }
+            col.spacing(4)
         };
 
         let toggle_theme_editor = button(text("Theme editor")).on_press(Message::Sidebar(
@@ -367,7 +400,7 @@ impl Settings {
             column![text("Sidebar position").size(crate::style::text_size::SECTION), sidebar_pos_picklist,].spacing(12),
             column![text("Time zone").size(crate::style::text_size::SECTION), timezone_picklist,].spacing(12),
             column![text("Market data").size(crate::style::text_size::SECTION), column![size_in_quote_ccy_checkbox, cache_metadata_checkbox].spacing(4)].spacing(12),
-            column![text("Theme").size(crate::style::text_size::SECTION), theme_picklist,].spacing(12),
+            column![text("Theme").size(crate::style::text_size::SECTION), follow_cosmic, theme_picklist,].spacing(12),
             column![text("Interface scale").size(crate::style::text_size::SECTION), scale_factor,].spacing(12),
             column![text("Rendering").size(crate::style::text_size::SECTION), antialiasing_checkbox,].spacing(12),
             column![

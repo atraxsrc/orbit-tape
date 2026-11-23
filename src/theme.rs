@@ -1,3 +1,4 @@
+use data::config::cosmic::{CosmicTheme, ThemeSource};
 use data::config::theme::{ACCENT_COUNT, generated_theme_accents};
 use iced_core::{Color, Theme};
 
@@ -24,42 +25,181 @@ impl ThemeAccents {
     }
 }
 
+/// The app theme: the user's selected theme, optionally overridden by the
+/// COSMIC desktop theme.
 #[derive(Debug, Clone)]
 pub struct ThemeState {
-    theme: data::Theme,
+    /// The built-in or custom theme picked in the settings. This is what gets
+    /// persisted, and what is shown when COSMIC isn't followed or unavailable.
+    selected: data::Theme,
+    source: ThemeSource,
+    /// The last COSMIC theme read, if it could be read.
+    cosmic: Option<CosmicTheme>,
+    /// The theme actually in use.
+    effective: Theme,
     accents: ThemeAccents,
 }
 
 impl ThemeState {
-    pub fn new(theme: data::Theme) -> Self {
+    pub fn new(selected: data::Theme, source: ThemeSource) -> Self {
+        let cosmic = source.follows_cosmic().then(load_cosmic).flatten();
+        let effective = effective_theme(&selected, source, cosmic.as_ref());
+
         Self {
-            accents: ThemeAccents::from_theme(&theme.0, 0),
-            theme,
+            accents: ThemeAccents::from_theme(&effective, 0),
+            selected,
+            source,
+            cosmic,
+            effective,
         }
     }
 
-    pub fn replace(&mut self, theme: Theme) -> bool {
-        if self.theme.0 == theme {
+    /// Selects a built-in or custom theme. Returns whether the effective theme
+    /// changed.
+    pub fn select(&mut self, theme: Theme) -> bool {
+        self.selected = data::Theme(theme);
+        self.recompute()
+    }
+
+    /// Switches between following COSMIC and the selected theme. Returns whether
+    /// the effective theme changed.
+    pub fn set_source(&mut self, source: ThemeSource) -> bool {
+        self.source = source;
+        if source.follows_cosmic() {
+            self.cosmic = load_cosmic();
+        }
+        self.recompute()
+    }
+
+    /// Reads the COSMIC theme again after its files changed. Returns whether the
+    /// effective theme changed.
+    pub fn reload_cosmic(&mut self) -> bool {
+        if !self.source.follows_cosmic() {
+            return false;
+        }
+        self.cosmic = load_cosmic();
+        self.recompute()
+    }
+
+    fn recompute(&mut self) -> bool {
+        let effective = effective_theme(&self.selected, self.source, self.cosmic.as_ref());
+        if effective == self.effective {
             return false;
         }
 
         let generation = self.accents.generation().wrapping_add(1);
-        let accents = ThemeAccents::from_theme(&theme, generation);
-
-        self.theme = data::Theme(theme);
-        self.accents = accents;
+        self.accents = ThemeAccents::from_theme(&effective, generation);
+        self.effective = effective;
         true
     }
 
     pub fn current(&self) -> &Theme {
-        &self.theme.0
+        &self.effective
     }
 
+    /// The selected theme, for persistence.
     pub fn data_theme(&self) -> data::Theme {
-        self.theme.clone()
+        self.selected.clone()
+    }
+
+    pub fn source(&self) -> ThemeSource {
+        self.source
+    }
+
+    /// The COSMIC theme in use, if COSMIC is followed and could be read.
+    pub fn active_cosmic(&self) -> Option<&CosmicTheme> {
+        self.cosmic
+            .as_ref()
+            .filter(|_| self.source.follows_cosmic())
     }
 
     pub fn accents(&self) -> ThemeAccents {
         self.accents
+    }
+}
+
+fn effective_theme(
+    selected: &data::Theme,
+    source: ThemeSource,
+    cosmic: Option<&CosmicTheme>,
+) -> Theme {
+    match (source, cosmic) {
+        (ThemeSource::Cosmic, Some(cosmic)) => cosmic.to_iced_theme(),
+        _ => selected.0.clone(),
+    }
+}
+
+fn load_cosmic() -> Option<CosmicTheme> {
+    match CosmicTheme::load() {
+        Ok(theme) => Some(theme),
+        Err(err) => {
+            log::warn!("COSMIC theme unavailable, using the selected theme: {err}");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cosmic() -> CosmicTheme {
+        CosmicTheme {
+            is_dark: true,
+            background: Color::from_rgb(0.1, 0.1, 0.15),
+            text: Color::from_rgb(0.9, 0.9, 1.0),
+            accent: Color::from_rgb(0.5, 0.6, 1.0),
+            success: Color::from_rgb(0.2, 0.8, 0.5),
+            warning: Color::from_rgb(0.9, 0.8, 0.3),
+            destructive: Color::from_rgb(0.9, 0.3, 0.3),
+            radius_xs: 4.0,
+            radius_s: 8.0,
+        }
+    }
+
+    #[test]
+    fn effective_theme_follows_source() {
+        let selected = data::Theme(Theme::Nord);
+        let cosmic = cosmic();
+
+        assert_eq!(
+            effective_theme(&selected, ThemeSource::Cosmic, Some(&cosmic)),
+            cosmic.to_iced_theme()
+        );
+        assert_eq!(
+            effective_theme(&selected, ThemeSource::Selected, Some(&cosmic)),
+            Theme::Nord
+        );
+        // Falls back to the selected theme when COSMIC can't be read.
+        assert_eq!(
+            effective_theme(&selected, ThemeSource::Cosmic, None),
+            Theme::Nord
+        );
+    }
+
+    #[test]
+    fn selecting_a_theme_bumps_the_accent_generation() {
+        let mut state = ThemeState::new(data::Theme(Theme::Nord), ThemeSource::Selected);
+        let before = state.accents().generation();
+
+        assert!(!state.select(Theme::Nord));
+        assert_eq!(state.accents().generation(), before);
+
+        assert!(state.select(Theme::Dracula));
+        assert_eq!(state.current(), &Theme::Dracula);
+        assert_eq!(state.data_theme().0, Theme::Dracula);
+        assert_ne!(state.accents().generation(), before);
+    }
+
+    #[test]
+    fn cosmic_theme_is_not_persisted() {
+        let mut state = ThemeState::new(data::Theme(Theme::Nord), ThemeSource::Selected);
+        state.source = ThemeSource::Cosmic;
+        state.cosmic = Some(cosmic());
+        assert!(state.recompute());
+
+        assert_eq!(state.current(), &cosmic().to_iced_theme());
+        assert_eq!(state.data_theme().0, Theme::Nord);
+        assert!(state.active_cosmic().is_some());
     }
 }
