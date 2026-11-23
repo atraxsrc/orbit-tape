@@ -6,6 +6,20 @@ const PROXY_KEYCHAIN_SERVICE: &str = "orbit-tape.proxy";
 /// Service name used before the rename from Flowsurface; read as a fallback.
 const LEGACY_PROXY_KEYCHAIN_SERVICE: &str = "flowsurface.proxy";
 
+/// Removes the entry an older Flowsurface install stored, so a credential the
+/// user deleted does not come back through the fallback in [`get_secret`].
+fn delete_legacy_secret(legacy_service: &str, key: &str) {
+    let result =
+        keyring::Entry::new(legacy_service, key).and_then(|entry| entry.delete_credential());
+    match result {
+        Ok(()) => log::info!("Deleted legacy keychain entry (service={legacy_service} key={key})"),
+        Err(keyring::Error::NoEntry) => {}
+        Err(err) => log::warn!(
+            "Failed to delete legacy keychain entry (service={legacy_service} key={key}): {err}"
+        ),
+    }
+}
+
 /// Reads a secret, falling back to the entry an older Flowsurface install
 /// stored. A legacy secret is copied to the new service and left in place.
 fn get_secret(service: &str, legacy_service: &str, key: &str) -> Result<String, keyring::Error> {
@@ -112,6 +126,7 @@ pub fn save_proxy_auth(proxy: &Proxy) {
 /// Silently succeeds if no credential exists.
 pub fn delete_proxy_auth(proxy: &Proxy) {
     let key = proxy.to_url_string_no_auth();
+    delete_legacy_secret(LEGACY_PROXY_KEYCHAIN_SERVICE, &key);
     let entry = match proxy_entry_for(proxy) {
         Ok(e) => e,
         Err(err) => {
@@ -197,6 +212,7 @@ pub fn save_server_token(url: &str, token: &str) {
 ///
 /// Silently succeeds if no credential exists.
 pub fn delete_server_token(url: &str) {
+    delete_legacy_secret(LEGACY_SERVER_KEYCHAIN_SERVICE, url);
     let entry = match server_entry_for(url) {
         Ok(e) => e,
         Err(err) => {
