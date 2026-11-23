@@ -1018,6 +1018,36 @@ impl MarkRenderer<'_> {
                 .map(painting::resolve_indicator_color)
                 .or_else(|| region.border_color_slot.as_deref().map(slot_color));
 
+            let style = match region.border_style {
+                indicator_engine::RegionBorderStyle::Solid => LineStrokeStyle::Solid,
+                indicator_engine::RegionBorderStyle::Dashed => LineStrokeStyle::Dashed,
+                indicator_engine::RegionBorderStyle::Dotted => LineStrokeStyle::Dotted,
+            };
+            let (line_width, line_width_phys) = pixels
+                .quantized_stroke_width(region.width.max(pixels.logical_width_from_physical(1)));
+            // A flat region with a border is a horizontal line, like Pine's line.new.
+            if region.upper == region.lower
+                && region.left_index != region.right_index
+                && let Some(border_color) = border_color
+                && upper_y.is_finite()
+                && (plot.y..=plot.y + plot.height).contains(&upper_y)
+            {
+                let end_x = if region.extend_right {
+                    plot.x + plot.width
+                } else {
+                    right_x
+                };
+                let start = left_x.min(end_x).max(plot.x);
+                let end = left_x.max(end_x).min(plot.x + plot.width);
+                if start < end {
+                    let y = pixels.snap_y_for_stroke(upper_y, line_width_phys);
+                    frame.stroke(
+                        &canvas::Path::line(Point::new(start, y), Point::new(end, y)),
+                        indicator_line_stroke(line_width, style, border_color),
+                    );
+                }
+            }
+
             if let Some(rect) = rect {
                 if let Some(fill_color) = fill_color {
                     frame.fill_rectangle(
@@ -1027,16 +1057,6 @@ impl MarkRenderer<'_> {
                     );
                 }
                 if let Some(border_color) = border_color {
-                    let line_width = pixels
-                        .quantized_stroke_width(
-                            region.width.max(pixels.logical_width_from_physical(1)),
-                        )
-                        .0;
-                    let style = match region.border_style {
-                        indicator_engine::RegionBorderStyle::Solid => LineStrokeStyle::Solid,
-                        indicator_engine::RegionBorderStyle::Dashed => LineStrokeStyle::Dashed,
-                        indicator_engine::RegionBorderStyle::Dotted => LineStrokeStyle::Dotted,
-                    };
                     frame.stroke(
                         &canvas::Path::rectangle(
                             Point::new(rect.x, rect.y),
