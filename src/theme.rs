@@ -48,6 +48,14 @@ impl ThemeState {
         let cosmic = source.follows_cosmic().then(load_cosmic).flatten();
         let effective = effective_theme(&selected, source, cosmic.as_ref());
         apply_radii(source, cosmic.as_ref());
+        log::info!(
+            "Theme source: {source:?}, COSMIC theme {}",
+            match &cosmic {
+                Some(theme) if theme.is_dark => "loaded (dark)",
+                Some(_) => "loaded (light)",
+                None => "not loaded",
+            }
+        );
 
         Self {
             accents: ThemeAccents::from_theme(&effective, 0),
@@ -152,7 +160,13 @@ fn apply_radii(source: ThemeSource, cosmic: Option<&CosmicTheme>) {
 
 fn load_cosmic() -> Option<CosmicTheme> {
     match CosmicTheme::load() {
-        Ok(theme) => Some(theme),
+        Ok(theme) => {
+            log::info!(
+                "Read COSMIC theme ({})",
+                if theme.is_dark { "dark" } else { "light" }
+            );
+            Some(theme)
+        }
         Err(err) => {
             log::warn!("COSMIC theme unavailable, using the selected theme: {err}");
             None
