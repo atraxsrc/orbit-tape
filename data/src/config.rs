@@ -1,5 +1,6 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
+pub mod alerts;
 pub mod auth;
 pub mod cosmic;
 pub mod glass;

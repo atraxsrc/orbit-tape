@@ -358,6 +358,53 @@ mod tests {
     }
 
     #[test]
+    fn plot_alert_flag() {
+        let compiled = compile(
+            "language(1)\nindicator(\"Alerts\", id = \"test.alerts\")\n\
+             format(precision = \"base_ticker_min_tick\")\n\
+             plot(chart.close > chart.open, id = \"up\", title = \"Up bar\", alert = true)\n\
+             plot(chart.close < chart.open, id = \"down\")\n\
+             plot(chart.close, id = \"close\")\n",
+            "alerts.ind",
+        )
+        .expect("alert plots should compile");
+        let alert = |id: &str| {
+            compiled
+                .descriptor
+                .plots
+                .iter()
+                .find(|plot| plot.id == id)
+                .map(|plot| plot.alert)
+        };
+        assert_eq!(alert("up"), Some(true));
+        assert_eq!(alert("down"), Some(false));
+        assert_eq!(alert("close"), Some(false));
+
+        for (body, message) in [
+            (
+                "plot(chart.close, alert = true)",
+                "requires a boolean series",
+            ),
+            (
+                "plot(chart.close > 1, alert = \"yes\")",
+                "alert must be a boolean literal",
+            ),
+        ] {
+            let source = format!(
+                "language(1)\nindicator(\"Alerts\", id = \"test.alerts\")\n\
+                 format(precision = \"base_ticker_min_tick\")\n{body}\n"
+            );
+            let diagnostics = compile(&source, "alerts.ind").expect_err("invalid alert plot");
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(message)),
+                "{body}: {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
     fn indicator_basis_restrictions() {
         for (declaration, expected) in [
             ("", None),

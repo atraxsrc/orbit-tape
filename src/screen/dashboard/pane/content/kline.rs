@@ -40,6 +40,7 @@ pub use settings::Message as SettingsMessage;
 pub use updates::DataUpdate;
 
 use data::chart::Basis;
+use data::chart::kline::alerts::{AlertHit, AlertWatch};
 use data::chart::kline::composition::{
     ChartComposition, DEFAULT_MIN_PANEL_RATIO, MarkKind, PanelId, PanelScaleMode,
 };
@@ -105,6 +106,7 @@ pub struct KlineChart {
     settings_reconfigure_pending: bool,
     render_invalidation: RenderInvalidation,
     last_maintenance_at: Instant,
+    alert_watch: AlertWatch,
 }
 
 struct PreparedSettings {
@@ -195,6 +197,7 @@ impl KlineChart {
             indicator_browser: indicator_browser::State::default(),
             drawing_sidebar_visible: true,
             last_maintenance_at: Instant::now(),
+            alert_watch: AlertWatch::default(),
             render_invalidation: RenderInvalidation::new(),
             settings_reconfigure_pending: false,
         };
@@ -815,6 +818,27 @@ impl KlineChart {
 
     pub fn selected_indicators(&self) -> Vec<IndicatorInstanceId> {
         self.indicators.selected_indicators()
+    }
+
+    /// Alert conditions that turned true on bars closed since the last call.
+    pub fn take_alerts(&mut self, now: UnixMs) -> Vec<AlertHit> {
+        let selected = self.indicators.selected_indicators();
+        let indicators = &self.indicators;
+        let rebuilding = indicators.pending_rebuild_job().is_some();
+        self.alert_watch.poll(
+            &self.data,
+            &indicators.instances,
+            &selected,
+            |id| {
+                // Same rule as live updates: an indicator waiting only on a
+                // trade fetch is still evaluated bar by bar.
+                !rebuilding
+                    && indicators
+                        .rebuild_reason(id)
+                        .is_none_or(|reason| matches!(reason, IndicatorRebuildReason::InputFetch))
+            },
+            now,
+        )
     }
 
     pub fn last_maintenance_at(&self) -> Instant {

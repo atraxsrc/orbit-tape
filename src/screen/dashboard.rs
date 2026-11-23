@@ -1107,6 +1107,25 @@ impl Dashboard {
         Task::batch(tasks)
     }
 
+    /// Alert conditions that fired on any chart pane, including popouts and
+    /// panes hidden behind a maximized one.
+    pub fn take_alerts(&mut self, now: UnixMs) -> Vec<data::chart::kline::alerts::AlertHit> {
+        let mut hits = Vec::new();
+        let popouts = self
+            .popout
+            .values_mut()
+            .flat_map(|(panes, _)| panes.iter_mut());
+        for (_, state) in self.panes.iter_mut().chain(popouts) {
+            if let pane::Content::Kline {
+                chart: Some(chart), ..
+            } = &mut state.content
+            {
+                hits.extend(chart.take_alerts(now));
+            }
+        }
+        hits
+    }
+
     pub fn resolve_streams(
         &mut self,
         main_window: window::Id,

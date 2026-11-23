@@ -23,6 +23,8 @@ pub struct OutputChannelSpec {
     pub offset_bars: i32,
     pub style_by: Option<String>,
     pub independent_scale: bool,
+    /// Boolean channel declared with `alert = true`.
+    pub alert: bool,
 }
 
 /// A value emitted by an indicator for one chart bar.

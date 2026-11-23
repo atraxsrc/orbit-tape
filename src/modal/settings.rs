@@ -5,6 +5,7 @@ use crate::{
 };
 
 use data::{
+    config::alerts::Alerts,
     config::cosmic::ThemeSource,
     config::glass::{self, Glass},
     config::theme::default_theme,
@@ -30,6 +31,19 @@ pub enum Message {
     OpenDataFolder,
     OpenUrl(Cow<'static, str>),
     Sidebar(sidebar::Message),
+    Alert(AlertChange),
+}
+
+/// An edit to the alert settings.
+#[derive(Debug, Clone)]
+pub enum AlertChange {
+    Enabled(bool),
+    Notification(bool),
+    Sound(bool),
+    Volume(f32),
+    /// Turn one condition (`indicator-id/plot-id`) on or off.
+    Condition(String, bool),
+    Test,
 }
 
 /// Work the settings cannot do themselves, because it acts on state owned
@@ -45,6 +59,8 @@ pub enum Action {
     OpenDataFolder,
     OpenUrl(Cow<'static, str>),
     Sidebar(sidebar::Message),
+    /// Send a sample alert with the current settings.
+    TestAlert,
 }
 
 /// An edit to the glass setting, which lives in the theme state.
@@ -71,6 +87,7 @@ pub struct Settings {
     pub scale_factor: data::ScaleFactor,
     pub volume_size_unit: Deferred<exchange::SizeUnit>,
     pub boot: Deferred<data::BootSettings>,
+    pub alerts: Alerts,
 }
 
 impl Settings {
@@ -79,12 +96,14 @@ impl Settings {
         scale_factor: data::ScaleFactor,
         volume_size_unit: exchange::SizeUnit,
         boot: data::BootSettings,
+        alerts: Alerts,
     ) -> Self {
         Self {
             timezone,
             scale_factor,
             volume_size_unit: Deferred::new(volume_size_unit),
             boot: Deferred::new(boot),
+            alerts,
         }
     }
 
@@ -122,6 +141,14 @@ impl Settings {
             Message::OpenDataFolder => return Some(Action::OpenDataFolder),
             Message::OpenUrl(url) => return Some(Action::OpenUrl(url)),
             Message::Sidebar(message) => return Some(Action::Sidebar(message)),
+            Message::Alert(change) => match change {
+                AlertChange::Enabled(on) => self.alerts.enabled = on,
+                AlertChange::Notification(on) => self.alerts.notification = on,
+                AlertChange::Sound(on) => self.alerts.sound = on,
+                AlertChange::Volume(volume) => self.alerts.volume = volume.clamp(0.0, 100.0),
+                AlertChange::Condition(key, on) => self.alerts.set_muted(key, !on),
+                AlertChange::Test => return Some(Action::TestAlert),
+            },
         }
         None
     }
@@ -429,6 +456,7 @@ impl Settings {
             column![text("Time zone").size(crate::style::text_size::SECTION), timezone_picklist,].spacing(12),
             column![text("Market data").size(crate::style::text_size::SECTION), column![size_in_quote_ccy_checkbox, cache_metadata_checkbox].spacing(4)].spacing(12),
             column![text("Theme").size(crate::style::text_size::SECTION), follow_cosmic, theme_picklist, glass_section,].spacing(12),
+            column![text("Alerts").size(crate::style::text_size::SECTION), alerts_view(&self.alerts),].spacing(12),
             column![text("Interface scale").size(crate::style::text_size::SECTION), scale_factor,].spacing(12),
             column![text("Rendering").size(crate::style::text_size::SECTION), antialiasing_checkbox,].spacing(12),
             column![
@@ -518,4 +546,87 @@ fn glass_view(theme: &ThemeState) -> Element<'_, Message> {
         );
     }
     col.into()
+}
+
+/// Alert delivery toggles and the list of alert conditions the loaded
+/// indicators declare.
+fn alerts_view(alerts: &Alerts) -> Element<'_, Message> {
+    let enabled = tooltip(
+        checkbox(alerts.enabled)
+            .label("Indicator alerts")
+            .on_toggle(|on| Message::Alert(AlertChange::Enabled(on))),
+        Some(
+            "Alert when an indicator condition is true on a newly closed bar.\n- Only while the app runs, on charts showing the indicator.",
+        ),
+        Position::Top,
+    );
+    let mut col = column![row![enabled].height(24).align_y(Alignment::Center)].spacing(4);
+    if !alerts.enabled {
+        return col.into();
+    }
+
+    let notification = checkbox(alerts.notification)
+        .label("Desktop notification")
+        .on_toggle(|on| Message::Alert(AlertChange::Notification(on)));
+    let sound = checkbox(alerts.sound)
+        .label("Sound")
+        .on_toggle(|on| Message::Alert(AlertChange::Sound(on)));
+    col = col
+        .push(row![notification].height(24).align_y(Alignment::Center))
+        .push(row![sound].height(24).align_y(Alignment::Center));
+    if alerts.sound {
+        let volume = slider(0.0..=100.0, alerts.volume, |value| {
+            Message::Alert(AlertChange::Volume(value))
+        })
+        .step(1.0_f32)
+        .width(120)
+        .style(style::inspector_slider);
+        col = col.push(
+            row![
+                text("Volume"),
+                volume,
+                text(format!("{:.0}%", alerts.volume))
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+    }
+    col = col.push(button(text("Test alert")).on_press(Message::Alert(AlertChange::Test)));
+
+    let mut conditions = column![].spacing(4);
+    let mut any = false;
+    for registration in data::chart::kline::indicators::catalog().registrations() {
+        let definition = &registration.definition;
+        let outputs = definition
+            .outputs
+            .iter()
+            .filter(|output| output.alert)
+            .collect::<Vec<_>>();
+        if outputs.is_empty() {
+            continue;
+        }
+        any = true;
+        conditions = conditions.push(
+            text(definition.display_name.clone())
+                .size(crate::style::text_size::SMALL)
+                .style(style::secondary_text),
+        );
+        for output in outputs {
+            let key = data::chart::kline::alerts::condition_key(&registration.id, &output.id);
+            let on = !alerts.is_muted(&key);
+            conditions = conditions.push(
+                checkbox(on)
+                    .label(output.label.clone())
+                    .on_toggle(move |on| Message::Alert(AlertChange::Condition(key.clone(), on))),
+            );
+        }
+    }
+    if !any {
+        conditions = conditions.push(
+            text("No loaded indicator declares alerts")
+                .size(crate::style::text_size::SMALL)
+                .style(style::secondary_text),
+        );
+    }
+    col.push(conditions).into()
 }

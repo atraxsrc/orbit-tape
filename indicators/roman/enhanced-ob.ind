@@ -188,8 +188,8 @@ for o in obs {
 }
 
 // ============================= ALERT OUTPUTS =================================
-plot(bullFormed, id = "bull_formed", title = "Bullish OB formed")
-plot(bearFormed, id = "bear_formed", title = "Bearish OB formed")
-plot(mitigatedNow, id = "mitigated", title = "OB mitigated")
+plot(bullFormed, id = "bull_formed", title = "Bullish OB formed", alert = true)
+plot(bearFormed, id = "bear_formed", title = "Bearish OB formed", alert = true)
+plot(mitigatedNow, id = "mitigated", title = "OB mitigated", alert = true)
 plot(formedLevel, id = "formed_level", title = "Formed OB level", display = "none")
 plot(mitigatedLevel, id = "mitigated_level", title = "Mitigated OB level", display = "none")

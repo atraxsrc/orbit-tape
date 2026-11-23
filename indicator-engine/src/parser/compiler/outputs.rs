@@ -878,6 +878,7 @@ impl LoweringContext {
                 "axis",
                 "layer",
                 "color",
+                "alert",
             ],
         );
         let default_pane = if matches!(
@@ -1022,6 +1023,17 @@ impl LoweringContext {
             }
             None => 0,
         };
+        let alert = match self.static_named_value(call, "alert") {
+            Some(Value::Bool(value)) => value,
+            Some(_) => {
+                self.error(call.span, "plot alert must be a boolean literal");
+                false
+            }
+            None => false,
+        };
+        if alert && value_type != PlotValueType::Boolean {
+            self.error(call.span, "plot alert = true requires a boolean series");
+        }
         PlotDescriptor {
             id,
             label,
@@ -1057,6 +1069,7 @@ impl LoweringContext {
                 }
                 None => true,
             },
+            alert: alert && value_type == PlotValueType::Boolean,
         }
     }
 }
