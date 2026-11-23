@@ -957,6 +957,16 @@ impl<'a> IndicatorView<'a> {
         self.host.level_outputs_for(value_id)
     }
 
+    pub(super) fn indicator_info_rows(
+        &self,
+        value_id: PanelValueId,
+    ) -> Vec<indicator_engine::InfoRowOutput> {
+        if self.presentation.is_unavailable(value_id) {
+            return Vec::new();
+        }
+        self.host.info_row_outputs_for(value_id)
+    }
+
     pub(super) fn indicator_regions(
         &self,
         value_id: PanelValueId,

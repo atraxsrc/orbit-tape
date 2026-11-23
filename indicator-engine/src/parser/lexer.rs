@@ -112,6 +112,27 @@ impl Lexer {
                 ' ' | '\t' | '\r' => self.index += 1,
                 '\n' => {
                     self.index += 1;
+                    // A line ending in a binary operator continues on the next one.
+                    if tokens.last().is_some_and(|token: &Token| {
+                        matches!(
+                            token.kind,
+                            TokenKind::Plus
+                                | TokenKind::Minus
+                                | TokenKind::Star
+                                | TokenKind::Slash
+                                | TokenKind::Percent
+                                | TokenKind::EqualEqual
+                                | TokenKind::BangEqual
+                                | TokenKind::Less
+                                | TokenKind::LessEqual
+                                | TokenKind::Greater
+                                | TokenKind::GreaterEqual
+                                | TokenKind::AndAnd
+                                | TokenKind::OrOr
+                        )
+                    }) {
+                        continue;
+                    }
                     self.push_token(
                         &mut tokens,
                         Token {

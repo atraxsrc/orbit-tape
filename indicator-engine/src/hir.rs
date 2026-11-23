@@ -1,4 +1,4 @@
-use crate::frame::FrameField;
+use crate::frame::{FrameField, RegionBorderStyle, RegionTextPosition};
 use crate::scene::PlotDescriptor;
 use crate::types::{Type, Value};
 
@@ -204,10 +204,26 @@ pub enum StatementKind {
         extend_right: Option<ExprId>,
         persistent: bool,
         width: f32,
+        text: Option<ExprId>,
+        text_color: Option<ExprId>,
+        text_position: RegionTextPosition,
+        border_style: RegionBorderStyle,
     },
     RegionRemove {
         id: String,
         key: ExprId,
+    },
+    InfoRow {
+        id: String,
+        row: usize,
+        left: ExprId,
+        right: ExprId,
+        left_color: Option<ExprId>,
+        right_color: Option<ExprId>,
+        background: Option<ExprId>,
+        position: Option<ExprId>,
+        size: Option<ExprId>,
+        panel_color: Option<ExprId>,
     },
     HorizontalLevel {
         id: String,

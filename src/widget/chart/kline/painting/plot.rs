@@ -409,6 +409,16 @@ impl PlotRenderer<'_> {
                 generated_accents,
                 pixels,
             );
+            let panel_ids = self
+                .indicators
+                .primary_overlay_entries()
+                .into_iter()
+                .filter_map(|(value_id, visible)| visible.then_some(value_id))
+                .collect::<Vec<_>>();
+            let primary_plot = *scene.primary_plot();
+            frame.with_clip(primary_plot, |frame| {
+                marks.draw_info_panels(frame, &panel_ids);
+            });
             return;
         }
 

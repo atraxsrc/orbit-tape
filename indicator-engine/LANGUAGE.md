@@ -10,7 +10,7 @@ file naming, collections, and validation.
 - [Chart data](#chart-data)
 - [Inputs and source composition](#inputs-and-source-composition)
 - [Metadata](#metadata): [indicator](#indicator), [display and format](#display-and-format)
-- [Outputs and presentation](#outputs-and-presentation): [plots](#plots), [styles and marks](#styles-and-alternate-marks), [fills, readouts, and tables](#fills-readouts-and-tables), [segments and regions](#segments-and-regions)
+- [Outputs and presentation](#outputs-and-presentation): [plots](#plots), [styles and marks](#styles-and-alternate-marks), [fills, readouts, and tables](#fills-readouts-and-tables), [info panels](#info-panels), [segments and regions](#segments-and-regions)
 - [Higher timeframes](#higher-timeframes)
 - [TA behavior](#ta-behavior)
 - [Built-in reference](#built-in-reference): [TA](#ta), [math and missing values](#math-and-missing-values), [collections, strings, and colors](#collections-strings-and-colors)
@@ -43,12 +43,14 @@ Runtime failures disable the indicator; see [resource limits](#resource-limits).
   `:= na` update stays authoritative.
 - `if`, `switch`, bounded `for`/`while`, numeric non-recursive functions,
   tuples, arrays, records, destructuring, and named arguments are supported.
-  Function parameters, defaults, and returns must be numeric or `na`.
+  Function parameters, defaults, and returns must be numeric or `na`; an
+  untyped value such as a record field is checked when the call runs.
 - Integer `+`, `-`, `*`, and `%` use checked 64-bit arithmetic; `/` returns a
   float. Mixed arithmetic promotes to float. Integer overflow and division or
   remainder by zero return `na`. Integer comparisons remain exact, including
   comparisons with floats. Integer/time input defaults require integer literals.
-- Arithmetic requires numbers; ordering accepts numbers or times; logical
+- Arithmetic requires numbers, except that subtracting two times gives their
+  difference in milliseconds as an integer; ordering accepts numbers or times; logical
   operators require booleans. Equality involving `na` returns `na`: use
   `na(value)` to test missingness. An `na` condition does not match a switch
   branch. Result branches in `select`, `coalesce`, and `switch` must have
@@ -89,7 +91,9 @@ Operators, from highest to lowest precedence: unary `+`, `-`, `!`; `*`, `/`,
 `%`; `+`, `-`; `<`, `<=`, `>`, `>=`; `==`, `!=`; `&&`; `||`. Parentheses group
 expressions. `&&` and `||` short-circuit; `select` provides conditional values.
 Only boolean `true` takes an `if` branch or continues a `while`; `false` and `na`
-do not. Statements end at a newline or semicolon; braces group bodies.
+do not. Statements end at a newline or semicolon; braces group bodies. A line
+ending in a binary operator (`+`, `&&`, `>=`, ...) continues on the next line,
+as does a call's argument list after a comma.
 Calls and collection literals may span lines. `//` starts a line comment.
 
 ### Control flow and collections
@@ -378,6 +382,32 @@ automatic `main` style. `color_mode = "signed"` requires numeric output and
 `positive_color_slot` / `negative_color_slot`, with no `color_slot`. Zero uses
 the positive slot; unavailable values are blank.
 
+### Info panels
+
+`info_row(left, right)` adds one row to a panel drawn in a corner of the price
+chart, like a two-column Pine `table`. Rows appear in source order and show the
+latest bar's values; a row whose texts are both empty or `na` is hidden.
+
+```text
+pos = input.string("Top right", "Table position",
+                   options = ["Top right", "Top left", "Bottom right", "Bottom left"])
+info_row("Roman Trade Setup", "12H", background = color.new(color.gray, 75),
+         position = pos, size = "small")
+info_row("Close", str.tostring(chart.close, instrument.min_tick),
+         right_color = select(chart.close > chart.open, color.teal, color.red))
+```
+
+| Option | Meaning |
+| --- | --- |
+| `id` | Literal panel ID, default `"info"`; separate IDs draw separate panels |
+| `left_color`, `right_color`, `background` | Runtime colors for the texts and the row |
+| `position` | Runtime string: `top_right` (default), `top_left`, `top_center`, `middle_*`, `bottom_*`; Pine labels like `"Top right"` also work |
+| `size` | Runtime string: `tiny`, `small`, `normal` (default), `large`, `huge` |
+| `panel_color` | Runtime panel background; defaults to the theme |
+
+Panel-wide options come from the first row that sets them. Panels in the same
+corner stack instead of overlapping. `info_row` must be top-level.
+
 ### Segments and regions
 
 `segment(start_value, end_value, start_index, end_index, id = "projection")`
@@ -400,6 +430,25 @@ Color each edge with runtime `border_color` / `fill_color` or declared
 `border_color_slot` / `fill_color_slot`, never both for the same edge.
 Alternatively, a boolean `style_by` expression with paired true/false slots
 colors both edges (`na` selects false); this cannot mix with other region colors.
+
+Regions can carry text and a border style:
+
+- `text` (runtime string; `na` draws none) with optional `text_color` (runtime
+  color, white on tags by default).
+- `text_position` (literal): `"inside"` (default) centers the text in the
+  region when it fits; `"above"` and `"below"` draw a filled label tag above
+  the upper edge or below the lower edge, colored with the region's fill (or
+  border) color. A region with `upper == lower` and `left_index ==
+  right_index` is a plain point label, like Pine's `label.new`.
+- `border_style` (literal): `"solid"` (default), `"dashed"` or `"dotted"`.
+- `right_index` may lie past the last bar; the host extends the bar spacing.
+
+```text
+region(key = 0, upper = chart.low, lower = chart.low,
+       left_index = bar_index, right_index = bar_index,
+       id = "mss", persistent = true, text = "MSS", text_position = "below",
+       fill_color = color.rgb(38, 166, 154))
+```
 
 Default emissions form a complete active-set snapshot: omitted `(id, key)`
 pairs disappear on the next closed bar. `extend_right` reaches the plot clip.
@@ -588,16 +637,21 @@ require hoisting, even when their expression looks constant.
 | --- | --- |
 | `array.new(...)` | Array containing zero or more positional initial values of any kind |
 | `array.push(array, value)` | Updated array with one appended value |
-| `array.get(array, index)` | Element of dynamic kind `Any`; integer index; `na` outside the array |
+| `array.get(array, index)` | Element of dynamic kind `Any`; integer index; `na` outside the array or for an `na` array |
 | `array.size(array)` | Integer element count |
 | `record.new()` | Empty record |
 | `record.set(record, key, value)` | Updated record; string key; adds or replaces a field |
 | `record.get(record, key)` | Field of dynamic kind `Any`; string key; `na` for absent fields or runtime non-record values |
 | `str.tostring(value)` | String for any kind; missing value becomes `"na"`; collections report their element/field count |
+| `str.tostring(value, format)` | Number with a Pine-style pattern (`"#.##"` drops trailing zeros, `"0.00"` keeps them) or a numeric step such as `instrument.min_tick` (Pine's `format.mintick`) |
+| `color.new(color, transp)` | Color with Pine transparency: 0 opaque to 100 invisible; `na` for a missing color |
 | `color.rgb(red, green, blue, alpha)` | Color; integer components in 0–255; omitted or missing alpha defaults to 255 |
 
 Colors also have constants `color.red`, `color.green`, `color.blue`,
-`color.white`, and `color.black`. `color.rgb(...)` with positional literal
+`color.white`, and `color.black`, plus Pine's palette: `color.gray`,
+`color.silver`, `color.orange`, `color.yellow`, `color.lime`, `color.teal`,
+`color.aqua`, `color.navy`, `color.purple`, `color.fuchsia`, `color.maroon`
+and `color.olive`. Strings join with `+`; both sides must be strings. `color.rgb(...)` with positional literal
 components can supply input defaults; runtime color expressions can style
 outputs. Invalid runtime components fail rather than being clamped. Collection
 operations remain subject to heap, nesting, element-count, and weighted

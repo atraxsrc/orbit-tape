@@ -333,6 +333,10 @@ impl LoweringContext {
                 "persistent",
                 "id",
                 "width",
+                "text",
+                "text_color",
+                "text_position",
+                "border_style",
             ],
         );
         let argument = |name: &str, index: usize| argument_at(call, index, name);
@@ -475,6 +479,36 @@ impl LoweringContext {
                     .insert(slot.clone(), call.span);
             }
         }
+        let text = compile_optional(self, "text");
+        if let Some(text) = text
+            && !matches!(
+                self.ir.program.expressions[text.0].ty.value,
+                ValueType::String | ValueType::Any
+            )
+        {
+            self.error(call.span, "region text must be a string");
+        }
+        let text_color = self.compile_color_named_argument(call, "text_color");
+        let text_position = match self.static_named_string(call, "text_position") {
+            None => crate::frame::RegionTextPosition::default(),
+            Some(value) => crate::frame::RegionTextPosition::parse(&value).unwrap_or_else(|| {
+                self.error(
+                    call.span,
+                    "region text_position must be \"inside\", \"above\" or \"below\"",
+                );
+                crate::frame::RegionTextPosition::default()
+            }),
+        };
+        let border_style = match self.static_named_string(call, "border_style") {
+            None => crate::frame::RegionBorderStyle::default(),
+            Some(value) => crate::frame::RegionBorderStyle::parse(&value).unwrap_or_else(|| {
+                self.error(
+                    call.span,
+                    "region border_style must be \"solid\", \"dashed\" or \"dotted\"",
+                );
+                crate::frame::RegionBorderStyle::default()
+            }),
+        };
         let id = self
             .static_named_string(call, "id")
             .unwrap_or_else(|| format!("region_{}", self.region_count()));
@@ -510,6 +544,10 @@ impl LoweringContext {
                 extend_right,
                 persistent,
                 width: if valid_width { width } else { 1.0 },
+                text,
+                text_color,
+                text_position,
+                border_style,
             },
         }))
     }
@@ -582,6 +620,88 @@ impl LoweringContext {
                 id,
                 expression,
                 color,
+            },
+        }))
+    }
+
+    pub(super) fn compile_info_row(&mut self, call: &AstCall) -> Option<crate::hir::StatementId> {
+        if !self.is_top_level_declaration() {
+            self.error(call.span, "info_row declarations must be top-level");
+            return None;
+        }
+        self.validate_positional_arguments(call, 2, "info_row");
+        self.validate_named_arguments(
+            call,
+            &[
+                "left",
+                "right",
+                "id",
+                "left_color",
+                "right_color",
+                "background",
+                "position",
+                "size",
+                "panel_color",
+            ],
+        );
+        let mut texts = [None, None];
+        for (index, name) in ["left", "right"].into_iter().enumerate() {
+            let Some(argument) = argument_at(call, index, name) else {
+                self.error(call.span, format!("info_row expects a {name} expression"));
+                return None;
+            };
+            let expression = self.compile_expression(&argument.expression);
+            if !matches!(
+                self.ir.program.expressions[expression.0].ty.value,
+                ValueType::String | ValueType::Any
+            ) {
+                self.error(
+                    argument.expression.span(),
+                    format!("info_row {name} must be a string"),
+                );
+            }
+            texts[index] = Some(expression);
+        }
+        let [Some(left), Some(right)] = texts else {
+            return None;
+        };
+        let mut strings = [None, None];
+        for (index, name) in ["position", "size"].into_iter().enumerate() {
+            let expression = call
+                .arguments
+                .iter()
+                .find(|argument| argument.name.as_deref() == Some(name))
+                .map(|argument| self.compile_expression(&argument.expression));
+            if let Some(expression) = expression
+                && !matches!(
+                    self.ir.program.expressions[expression.0].ty.value,
+                    ValueType::String | ValueType::Any
+                )
+            {
+                self.error(call.span, format!("info_row {name} must be a string"));
+            }
+            strings[index] = expression;
+        }
+        let id = self
+            .static_named_string(call, "id")
+            .unwrap_or_else(|| "info".to_owned());
+        let row = self.info_row_count(&id);
+        let left_color = self.compile_color_named_argument(call, "left_color");
+        let right_color = self.compile_color_named_argument(call, "right_color");
+        let background = self.compile_color_named_argument(call, "background");
+        let panel_color = self.compile_color_named_argument(call, "panel_color");
+        Some(self.push_statement(TypedStatement {
+            kind: StatementKind::InfoRow {
+                id,
+                row,
+                left,
+                right,
+                left_color,
+                right_color,
+                background,
+                position: strings[0],
+                size: strings[1],
+                panel_color,
             },
         }))
     }

@@ -651,6 +651,17 @@ impl IndicatorHost {
             .unwrap_or_default()
     }
 
+    pub fn info_row_outputs_for(
+        &self,
+        id: IndicatorInstanceId,
+    ) -> Vec<indicator_engine::InfoRowOutput> {
+        self.entry_indices
+            .get(&id)
+            .and_then(|entry_index| self.entries.get(*entry_index))
+            .map(|entry| entry.runtime.info_row_outputs())
+            .unwrap_or_default()
+    }
+
     pub fn level_outputs_for(
         &self,
         id: IndicatorInstanceId,
@@ -783,6 +794,8 @@ mod tests {
             fill_color_slot: None,
             extend_right: false,
             width: 1.0,
+            text: None,
+            border_style: Default::default(),
         };
         let extending = |left| indicator_engine::RegionOutput {
             extend_right: true,

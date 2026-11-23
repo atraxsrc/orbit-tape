@@ -262,6 +262,7 @@ impl LoweringContext {
                 "region" => self.compile_region(&call),
                 "region_remove" => self.compile_region_remove(&call),
                 "level" => self.compile_level(&call),
+                "info_row" => self.compile_info_row(&call),
                 "plotcandle" | "plotohlc" => self.compile_ohlc(&call),
                 "broken_cloud" | "plotrange" => self.compile_range(&call),
                 "emit" => self.compile_emit(&call),

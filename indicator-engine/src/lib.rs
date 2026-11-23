@@ -12,7 +12,8 @@ mod warmup;
 pub use diagnostics::{Diagnostic, Severity, Span};
 pub use frame::{
     BaseSeriesSource, ChartFrame, FrameField, FrameOutput, HorizontalLevelOutput, IndicatorFrame,
-    InstrumentContext, MarkerOutput, OhlcOutput, PlotOutput, RangeOutput, RegionOutput,
+    InfoPosition, InfoRowOutput, InfoTextSize, InstrumentContext, MarkerOutput, OhlcOutput,
+    PlotOutput, RangeOutput, RegionBorderStyle, RegionOutput, RegionText, RegionTextPosition,
     RegionUpdate, SegmentOutput, SeriesInputValue, TimeOrTick, TradeAggregate,
 };
 pub use hir::{
@@ -598,6 +599,230 @@ mod tests {
             .evaluate_closed(hourly(0, 0, 1.0, 1.0, 1.0, 1.0))
             .expect("bar should evaluate");
         assert_eq!(plot_value(&output, "fresh"), &Value::Na);
+    }
+
+    #[test]
+    fn regions_carry_text_and_border_style() {
+        let source = r#"
+            language(1)
+            indicator("Labels", id = "test.labels")
+            display(view = "primary_overlay")
+            style("main", title = "Main", role = "primary", shade = "base")
+            plot(na, id = "anchor", display = "none", pane = "main", layer = true)
+            region(key = 0, upper = chart.high, lower = chart.high,
+                   left_index = bar_index, right_index = bar_index,
+                   id = "tag", text = select(chart.close > chart.open, "MSS", "MSS CT"),
+                   text_position = "below", text_color = color.white,
+                   fill_color = color.rgb(38, 166, 154), persistent = true)
+            region(key = 0, upper = chart.high, lower = chart.low,
+                   left_index = bar_index, right_index = bar_index + 10,
+                   id = "zone", border_color_slot = "main", border_style = "dashed")
+        "#;
+        let mut instance = compile(source, "labels.ind")
+            .expect("labels source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let output = instance
+            .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.0))
+            .expect("bar should evaluate");
+
+        let tag = output
+            .region_updates
+            .iter()
+            .find_map(|update| match update {
+                RegionUpdate::Upsert(region) if region.id == "tag" => Some(region),
+                _ => None,
+            })
+            .expect("tag region should be emitted");
+        let text = tag.text.as_ref().expect("tag should carry text");
+        assert_eq!(text.content, "MSS");
+        assert_eq!(text.position, RegionTextPosition::Below);
+        assert!(text.color.is_some());
+
+        let zone = output
+            .regions
+            .iter()
+            .find(|region| region.id == "zone")
+            .expect("zone region should be emitted");
+        assert_eq!(zone.right_index, 10);
+        assert_eq!(zone.border_style, RegionBorderStyle::Dashed);
+        assert!(zone.text.is_none());
+    }
+
+    #[test]
+    fn info_rows_build_a_panel_from_strings() {
+        let source = r##"
+            language(1)
+            indicator("Info", id = "test.info")
+            display(view = "primary_overlay")
+            where = input.string("Bottom left", "Table position",
+                                 options = ["Top right", "Bottom left"])
+            plot(na, id = "anchor", display = "none", pane = "main", layer = true)
+            info_row("Setup", "12H", background = color.new(color.gray, 75), position = where, size = "small")
+            info_row("Close", str.tostring(chart.close, "#.##") + " / " +
+                     str.tostring(chart.close, instrument.min_tick),
+                     right_color = select(chart.close > chart.open, color.green, color.red))
+            info_row("Hidden", na)
+        "##;
+        let mut instance = compile(source, "info.ind")
+            .expect("info source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let mut frame = hourly(0, 0, 1.0, 3.0, 0.5, 2.5);
+        frame.instrument.min_tick = Some(0.01);
+        let output = instance
+            .evaluate_closed(frame)
+            .expect("bar should evaluate");
+
+        let rows = &output.info_rows;
+        assert_eq!(rows.len(), 3);
+        assert_eq!((rows[0].row, rows[0].left.as_str()), (0, "Setup"));
+        assert_eq!(rows[0].position, Some(InfoPosition::BottomLeft));
+        assert_eq!(rows[0].size, Some(InfoTextSize::Small));
+        assert!(rows[0].background.is_some());
+        assert_eq!(rows[1].right, "2.5 / 2.50");
+        assert!(rows[1].right_color.is_some());
+        assert_eq!(rows[1].position, None);
+        assert_eq!((rows[2].row, rows[2].right.as_str()), (2, ""));
+    }
+
+    #[test]
+    fn number_formats_match_pine_patterns() {
+        use crate::intrinsic::format_number;
+        let pattern = |value: f64, format: &str| {
+            format_number(&Value::Float(value), &Value::String(format.to_owned()))
+        };
+        assert_eq!(pattern(1.23456, "#.##").as_deref(), Some("1.23"));
+        assert_eq!(pattern(1.5, "#.##").as_deref(), Some("1.5"));
+        assert_eq!(pattern(2.0, "#.##").as_deref(), Some("2"));
+        assert_eq!(pattern(2.0, "0.00").as_deref(), Some("2.00"));
+        assert_eq!(pattern(2.456, "#.0#").as_deref(), Some("2.46"));
+        assert_eq!(pattern(2.4, "#.0#").as_deref(), Some("2.4"));
+        assert_eq!(pattern(1234.6, "#").as_deref(), Some("1235"));
+        assert_eq!(pattern(-0.001, "#.##").as_deref(), Some("0"));
+        assert_eq!(pattern(1.0, "abc"), None);
+        assert_eq!(pattern(1.0, &format!("#.{}", "0".repeat(60_000))), None);
+        let step = |value: f64, step: f64| format_number(&Value::Float(value), &Value::Float(step));
+        assert_eq!(step(97123.456, 0.1).as_deref(), Some("97123.5"));
+        assert_eq!(step(0.123456, 0.0001).as_deref(), Some("0.1235"));
+        assert_eq!(step(12.0, 0.5).as_deref(), Some("12.0"));
+        assert_eq!(step(13.0, 5.0).as_deref(), Some("15"));
+        assert_eq!(step(1.0, 0.0), None);
+        assert_eq!(
+            format_number(&Value::Int(7), &Value::String("0.0".to_owned())).as_deref(),
+            Some("7.0")
+        );
+    }
+
+    #[test]
+    fn untyped_function_arguments_times_and_optional_arguments() {
+        let source = r#"
+            language(1)
+            indicator("Mixed", id = "test.mixed")
+            format(precision = "fixed_step:0.01")
+            fn twice(value) {
+                return value * 2
+            }
+            var level = na
+            level := chart.close
+            zone = { top: chart.high }
+            plot(twice(level), id = "level")
+            plot(twice(zone.top), id = "top")
+            plot(chart.time - chart.time[1], id = "spacing")
+            plot(str.tostring(chart.close) == "2.5", id = "text")
+        "#;
+        let mut instance = compile(source, "mixed.ind")
+            .expect("mixed source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        instance
+            .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.5))
+            .expect("first bar should evaluate");
+        let output = instance
+            .evaluate_closed(hourly(1, 1, 1.0, 3.0, 0.5, 2.5))
+            .expect("second bar should evaluate");
+        let value = |id: &str| {
+            output
+                .plots
+                .iter()
+                .find(|plot| plot.id == id)
+                .map(|plot| plot.value.clone())
+        };
+        assert_eq!(value("level"), Some(Value::Float(5.0)));
+        assert_eq!(value("top"), Some(Value::Float(6.0)));
+        assert_eq!(value("spacing"), Some(Value::Int(3_600_000)));
+        assert_eq!(value("text"), Some(Value::Bool(true)));
+
+        let bad = r#"
+            language(1)
+            indicator("Bad", id = "test.bad")
+            format(precision = "fixed_step:0.01")
+            fn twice(value) {
+                return value * 2
+            }
+            zone = { name: "a" }
+            plot(twice(zone.name), id = "value")
+        "#;
+        let mut instance = compile(bad, "bad.ind")
+            .expect("dynamic argument should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        assert!(
+            instance
+                .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.5))
+                .is_err(),
+            "a string argument must fail at runtime"
+        );
+
+        let diagnostics = compile(
+            "language(1)\nindicator(\"Bad\", id = \"test.bad\")\n\
+             plot(str.tostring(1, \"#\", 2) == \"1\", id = \"value\")\n",
+            "bad.ind",
+        )
+        .expect_err("too many arguments should be rejected");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("expects 1 to 2 arguments")),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn strings_only_add_to_strings() {
+        let source = "language(1)\nindicator(\"Bad\", id = \"test.bad\")\n\
+                      plot(chart.close, id = \"value\")\n\
+                      text = \"close \" + chart.close\n";
+        let diagnostics = compile(source, "bad.ind").expect_err("source should be rejected");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("strings can only be added")),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn region_text_options_are_validated() {
+        for (argument, message) in [
+            ("text_position = \"left\"", "text_position"),
+            ("border_style = \"wavy\"", "border_style"),
+            ("text = 5", "text must be a string"),
+        ] {
+            let source = format!(
+                "language(1)\nindicator(\"Bad\", id = \"test.bad\")\ndisplay(view = \"primary_overlay\")\n\
+                 plot(na, id = \"anchor\", display = \"none\", pane = \"main\", layer = true)\n\
+                 region(key = 0, upper = 1, lower = 0, left_index = 0, right_index = 0, \
+                 border_color = color.white, {argument})"
+            );
+            let diagnostics = compile(&source, "bad.ind").expect_err("source should be rejected");
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(message)),
+                "{argument}: {diagnostics:?}"
+            );
+        }
     }
 
     #[test]

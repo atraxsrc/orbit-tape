@@ -42,6 +42,15 @@ aims to look native on the [COSMIC](https://system76.com/cosmic) desktop. Change
   timeframe (for example 12H on a 1H chart) with `htf.bars`, `htf.new_bar` and
   `htf.forming`. Only closed candles count, so values don't repaint. See
   [Higher timeframes](indicator-engine/LANGUAGE.md#higher-timeframes).
+- **Pine-style drawing in indicators**: text labels, dashed and dotted boxes and lines,
+  boxes reaching past the last bar, an on-chart info panel (`info_row`), string joining
+  and number formatting. See [LANGUAGE.md](indicator-engine/LANGUAGE.md).
+- **Optional Roman indicators** in [indicators/](indicators/README.md): ports of the Roman
+  Trade Setup (H12 to H1) and Enhanced Roman Order Block Pine scripts. Not bundled; copy them
+  into the indicators folder. Roman Setup matches the TradingView original bar for bar on
+  the recorded test candles.
+- **`flowsurface-indicator run`**: evaluates a script on a candle CSV and exports every
+  output per bar, for checking a port against another platform.
 
 ## Market Data
 

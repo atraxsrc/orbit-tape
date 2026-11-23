@@ -293,6 +293,80 @@ pub struct HorizontalLevelOutput {
     pub color: Option<Color>,
 }
 
+/// One row of an on-chart info panel. Rows sharing an `id` form one panel,
+/// ordered by `row`; the host keeps only the latest bar's rows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfoRowOutput {
+    pub id: String,
+    pub row: usize,
+    pub left: String,
+    pub right: String,
+    pub left_color: Option<Color>,
+    pub right_color: Option<Color>,
+    pub background: Option<Color>,
+    /// Panel-wide options; the host uses the first row that sets each.
+    pub position: Option<InfoPosition>,
+    pub size: Option<InfoTextSize>,
+    pub panel_color: Option<Color>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InfoPosition {
+    TopLeft,
+    TopCenter,
+    #[default]
+    TopRight,
+    MiddleLeft,
+    MiddleCenter,
+    MiddleRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+impl InfoPosition {
+    /// Accepts `top_right` style names and Pine-style option labels such as
+    /// `"Top right"`, case-insensitively.
+    pub fn parse(value: &str) -> Option<Self> {
+        let normalized = value.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+        Some(match normalized.as_str() {
+            "top_left" => Self::TopLeft,
+            "top_center" | "top" => Self::TopCenter,
+            "top_right" => Self::TopRight,
+            "middle_left" | "left" => Self::MiddleLeft,
+            "middle_center" | "center" | "middle" => Self::MiddleCenter,
+            "middle_right" | "right" => Self::MiddleRight,
+            "bottom_left" => Self::BottomLeft,
+            "bottom_center" | "bottom" => Self::BottomCenter,
+            "bottom_right" => Self::BottomRight,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InfoTextSize {
+    Tiny,
+    Small,
+    #[default]
+    Normal,
+    Large,
+    Huge,
+}
+
+impl InfoTextSize {
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value.trim().to_ascii_lowercase().as_str() {
+            "tiny" => Self::Tiny,
+            "small" => Self::Small,
+            "normal" => Self::Normal,
+            "large" => Self::Large,
+            "huge" => Self::Huge,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct OhlcOutput {
     pub id: String,
@@ -325,6 +399,59 @@ pub struct RegionOutput {
     pub fill_color_slot: Option<String>,
     pub extend_right: bool,
     pub width: f32,
+    /// Text drawn inside the region, or as a label tag above/below it.
+    pub text: Option<RegionText>,
+    pub border_style: RegionBorderStyle,
+}
+
+/// Where a region's text goes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RegionTextPosition {
+    /// Centered inside the region.
+    #[default]
+    Inside,
+    /// A label tag above the region's upper edge, pointing down at it.
+    Above,
+    /// A label tag below the region's lower edge, pointing up at it.
+    Below,
+}
+
+impl RegionTextPosition {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "inside" => Some(Self::Inside),
+            "above" => Some(Self::Above),
+            "below" => Some(Self::Below),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RegionBorderStyle {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+impl RegionBorderStyle {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "solid" => Some(Self::Solid),
+            "dashed" => Some(Self::Dashed),
+            "dotted" => Some(Self::Dotted),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegionText {
+    pub content: String,
+    /// Text color; the host picks a readable default when `None`.
+    pub color: Option<Color>,
+    pub position: RegionTextPosition,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -341,6 +468,7 @@ pub struct FrameOutput {
     pub markers: Arc<[MarkerOutput]>,
     pub segments: Arc<[SegmentOutput]>,
     pub levels: Arc<[HorizontalLevelOutput]>,
+    pub info_rows: Arc<[InfoRowOutput]>,
     pub ohlc: Arc<[OhlcOutput]>,
     pub ranges: Arc<[RangeOutput]>,
     pub regions: Arc<[RegionOutput]>,

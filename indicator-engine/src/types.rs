@@ -267,6 +267,13 @@ impl Value {
                     })
                 })
             }
+            Add if matches!((&self, &other), (Self::String(_), Self::String(_))) => {
+                let (Self::String(mut left), Self::String(right)) = (self, other) else {
+                    unreachable!()
+                };
+                left.push_str(&right);
+                Self::String(left)
+            }
             Add | Subtract | Multiply | Divide | Remainder => {
                 if let (Self::Int(left), Self::Int(right)) = (&self, &other)
                     && operator != Divide

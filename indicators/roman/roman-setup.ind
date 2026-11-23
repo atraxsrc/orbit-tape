@@ -1,0 +1,953 @@
+// Roman Trade Setup :: H12 (720) bias -> H1 execution (rev 7), ported from
+// the Pine Script original.
+// Copyright (c) 2026 Atrax. MIT licensed, see indicators/LICENSE-MIT.
+//
+//  Phase 1: HTF bias via Market Structure Break (12H)
+//  Phase 2: 50% fib of the swing that created the bias
+//  Phase 3: HTF SFP (only when aligned with bias) + HTF Order Block / Breaker
+//  Phase 4: H1 MSS (single clean label)
+//
+// Differences from the Pine version:
+//   - Only the default closed-HTF mode: "Act only on CLOSED HTF bars" is gone.
+//     HTF values update on the first chart bar after each HTF candle closes,
+//     like Pine's expr[1] with lookahead_on.
+//   - HTF candles are built from the chart's own bars, so the first HTF candle
+//     after the start of the loaded history is skipped if it is incomplete.
+//   - The settings guide table is left out.
+//   - Alerts are boolean outputs (see ALERT OUTPUTS) instead of
+//     alertcondition() calls, and HTF MSS diagnostics are dots, not triangles.
+//   - "HTF timeframe" takes the engine's timeframe names (720, 12H, D, W, M) and
+//     is not checked against the chart timeframe.
+
+language(1)
+indicator("Roman Trade Setup (H12 to H1)", id = "roman.roman-setup", max_bars_back = 64)
+display(view = "primary_overlay")
+
+// Pivot tie rule, shared by the HTF and LTF pivots: a bar on the left (older)
+// side may equal the pivot, a bar on the right (newer) side may not.
+PIVOT_LEFT_TIES = true
+PIVOT_RIGHT_TIES = false
+
+// ============================= INPUTS ========================================
+htfTf = input.string("720", "HTF timeframe", group = "1 | HTF (bias engine)")
+htfPivot = input.int(3, "HTF pivot length", min = 1, max = 20, group = "1 | HTF (bias engine)")
+
+ltfPivot = input.int(3, "LTF pivot length", min = 1, max = 20, group = "2 | LTF (execution)")
+ltfAlign = input.bool(true, "LTF MSS must align with HTF bias", group = "2 | LTF (execution)")
+mssGate = input.string("Zone tap or SFP", "LTF MSS also requires",
+    options = ["None", "Zone tap or SFP", "Zone tap", "SFP"], group = "2 | LTF (execution)",
+    tooltip = "None = every aligned MSS is shown (and 'armed' is always on when the bias agrees). The other options only show an MSS when price recently traded into a same-direction zone or broken-level retest and/or printed a bias-aligned HTF SFP. Zone tap needs 'Show zones' on.")
+gateWin = input.int(24, "Setup window (chart bars)", min = 1, group = "2 | LTF (execution)",
+    tooltip = "How recent the zone tap or SFP must be for the MSS filter. 24 bars on H1 is two 12H candles.")
+
+ageUnitIn = input.string("HTF bars", "Zone age counted in", options = ["HTF bars", "Chart bars"],
+    group = "3 | Zone management (strict)",
+    tooltip = "HTF bars is the sane default. 20 chart bars on a 1H chart is under two 12H candles, which culls zones almost immediately.")
+maxAge = input.int(12, "Max zone age", min = 1, group = "3 | Zone management (strict)")
+maxDist = input.float(10.0, "Max distance from price (%)   0 = off", min = 0.0, step = 0.5,
+    group = "3 | Zone management (strict)",
+    tooltip = "Zones farther than this are hidden and come back when price returns within range. Measured to the nearest edge of the zone, not the midpoint. Alts ~10, BTC/ETH ~5.")
+keepNewest = input.bool(true, "Always keep newest zone per direction", group = "3 | Zone management (strict)",
+    tooltip = "Exempts the most recent bullish-acting and the most recent bearish-acting zone from the age and distance filters (a breaker counts for the side it now acts for). Still removed when structurally invalidated.")
+maxHeight = input.float(3.5, "Max zone height (%)          0 = off", min = 0.0, step = 0.5,
+    group = "3 | Zone management (strict)",
+    tooltip = "Rejects order blocks taller than this. Alts ~3.5, BTC/ETH ~2.0 (with candle body on).")
+hideOpp = input.bool(false, "Delete opposing zones on bias flip", group = "3 | Zone management (strict)")
+maxPerSide = input.int(2, "Max zones per direction", min = 1, max = 2, group = "3 | Zone management (strict)")
+extendBars = input.int(10, "Extend zones right (bars)", min = 0, group = "3 | Zone management (strict)")
+useBody = input.bool(true, "Use candle body for Order Block", group = "3 | Zone management (strict)")
+
+showZones = input.bool(true, "Show zones", group = "4 | Visuals")
+showFib = input.bool(true, "Show 50% fib", group = "4 | Visuals")
+showSfp = input.bool(true, "Show HTF SFP label", group = "4 | Visuals")
+showMss = input.bool(true, "Show LTF MSS label", group = "4 | Visuals")
+showHtfMk = input.bool(true, "Mark HTF MSS events (diagnostic)", group = "4 | Visuals",
+    tooltip = "Shows every HTF bias flip even if its zone was later culled, so you can tell a quiet engine from an aggressive filter.")
+showTable = input.bool(true, "Show info table", group = "4 | Visuals")
+tblPosIn = input.string("Top right", "Table position",
+    options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = "4 | Visuals")
+tblSizeIn = input.string("Normal", "Table text size", options = ["Small", "Normal", "Large", "Huge"],
+    group = "4 | Visuals")
+
+cObBullBd = input.color(color.rgb(38, 166, 154, 255), "Bull OB border", group = "5 | Colors")
+cObBullBg = input.color(color.rgb(38, 166, 154, 38), "Bull OB fill", group = "5 | Colors")
+cObBearBd = input.color(color.rgb(239, 83, 80, 255), "Bear OB border", group = "5 | Colors")
+cObBearBg = input.color(color.rgb(239, 83, 80, 38), "Bear OB fill", group = "5 | Colors")
+cBrBullBd = input.color(color.rgb(41, 98, 255, 255), "Bull breaker border", group = "5 | Colors")
+cBrBullBg = input.color(color.rgb(41, 98, 255, 31), "Bull breaker fill", group = "5 | Colors")
+cBrBearBd = input.color(color.rgb(255, 152, 0, 255), "Bear breaker border", group = "5 | Colors")
+cBrBearBg = input.color(color.rgb(255, 152, 0, 31), "Bear breaker fill", group = "5 | Colors")
+cFib = input.color(color.rgb(179, 157, 219, 255), "50% fib line", group = "5 | Colors")
+cUp = input.color(color.rgb(38, 166, 154, 255), "Bullish text/label", group = "5 | Colors")
+cDn = input.color(color.rgb(239, 83, 80, 255), "Bearish text/label", group = "5 | Colors")
+cTblBg = input.color(color.rgb(30, 34, 45, 230), "Table background", group = "5 | Colors")
+cTblTx = input.color(color.rgb(209, 212, 220, 255), "Table text", group = "5 | Colors")
+
+thinBody = input.float(0.25, "Thin body -> use wick (body < x HTF ATR)   0 = off", min = 0.0, step = 0.05,
+    group = "6 | Retest & counter-trend (rev 6)",
+    tooltip = "Only with 'Use candle body' on. When the OB candle's body is smaller than this multiple of the HTF ATR(14), the zone uses the candle's full high-low range instead, so a near-doji doesn't produce a zone a few ticks tall.")
+showBrk = input.bool(true, "Show broken HTF level (retest line)", group = "6 | Retest & counter-trend (rev 6)",
+    tooltip = "The HTF swing level that the latest bias break went through. Old support becomes resistance after a bearish break, and the reverse.")
+brkTap = input.bool(true, "Retest of broken level counts as a zone tap", group = "6 | Retest & counter-trend (rev 6)",
+    tooltip = "A retest counts once price has first moved at least one LTF ATR(14) away from the level after the break. Lets the MSS filter arm on the retest, which after a fast break is usually much closer than the OB.")
+ctMode = input.bool(false, "Counter-trend MSS after an opposite HTF SFP", group = "6 | Retest & counter-trend (rev 6)",
+    tooltip = "Off = only bias-aligned trades (the original rules). On = an HTF SFP AGAINST the bias (e.g. a sweep of a low and close back above it in a bearish bias) arms an LTF MSS in the SFP direction for 'Setup window' bars, labelled 'MSS CT'. Counter-trend: trade it smaller.")
+cBrk = input.color(color.rgb(120, 123, 134, 255), "Broken level line", group = "6 | Retest & counter-trend (rev 6)")
+showFlip = input.bool(true, "Show next HTF MSS levels (bias flip lines)", group = "6 | Retest & counter-trend (rev 6)",
+    tooltip = "Lines at the HTF swing high and low that are still intact. An HTF candle CLOSE above the upper one is the next bullish MSS, a close below the lower one the next bearish MSS. In a bearish bias the upper line is the bias flip, in a bullish bias the lower one is.")
+
+high = chart.high
+low = chart.low
+open = chart.open
+close = chart.close
+
+// Pine's ta.atr(14): RMA of the true range, seeded with the SMA of the first 14.
+ltfTr = ta.tr(chart.high, chart.low, chart.close)
+ltfTrSma = ta.sma(ltfTr, 14)
+var ltfAtr = na
+ltfAtr := select(na(ltfAtr), ltfTrSma, (1.0 / 14.0) * ltfTr + (1.0 - 1.0 / 14.0) * ltfAtr)
+
+// ============================= HTF ENGINE ====================================
+// Runs once per closed HTF candle. Its results hold until the next HTF close,
+// which matches Pine's f_htf(1) with lookahead_on.
+htfNewBar = htf.new_bar(htfTf)
+htfLast = array.get(htf.bars(htfTf, 1), 0)
+htfClosed = htfNewBar && !na(htfLast)
+
+// Chart bar index where the current and the just-closed HTF candle started.
+var htfStartIdx = na
+var htfPrevStartIdx = na
+if htfNewBar {
+    htfPrevStartIdx := htfStartIdx
+    htfStartIdx := bar_index
+}
+
+var hist = array.new()      // closed HTF candles, newest first
+var htfPrevClose = na
+var atrH = na
+var atrSeedSum = 0.0
+var atrSeedCount = 0
+
+var swHi = na               // last confirmed HTF swing high
+var swLo = na               // last confirmed HTF swing low
+var hiDone = true           // swing already broken? (prevents signal spam)
+var loDone = true
+var obTopH = na             // order block of the LAST bias event
+var obBotH = na
+var obIdxH = na
+var fibH = na
+var bearT = na              // last bearish HTF candle (source for bull OB)
+var bearB = na
+var bearIdx = na
+var bullT = na              // last bullish HTF candle (source for bear OB)
+var bullB = na
+var bullIdx = na
+var loLeg = na              // lowest low since swHi formed  (origin of a bull break)
+var hiLeg = na              // highest high since swLo formed (origin of a bear break)
+var brkH = na               // the swing level the LAST bias event closed through
+
+// Values of the last closed HTF candle, as the chart sees them.
+var rBull = false
+var rBear = false
+var obT = na
+var obB = na
+var obIdx = na
+var fibRaw = na
+var rSfpB = false
+var rSfpS = false
+var rHtfHi = na
+var rHtfLo = na
+var rIdx = na
+var brkRaw = na
+var upFlip = na
+var dnFlip = na
+
+if htfClosed {
+    cH = 0.0 + htfLast.high
+    cL = 0.0 + htfLast.low
+    cO = 0.0 + htfLast.open
+    cC = 0.0 + htfLast.close
+
+    kept = array.new(htfLast)
+    for candle in hist {
+        if array.size(kept) < 2 * htfPivot + 1 {
+            kept := array.push(kept, candle)
+        }
+    }
+    hist := kept
+
+    trH = select(na(htfPrevClose), cH - cL,
+                 math.max(cH - cL, math.abs(cH - htfPrevClose), math.abs(cL - htfPrevClose)))
+    htfPrevClose := cC
+    if na(atrH) {
+        atrSeedSum := atrSeedSum + trH
+        atrSeedCount := atrSeedCount + 1
+        if atrSeedCount == 14 {
+            atrH := atrSeedSum / 14.0
+        }
+    } else {
+        atrH := (1.0 / 14.0) * trH + (1.0 - 1.0 / 14.0) * atrH
+    }
+
+    ph = na
+    pl = na
+    loN = na
+    hiN = na
+    if array.size(hist) == 2 * htfPivot + 1 {
+        center = array.get(hist, htfPivot)
+        isHigh = true
+        isLow = true
+        for i = 0 to 2 * htfPivot {
+            if i != htfPivot {
+                other = array.get(hist, i)
+                if i < htfPivot {
+                    if select(PIVOT_RIGHT_TIES, other.high > center.high, other.high >= center.high) {
+                        isHigh := false
+                    }
+                    if select(PIVOT_RIGHT_TIES, other.low < center.low, other.low <= center.low) {
+                        isLow := false
+                    }
+                } else {
+                    if select(PIVOT_LEFT_TIES, other.high > center.high, other.high >= center.high) {
+                        isHigh := false
+                    }
+                    if select(PIVOT_LEFT_TIES, other.low < center.low, other.low <= center.low) {
+                        isLow := false
+                    }
+                }
+            }
+        }
+        if isHigh {
+            ph := 0.0 + center.high
+        }
+        if isLow {
+            pl := 0.0 + center.low
+        }
+        // the bars after a just-confirmed pivot
+        for i = 0 to htfPivot - 1 {
+            candle = array.get(hist, i)
+            loN := select(na(loN), 0.0 + candle.low, math.min(loN, candle.low))
+            hiN := select(na(hiN), 0.0 + candle.high, math.max(hiN, candle.high))
+        }
+    }
+
+    if !na(ph) {
+        swHi := ph
+        hiDone := false
+        loLeg := loN
+    } else if !na(swHi) {
+        loLeg := select(na(loLeg), cL, math.min(loLeg, cL))
+    }
+    if !na(pl) {
+        swLo := pl
+        loDone := false
+        hiLeg := hiN
+    } else if !na(swLo) {
+        hiLeg := select(na(hiLeg), cH, math.max(hiLeg, cH))
+    }
+
+    // SFP = sweep of a still-intact swing + close back inside. Evaluated before
+    // the MSS flags are updated, so a level that was already closed through on
+    // an earlier bar can't produce a fake "reclaim" SFP.
+    bullSfp = !na(swLo) && !loDone && cL < swLo && cC > swLo
+    bearSfp = !na(swHi) && !hiDone && cH > swHi && cC < swHi
+
+    bullMss = !na(swHi) && !hiDone && cC > swHi
+    bearMss = !na(swLo) && !loDone && cC < swLo
+
+    // 50% of the leg that did the breaking: from its true origin (the extreme
+    // since the broken swing formed) to the broken level.
+    if bullMss {
+        hiDone := true
+        fibH := select(na(loLeg), na, (swHi + loLeg) / 2.0)
+        obTopH := bearT
+        obBotH := bearB
+        obIdxH := bearIdx
+        brkH := swHi
+    }
+    if bearMss {
+        loDone := true
+        fibH := select(na(hiLeg), na, (swLo + hiLeg) / 2.0)
+        obTopH := bullT
+        obBotH := bullB
+        obIdxH := bullIdx
+        brkH := swLo
+    }
+
+    // update candle memory LAST, so a break uses the candle *before* it. A
+    // near-doji body (smaller than thinBody x ATR) falls back to the wick range.
+    bodyOk = useBody && !(thinBody > 0.0 && !na(atrH) && math.abs(cC - cO) < thinBody * atrH)
+    if cC < cO {
+        bearT := select(bodyOk, cO, cH)
+        bearB := select(bodyOk, cC, cL)
+        bearIdx := htfPrevStartIdx
+    }
+    if cC > cO {
+        bullT := select(bodyOk, cC, cH)
+        bullB := select(bodyOk, cO, cL)
+        bullIdx := htfPrevStartIdx
+    }
+
+    rBull := bullMss
+    rBear := bearMss
+    obT := obTopH
+    obB := obBotH
+    obIdx := obIdxH
+    fibRaw := fibH
+    rSfpB := bullSfp
+    rSfpS := bearSfp
+    rHtfHi := cH
+    rHtfLo := cL
+    rIdx := htfPrevStartIdx
+    brkRaw := brkH
+    // Next HTF MSS levels: an HTF CLOSE above upFlip is the next bullish MSS,
+    // a close below dnFlip the next bearish one. na = no intact swing yet.
+    upFlip := select(hiDone, na, swHi)
+    dnFlip := select(loDone, na, swLo)
+}
+
+// HTF bar counter, used as the default age clock for zones
+var htfBarNo = 0
+if htfClosed {
+    htfBarNo := htfBarNo + 1
+}
+nowUnit = select(ageUnitIn == "HTF bars", htfBarNo, bar_index)
+
+// Events fire once, on the first chart bar after the HTF close.
+evBull = htfClosed && rBull
+evBear = htfClosed && rBear
+evSfpB = htfClosed && rSfpB
+evSfpS = htfClosed && rSfpS
+
+// ============================= BIAS + FIB ====================================
+var bias = 0
+var fib50 = na
+var lastEvB = na
+var sfpLblOn = false
+var sfpLblIdx = na
+var sfpLblY = na
+var sfpLblBull = false
+var sfpBar = na
+var sfpDir = 0
+var brkLvl = na             // broken HTF swing level of the current bias (retest line)
+var brkAway = false         // price has moved >= 1 LTF ATR away from it since the break
+var ctBar = na              // counter-trend: bar of the last SFP AGAINST the bias
+var ctDir = 0
+var ctWick = na             // that SFP's wick (natural stop for a counter-trend trade)
+
+if evBull {
+    bias := 1
+    fib50 := fibRaw
+    lastEvB := bar_index
+    brkLvl := brkRaw
+    brkAway := false
+    ctBar := na
+    ctDir := 0
+    ctWick := na
+    if sfpDir == -1 {       // stale SFP from the old regime, drop it and its label
+        sfpLblOn := false
+        sfpBar := na
+        sfpDir := 0
+    }
+}
+if evBear {
+    bias := -1
+    fib50 := fibRaw
+    lastEvB := bar_index
+    brkLvl := brkRaw
+    brkAway := false
+    ctBar := na
+    ctDir := 0
+    ctWick := na
+    if sfpDir == 1 {
+        sfpLblOn := false
+        sfpBar := na
+        sfpDir := 0
+    }
+}
+
+// broken level: armed for retests once price has moved one LTF ATR away from it
+if barstate.isconfirmed && !na(brkLvl) && !na(ltfAtr) && !brkAway {
+    if (bias == -1 && close < brkLvl - ltfAtr) || (bias == 1 && close > brkLvl + ltfAtr) {
+        brkAway := true
+    }
+}
+
+// ============================= ZONE SLOTS ====================================
+// Two slots per direction; slot 1 is always the newest. On = the box exists.
+var bOn1 = false
+var bTop1 = na
+var bBot1 = na
+var bAge1 = na
+var bBrk1 = false
+var bIdx1 = na
+var bOn2 = false
+var bTop2 = na
+var bBot2 = na
+var bAge2 = na
+var bBrk2 = false
+var bIdx2 = na
+var sOn1 = false
+var sTop1 = na
+var sBot1 = na
+var sAge1 = na
+var sBrk1 = false
+var sIdx1 = na
+var sOn2 = false
+var sTop2 = na
+var sBot2 = na
+var sAge2 = na
+var sBrk2 = false
+var sIdx2 = na
+
+// distance from a price to the nearest edge of a zone, in %
+fn zDistAt(px, t, b) {
+    return select(px > t, (px - t) / px * 100.0, select(px < b, (b - px) / px * 100.0, 0.0))
+}
+
+// newer of two creation stamps, ignoring slots that are not in play (live = 1)
+fn zNewer(cur, stamp, live) {
+    return select(live == 1 && (na(cur) || stamp > cur), stamp, cur)
+}
+
+// Visibility is decided from the last CLOSED chart bar, so nothing flickers
+// while the realtime bar is still moving.
+refPx = select(barstate.isconfirmed, close, coalesce(close[1], close))
+
+// ---- step 1, structure (closed chart bars only) ----
+// OB closed through -> breaker, breaker closed through -> removed.
+if barstate.isconfirmed {
+    if bOn1 {
+        if !bBrk1 {
+            if close < bBot1 {
+                bBrk1 := true
+            }
+        } else if close > bTop1 {
+            bOn1 := false
+        }
+    }
+    if bOn2 {
+        if !bBrk2 {
+            if close < bBot2 {
+                bBrk2 := true
+            }
+        } else if close > bTop2 {
+            bOn2 := false
+        }
+    }
+    if sOn1 {
+        if !sBrk1 {
+            if close > sTop1 {
+                sBrk1 := true
+            }
+        } else if close < sBot1 {
+            sOn1 := false
+        }
+    }
+    if sOn2 {
+        if !sBrk2 {
+            if close > sTop2 {
+                sBrk2 := true
+            }
+        } else if close < sBot2 {
+            sOn2 := false
+        }
+    }
+}
+
+// ---- bias flip: drop zones that now act against the new bias ----
+// Effective direction, not slot: a bull OB that failed is a BEAR breaker, and a
+// bear OB that failed is a BULL breaker.
+if hideOpp && (evBull || evBear) {
+    if bOn1 && bBrk1 == evBull {
+        bOn1 := false
+    }
+    if bOn2 && bBrk2 == evBull {
+        bOn2 := false
+    }
+    if sOn1 && sBrk1 == evBear {
+        sOn1 := false
+    }
+    if sOn2 && sBrk2 == evBear {
+        sOn2 := false
+    }
+}
+
+// ---- keep slot 1 = newest: promote slot 2 when slot 1 is empty ----
+if !bOn1 && bOn2 {
+    bOn1 := true
+    bTop1 := bTop2
+    bBot1 := bBot2
+    bAge1 := bAge2
+    bBrk1 := bBrk2
+    bIdx1 := bIdx2
+    bOn2 := false
+}
+if !sOn1 && sOn2 {
+    sOn1 := true
+    sTop1 := sTop2
+    sBot1 := sBot2
+    sAge1 := sAge2
+    sBrk1 := sBrk2
+    sIdx1 := sIdx2
+    sOn2 := false
+}
+
+// ---- newest zone per EFFECTIVE side ----
+// A bull-slot zone acts bullish until it breaks, then bearish, and the reverse
+// for bear slots. The newest zone on each side is exempt from age and distance.
+newUp = na
+newDn = na
+newUp := zNewer(newUp, bAge1, select(bOn1 && !bBrk1, 1, 0))
+newUp := zNewer(newUp, bAge2, select(bOn2 && !bBrk2, 1, 0))
+newUp := zNewer(newUp, sAge1, select(sOn1 && sBrk1, 1, 0))
+newUp := zNewer(newUp, sAge2, select(sOn2 && sBrk2, 1, 0))
+newDn := zNewer(newDn, sAge1, select(sOn1 && !sBrk1, 1, 0))
+newDn := zNewer(newDn, sAge2, select(sOn2 && !sBrk2, 1, 0))
+newDn := zNewer(newDn, bAge1, select(bOn1 && bBrk1, 1, 0))
+newDn := zNewer(newDn, bAge2, select(bOn2 && bBrk2, 1, 0))
+
+bEx1 = keepNewest && coalesce(bAge1 == select(bBrk1, newDn, newUp), false)
+bEx2 = keepNewest && coalesce(bAge2 == select(bBrk2, newDn, newUp), false)
+sEx1 = keepNewest && coalesce(sAge1 == select(sBrk1, newUp, newDn), false)
+sEx2 = keepNewest && coalesce(sAge2 == select(sBrk2, newUp, newDn), false)
+
+// ---- step 2, filters: too old -> removed, too far -> hidden (comes back when
+// price returns) ----
+bFar1 = false
+bFar2 = false
+sFar1 = false
+sFar2 = false
+if bOn1 {
+    if barstate.isconfirmed && !bEx1 && nowUnit - bAge1 > maxAge {
+        bOn1 := false
+    } else {
+        bFar1 := !bEx1 && maxDist > 0.0 && zDistAt(refPx, bTop1, bBot1) > maxDist
+    }
+}
+if bOn2 {
+    if barstate.isconfirmed && !bEx2 && nowUnit - bAge2 > maxAge {
+        bOn2 := false
+    } else {
+        bFar2 := !bEx2 && maxDist > 0.0 && zDistAt(refPx, bTop2, bBot2) > maxDist
+    }
+}
+if sOn1 {
+    if barstate.isconfirmed && !sEx1 && nowUnit - sAge1 > maxAge {
+        sOn1 := false
+    } else {
+        sFar1 := !sEx1 && maxDist > 0.0 && zDistAt(refPx, sTop1, sBot1) > maxDist
+    }
+}
+if sOn2 {
+    if barstate.isconfirmed && !sEx2 && nowUnit - sAge2 > maxAge {
+        sOn2 := false
+    } else {
+        sFar2 := !sEx2 && maxDist > 0.0 && zDistAt(refPx, sTop2, sBot2) > maxDist
+    }
+}
+
+// ---- create new zones on confirmed bias events ----
+zoneH = select(!na(obT) && !na(obB), (obT - obB) / close * 100.0, na)
+okOb = showZones && !na(obT) && !na(obB) && !na(obIdx) && obT > obB &&
+    (maxHeight <= 0.0 || zoneH <= maxHeight)
+
+// two breaks in a row with no opposite candle between them point at the same OB
+dupBull = bOn1 && coalesce(obT == bTop1 && obB == bBot1, false)
+dupBear = sOn1 && coalesce(obT == sTop1 && obB == sBot1, false)
+
+if evBull && okOb && !dupBull {
+    if maxPerSide == 1 || !bOn1 {
+        // slot 1 is free (or we only keep one): overwrite slot 1, leave slot 2 alone
+    } else {
+        bOn2 := true
+        bTop2 := bTop1
+        bBot2 := bBot1
+        bAge2 := bAge1
+        bBrk2 := bBrk1
+        bIdx2 := bIdx1
+        bFar2 := bFar1
+    }
+    bOn1 := true
+    bTop1 := obT
+    bBot1 := obB
+    bAge1 := nowUnit
+    bBrk1 := false
+    bIdx1 := obIdx
+    bFar1 := false
+}
+if evBear && okOb && !dupBear {
+    if maxPerSide == 1 || !sOn1 {
+    } else {
+        sOn2 := true
+        sTop2 := sTop1
+        sBot2 := sBot1
+        sAge2 := sAge1
+        sBrk2 := sBrk1
+        sIdx2 := sIdx1
+        sFar2 := sFar1
+    }
+    sOn1 := true
+    sTop1 := obT
+    sBot1 := obB
+    sAge1 := nowUnit
+    sBrk1 := false
+    sIdx1 := obIdx
+    sFar1 := false
+}
+
+// ============================= HTF SFP (bias aligned only) ===================
+sfpBull = evSfpB && bias == 1
+sfpBear = evSfpS && bias == -1
+
+if showSfp && (sfpBull || sfpBear) {
+    // drawn on the HTF candle that did the sweep, at its wick
+    sfpLblOn := true
+    sfpLblIdx := rIdx
+    sfpLblY := select(sfpBull, rHtfLo, rHtfHi)
+    sfpLblBull := sfpBull
+}
+if sfpBull || sfpBear {
+    sfpBar := bar_index
+    sfpDir := select(sfpBull, 1, -1)
+}
+
+// Counter-trend (optional): an SFP AGAINST the bias.
+ctSfpB = ctMode && evSfpB && bias == -1
+ctSfpS = ctMode && evSfpS && bias == 1
+
+var ctLblOn = false
+var ctLblIdx = na
+var ctLblY = na
+var ctLblBull = false
+if showSfp && (ctSfpB || ctSfpS) {
+    ctLblOn := true
+    ctLblIdx := rIdx
+    ctLblY := select(ctSfpB, rHtfLo, rHtfHi)
+    ctLblBull := ctSfpB
+}
+if ctSfpB || ctSfpS {
+    ctBar := bar_index
+    ctDir := select(ctSfpB, 1, -1)
+    ctWick := select(ctSfpB, rHtfLo, rHtfHi)
+}
+
+// ============================= ZONE TAPS =====================================
+// Last chart bar that traded into a zone, by the zone's effective direction.
+var tapUpBar = na
+var tapDnBar = na
+
+bT1 = bOn1 && low <= bTop1 && high >= bBot1
+bT2 = bOn2 && low <= bTop2 && high >= bBot2
+sT1 = sOn1 && low <= sTop1 && high >= sBot1
+sT2 = sOn2 && low <= sTop2 && high >= sBot2
+
+if (bT1 && !bBrk1) || (bT2 && !bBrk2) || (sT1 && sBrk1) || (sT2 && sBrk2) {
+    tapUpBar := bar_index
+}
+if (sT1 && !sBrk1) || (sT2 && !sBrk2) || (bT1 && bBrk1) || (bT2 && bBrk2) {
+    tapDnBar := bar_index
+}
+
+// Retest of the broken HTF level counts as a tap on the bias side, but only
+// after price first moved away from it.
+if brkTap && brkAway && !na(brkLvl) {
+    if bias == -1 && high >= brkLvl {
+        tapDnBar := bar_index
+    }
+    if bias == 1 && low <= brkLvl {
+        tapUpBar := bar_index
+    }
+}
+
+tapUp = !na(tapUpBar) && bar_index - tapUpBar <= gateWin
+tapDn = !na(tapDnBar) && bar_index - tapDnBar <= gateWin
+sfpInWin = !na(sfpBar) && bar_index - sfpBar <= gateWin
+sfpUp = sfpDir == 1 && sfpInWin
+sfpDn = sfpDir == -1 && sfpInWin
+
+gateUp = switch mssGate {
+    "Zone tap or SFP" => tapUp || sfpUp,
+    "Zone tap" => tapUp,
+    "SFP" => sfpUp,
+    default => true
+}
+gateDn = switch mssGate {
+    "Zone tap or SFP" => tapDn || sfpDn,
+    "Zone tap" => tapDn,
+    "SFP" => sfpDn,
+    default => true
+}
+
+// ============================= LTF MSS (one clean label) =====================
+var lHi = na
+var lLo = na
+var lHiDone = true
+var lLoDone = true
+
+lph = na
+lpl = na
+if bar_index >= 2 * ltfPivot {
+    centerHigh = high[ltfPivot]
+    centerLow = low[ltfPivot]
+    isHigh = true
+    isLow = true
+    for i = 1 to ltfPivot {
+        if select(PIVOT_LEFT_TIES, high[ltfPivot + i] > centerHigh, high[ltfPivot + i] >= centerHigh) {
+            isHigh := false
+        }
+        if select(PIVOT_RIGHT_TIES, high[ltfPivot - i] > centerHigh, high[ltfPivot - i] >= centerHigh) {
+            isHigh := false
+        }
+        if select(PIVOT_LEFT_TIES, low[ltfPivot + i] < centerLow, low[ltfPivot + i] <= centerLow) {
+            isLow := false
+        }
+        if select(PIVOT_RIGHT_TIES, low[ltfPivot - i] < centerLow, low[ltfPivot - i] <= centerLow) {
+            isLow := false
+        }
+    }
+    if isHigh {
+        lph := centerHigh
+    }
+    if isLow {
+        lpl := centerLow
+    }
+}
+
+if !na(lph) {
+    lHi := lph
+    lHiDone := false
+}
+if !na(lpl) {
+    lLo := lpl
+    lLoDone := false
+}
+
+// closed chart bars only: no intrabar labels or alerts that later vanish
+rawMssUp = barstate.isconfirmed && !na(lHi) && !lHiDone && close > lHi
+rawMssDn = barstate.isconfirmed && !na(lLo) && !lLoDone && close < lLo
+if rawMssUp {
+    lHiDone := true
+}
+if rawMssDn {
+    lLoDone := true
+}
+
+// bias-aligned (original rules)
+alnUp = rawMssUp && (!ltfAlign || bias == 1) && gateUp
+alnDn = rawMssDn && (!ltfAlign || bias == -1) && gateDn
+
+// counter-trend: armed for 'Setup window' bars after an opposite-bias HTF SFP
+ctInWin = !na(ctBar) && bar_index - ctBar <= gateWin
+ctArmUp = ctMode && ctDir == 1 && bias == -1 && ctInWin
+ctArmDn = ctMode && ctDir == -1 && bias == 1 && ctInWin
+mssCtUp = rawMssUp && ctArmUp && !alnUp
+mssCtDn = rawMssDn && ctArmDn && !alnDn
+
+mssUp = alnUp || mssCtUp
+mssDn = alnDn || mssCtDn
+
+var mssLblOn = false
+var mssLblIdx = na
+var mssLblY = na
+var mssLblUp = false
+var mssLblCt = false
+if showMss && (mssUp || mssDn) {
+    mssLblOn := true
+    mssLblIdx := bar_index
+    mssLblY := select(mssUp, low, high)
+    mssLblUp := mssUp
+    mssLblCt := select(mssUp, mssCtUp, mssCtDn)
+}
+
+// ============================= DRAW ==========================================
+fibPlot = select(showFib && !(evBull || evBear), fib50, na)
+plot(fibPlot, id = "fib50", title = "HTF 50% Fib", color = cFib, width = 1)
+brkPlot = select(showBrk && !(evBull || evBear), brkLvl, na)
+plot(brkPlot, id = "broken_level", title = "Broken HTF level", color = cBrk, width = 2)
+// next HTF MSS levels, broken where the level moves so no diagonal is drawn
+upFlipPlot = select(showFlip && !htfClosed, upFlip, na)
+dnFlipPlot = select(showFlip && !htfClosed, dnFlip, na)
+plot(upFlipPlot, id = "up_flip", title = "Next bullish HTF MSS above", color = color.new(cUp, 40))
+plot(dnFlipPlot, id = "dn_flip", title = "Next bearish HTF MSS below", color = color.new(cDn, 40))
+
+marker(low - nz(ltfAtr, 0.0) * 0.3, id = "htf_mss_up", visible = showHtfMk && evBull, color = cUp)
+marker(high + nz(ltfAtr, 0.0) * 0.3, id = "htf_mss_down", visible = showHtfMk && evBear, color = cDn)
+
+// zones: a breaker takes the colors of the side it now acts for
+right = bar_index + extendBars
+region(key = 1, upper = bTop1, lower = bBot1, left_index = bIdx1, right_index = right, id = "zones",
+       visible = bOn1 && !bFar1,
+       border_color = select(bBrk1, cBrBearBd, cObBullBd), fill_color = select(bBrk1, cBrBearBg, cObBullBg))
+region(key = 2, upper = bTop2, lower = bBot2, left_index = bIdx2, right_index = right, id = "zones",
+       visible = bOn2 && !bFar2,
+       border_color = select(bBrk2, cBrBearBd, cObBullBd), fill_color = select(bBrk2, cBrBearBg, cObBullBg))
+region(key = 3, upper = sTop1, lower = sBot1, left_index = sIdx1, right_index = right, id = "zones",
+       visible = sOn1 && !sFar1,
+       border_color = select(sBrk1, cBrBullBd, cObBearBd), fill_color = select(sBrk1, cBrBullBg, cObBearBg))
+region(key = 4, upper = sTop2, lower = sBot2, left_index = sIdx2, right_index = right, id = "zones",
+       visible = sOn2 && !sFar2,
+       border_color = select(sBrk2, cBrBullBd, cObBearBd), fill_color = select(sBrk2, cBrBullBg, cObBearBg))
+
+region(key = 0, upper = sfpLblY, lower = sfpLblY, left_index = sfpLblIdx, right_index = sfpLblIdx,
+       id = "sfp_up", visible = sfpLblOn && sfpLblBull, text = "SFP", text_position = "below",
+       text_color = color.white, fill_color = color.new(cUp, 20))
+region(key = 0, upper = sfpLblY, lower = sfpLblY, left_index = sfpLblIdx, right_index = sfpLblIdx,
+       id = "sfp_down", visible = sfpLblOn && !sfpLblBull, text = "SFP", text_position = "above",
+       text_color = color.white, fill_color = color.new(cDn, 20))
+region(key = 0, upper = ctLblY, lower = ctLblY, left_index = ctLblIdx, right_index = ctLblIdx,
+       id = "sfp_ct_up", visible = ctLblOn && ctLblBull, text = "SFP CT", text_position = "below",
+       text_color = color.white, fill_color = color.new(cUp, 50))
+region(key = 0, upper = ctLblY, lower = ctLblY, left_index = ctLblIdx, right_index = ctLblIdx,
+       id = "sfp_ct_down", visible = ctLblOn && !ctLblBull, text = "SFP CT", text_position = "above",
+       text_color = color.white, fill_color = color.new(cDn, 50))
+region(key = 0, upper = mssLblY, lower = mssLblY, left_index = mssLblIdx, right_index = mssLblIdx,
+       id = "mss_up", visible = mssLblOn && mssLblUp, text = select(mssLblCt, "MSS CT", "MSS"),
+       text_position = "below", text_color = cTblTx,
+       fill_color = color.new(cUp, select(mssLblCt, 75, 55)))
+region(key = 0, upper = mssLblY, lower = mssLblY, left_index = mssLblIdx, right_index = mssLblIdx,
+       id = "mss_down", visible = mssLblOn && !mssLblUp, text = select(mssLblCt, "MSS CT", "MSS"),
+       text_position = "above", text_color = cTblTx,
+       fill_color = color.new(cDn, select(mssLblCt, 75, 55)))
+
+// ============================= INFO TABLE ====================================
+// nearest live zone (used for the "Active zone" row), hidden ones included
+nD = na
+nN = "None"
+nH = false
+if bOn1 {
+    d = zDistAt(close, bTop1, bBot1)
+    if na(nD) || d < nD {
+        nD := d
+        nN := select(bBrk1, "Bear Breaker", "Bull OB")
+        nH := bFar1
+    }
+}
+if bOn2 {
+    d = zDistAt(close, bTop2, bBot2)
+    if na(nD) || d < nD {
+        nD := d
+        nN := select(bBrk2, "Bear Breaker", "Bull OB")
+        nH := bFar2
+    }
+}
+if sOn1 {
+    d = zDistAt(close, sTop1, sBot1)
+    if na(nD) || d < nD {
+        nD := d
+        nN := select(sBrk1, "Bull Breaker", "Bear OB")
+        nH := sFar1
+    }
+}
+if sOn2 {
+    d = zDistAt(close, sTop2, sBot2)
+    if na(nD) || d < nD {
+        nD := d
+        nN := select(sBrk2, "Bull Breaker", "Bear OB")
+        nH := sFar2
+    }
+}
+
+// shown zones by effective direction, plus how many are parked out of range
+nBull = select(bOn1 && !bFar1 && !bBrk1, 1, 0) + select(bOn2 && !bFar2 && !bBrk2, 1, 0) +
+    select(sOn1 && !sFar1 && sBrk1, 1, 0) + select(sOn2 && !sFar2 && sBrk2, 1, 0)
+nBear = select(sOn1 && !sFar1 && !sBrk1, 1, 0) + select(sOn2 && !sFar2 && !sBrk2, 1, 0) +
+    select(bOn1 && !bFar1 && bBrk1, 1, 0) + select(bOn2 && !bFar2 && bBrk2, 1, 0)
+nHid = select(bOn1 && bFar1, 1, 0) + select(bOn2 && bFar2, 1, 0) +
+    select(sOn1 && sFar1, 1, 0) + select(sOn2 && sFar2, 1, 0)
+cntTxt = str.tostring(nBull) + " / " + str.tostring(nBear) +
+    select(nHid > 0, "   +" + str.tostring(nHid) + " hidden", "")
+
+armUp = gateUp && (!ltfAlign || bias == 1)
+armDn = gateDn && (!ltfAlign || bias == -1)
+
+tick = instrument.min_tick
+biasTxt = select(bias == 1, "Bullish", select(bias == -1, "Bearish", "Neutral"))
+biasCol = select(bias == 1, cUp, select(bias == -1, cDn, color.gray))
+sfpTxt = select(na(sfpBar), "None",
+    select(sfpDir == 1, "Bullish", "Bearish") + "  " + str.tostring(bar_index - sfpBar) + " bars ago")
+sfpCol = select(na(sfpBar), color.gray, select(sfpDir == 1, cUp, cDn))
+zoneTxt = select(na(nD), "None", select(nD <= 0.0, nN + "   inside",
+    nN + "   " + str.tostring(nD, "#.##") + "%" + select(nH, "  (hidden)", "")))
+zoneCol = select(na(nD) || nH, color.gray, cTblTx)
+fibTxt = select(na(fib50), "n/a",
+    str.tostring(fib50, tick) + "   " + select(close > fib50, "above", "below"))
+evTxt = select(na(lastEvB), "None yet", str.tostring(bar_index - lastEvB) + " bars ago")
+gateTxt = select(mssGate == "None", "Off", select(armUp && armDn, "Both armed",
+    select(armUp, "Long armed", select(armDn, "Short armed", "Waiting"))))
+gateCol = select(mssGate == "None", color.gray, select(armUp && !armDn, cUp,
+    select(armDn && !armUp, cDn, cTblTx)))
+brkDist = select(na(brkLvl), na, math.abs(close - brkLvl) / close * 100.0)
+brkTxt = select(na(brkLvl), "n/a", str.tostring(brkLvl, tick) + "   " + str.tostring(brkDist, "#.##") + "%" +
+    select(brkTap, select(brkAway, "   retest counts", "   waiting for move away"), ""))
+ctTxt = select(!ctMode, "Off", select(ctArmUp, "Long CT armed   stop < " + str.tostring(ctWick, tick),
+    select(ctArmDn, "Short CT armed   stop > " + str.tostring(ctWick, tick), "Waiting for opposite SFP")))
+ctCol = select(!ctMode, color.gray, select(ctArmUp, cUp, select(ctArmDn, cDn, cTblTx)))
+htfName = select(htfTf == "720", "12H", htfTf)
+upTxt = select(na(upFlip), "waiting for a new " + htfName + " swing high",
+    htfName + " close > " + str.tostring(upFlip, tick) + "   +" +
+    str.tostring((upFlip - close) / close * 100.0, "#.##") + "%" + select(bias == -1, "   FLIP", ""))
+dnTxt = select(na(dnFlip), "waiting for a new " + htfName + " swing low",
+    htfName + " close < " + str.tostring(dnFlip, tick) + "   -" +
+    str.tostring((close - dnFlip) / close * 100.0, "#.##") + "%" + select(bias == 1, "   FLIP", ""))
+
+// chart timeframe in minutes, from the shortest recent bar spacing
+barMinutes = ta.lowest(chart.time - chart.time[1], 20) / 60000.0
+chartTf = str.tostring(barMinutes, "#")
+
+tblSize = switch tblSizeIn {
+    "Small" => "small",
+    "Large" => "large",
+    "Huge" => "huge",
+    default => "normal"
+}
+info_row(select(showTable, "Roman Trade Setup", ""), select(showTable, htfTf + " -> " + chartTf, ""),
+         left_color = cTblTx, right_color = cTblTx, background = color.new(color.gray, 75),
+         position = tblPosIn, size = tblSize, panel_color = cTblBg)
+info_row(select(showTable, "Bias", ""), select(showTable, biasTxt, ""), left_color = cTblTx, right_color = biasCol)
+info_row(select(showTable, "SFP", ""), select(showTable, sfpTxt, ""), left_color = cTblTx, right_color = sfpCol)
+info_row(select(showTable, "Active zone", ""), select(showTable, zoneTxt, ""), left_color = cTblTx, right_color = zoneCol)
+info_row(select(showTable, "50% Fib", ""), select(showTable, fibTxt, ""), left_color = cTblTx, right_color = cFib)
+info_row(select(showTable, "Zones Bull / Bear", ""), select(showTable, cntTxt, ""), left_color = cTblTx, right_color = cTblTx)
+info_row(select(showTable, "Last HTF MSS", ""), select(showTable, evTxt, ""), left_color = cTblTx, right_color = cTblTx)
+info_row(select(showTable, "MSS filter", ""), select(showTable, gateTxt, ""), left_color = cTblTx, right_color = gateCol)
+info_row(select(showTable, "Broken level", ""), select(showTable, brkTxt, ""), left_color = cTblTx,
+         right_color = select(na(brkLvl), color.gray, cBrk))
+info_row(select(showTable, "Counter-trend", ""), select(showTable, ctTxt, ""), left_color = cTblTx, right_color = ctCol)
+info_row(select(showTable, "Bullish MSS", ""), select(showTable, upTxt, ""), left_color = cTblTx,
+         right_color = select(na(upFlip), color.gray, cUp))
+info_row(select(showTable, "Bearish MSS", ""), select(showTable, dnTxt, ""), left_color = cTblTx,
+         right_color = select(na(dnFlip), color.gray, cDn))
+
+// ============================= ALERT OUTPUTS =================================
+plot(evBull, id = "htf_bias_bullish", title = "HTF bias -> Bullish")
+plot(evBear, id = "htf_bias_bearish", title = "HTF bias -> Bearish")
+plot(sfpBull, id = "htf_sfp_bullish", title = "HTF Bullish SFP")
+plot(sfpBear, id = "htf_sfp_bearish", title = "HTF Bearish SFP")
+plot(alnUp, id = "ltf_mss_up", title = "LTF MSS up")
+plot(alnDn, id = "ltf_mss_down", title = "LTF MSS down")
+plot(mssCtUp, id = "ltf_ct_mss_up", title = "LTF counter-trend MSS up")
+plot(mssCtDn, id = "ltf_ct_mss_down", title = "LTF counter-trend MSS down")
+
+// ============================= DEBUG EXPORT ==================================
+// Hidden values for comparing with TradingView via flowsurface-indicator run.
+plot(bias, id = "dbg_bias", display = "none")
+plot(fib50, id = "dbg_fib50", display = "none")
+plot(brkLvl, id = "dbg_broken_level", display = "none")
+plot(upFlip, id = "dbg_up_flip", display = "none")
+plot(dnFlip, id = "dbg_dn_flip", display = "none")
+plot(select(brkAway, 1, 0), id = "dbg_broken_away", display = "none")
+plot(select(ctArmUp, 1, 0), id = "dbg_ct_arm_up", display = "none")
+plot(select(ctArmDn, 1, 0), id = "dbg_ct_arm_down", display = "none")
+plot(select(bOn1, bTop1, na), id = "dbg_b1_top", display = "none")
+plot(select(bOn1, bBot1, na), id = "dbg_b1_bot", display = "none")
+plot(select(bOn1, select(bBrk1, 1, 0), na), id = "dbg_b1_brk", display = "none")
+plot(select(bOn2, bTop2, na), id = "dbg_b2_top", display = "none")
+plot(select(bOn2, bBot2, na), id = "dbg_b2_bot", display = "none")
+plot(select(bOn2, select(bBrk2, 1, 0), na), id = "dbg_b2_brk", display = "none")
+plot(select(sOn1, sTop1, na), id = "dbg_s1_top", display = "none")
+plot(select(sOn1, sBot1, na), id = "dbg_s1_bot", display = "none")
+plot(select(sOn1, select(sBrk1, 1, 0), na), id = "dbg_s1_brk", display = "none")
+plot(select(sOn2, sTop2, na), id = "dbg_s2_top", display = "none")
+plot(select(sOn2, sBot2, na), id = "dbg_s2_bot", display = "none")
+plot(select(sOn2, select(sBrk2, 1, 0), na), id = "dbg_s2_brk", display = "none")
