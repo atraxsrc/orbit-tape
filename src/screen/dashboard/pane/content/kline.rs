@@ -1,3 +1,4 @@
+mod context_menu;
 mod drawing;
 mod fetch;
 mod history;
@@ -40,7 +41,7 @@ pub use settings::Message as SettingsMessage;
 pub use updates::DataUpdate;
 
 use data::chart::Basis;
-use data::chart::kline::alerts::{AlertHit, AlertWatch};
+use data::chart::kline::alerts::{AlertHit, AlertSource, AlertWatch, PriceLevelWatch};
 use data::chart::kline::composition::{
     ChartComposition, DEFAULT_MIN_PANEL_RATIO, MarkKind, PanelId, PanelScaleMode,
 };
@@ -81,6 +82,7 @@ pub enum Action {
 pub enum Message {
     Chart(KlineWidgetEvent),
     Drawing(drawing::Event),
+    ContextMenu(context_menu::Message),
     ToggleDrawingSidebar,
     CloseContextualSettings,
     SeriesEditor(series_editor::Message),
@@ -107,6 +109,8 @@ pub struct KlineChart {
     render_invalidation: RenderInvalidation,
     last_maintenance_at: Instant,
     alert_watch: AlertWatch,
+    price_watch: PriceLevelWatch,
+    context_menu: Option<context_menu::ContextMenu>,
 }
 
 struct PreparedSettings {
@@ -198,6 +202,8 @@ impl KlineChart {
             drawing_sidebar_visible: true,
             last_maintenance_at: Instant::now(),
             alert_watch: AlertWatch::default(),
+            price_watch: PriceLevelWatch::default(),
+            context_menu: None,
             render_invalidation: RenderInvalidation::new(),
             settings_reconfigure_pending: false,
         };
@@ -302,6 +308,18 @@ impl KlineChart {
             }
             Message::Drawing(message) => {
                 let update = self.drawings.update(message, &mut chart_settings.drawing);
+                self.apply_drawing_update(update);
+            }
+            Message::ContextMenu(message) => {
+                self.context_menu = None;
+                let update = match message {
+                    context_menu::Message::Close => DrawingUpdate::None,
+                    context_menu::Message::AddAlert(anchor) => self
+                        .drawings
+                        .add_price_alert(anchor, &chart_settings.drawing),
+                    context_menu::Message::ArmAlert(id) => self.drawings.set_alert(id, true),
+                    context_menu::Message::RemoveAlert(id) => self.drawings.set_alert(id, false),
+                };
                 self.apply_drawing_update(update);
             }
             Message::Chart(event) => {
@@ -511,6 +529,13 @@ impl KlineChart {
                         self.viewport.horizontal_world = world;
                         self.render_invalidation.invalidate();
                     }
+                    KlineWidgetEvent::ContextMenu {
+                        position,
+                        anchor,
+                        drawing,
+                    } => {
+                        self.context_menu = self.context_menu_at(position, anchor, drawing);
+                    }
                     KlineWidgetEvent::DeletePressed => {
                         let update = self.drawings.update(
                             drawing::Event::Tools(DrawingMessage::DeleteSelectedDrawing),
@@ -599,6 +624,11 @@ impl KlineChart {
                 .height(iced::Length::Fill)
                 .push(chart)
                 .push(self.drawings.view(theme_accents).map(Message::Drawing));
+            let chart_stack = if let Some(menu) = &self.context_menu {
+                chart_stack.push(menu.view().map(Message::ContextMenu))
+            } else {
+                chart_stack
+            };
 
             let fetch_activity = self.fetch.pending_activity();
             let fetch_activity: Option<iced::Element<'_, Message>> = if fetch_activity.is_empty() {
@@ -822,6 +852,67 @@ impl KlineChart {
 
     /// Alert conditions that turned true on bars closed since the last call.
     pub fn take_alerts(&mut self, now: UnixMs) -> Vec<AlertHit> {
+        let mut hits = self.take_indicator_alerts(now);
+        let price_hits =
+            self.price_watch
+                .poll(&self.data, self.drawings.tools.active_drawings(), now);
+        if !price_hits.is_empty() {
+            let fired = price_hits
+                .iter()
+                .filter_map(|hit| match hit.source {
+                    AlertSource::PriceLevel { drawing, .. } => Some(drawing),
+                    AlertSource::Indicator { .. } => None,
+                })
+                .collect::<Vec<_>>();
+            if self.drawings.tools.disarm_alerts(&fired) {
+                self.render_invalidation.invalidate();
+            }
+            hits.extend(price_hits);
+        }
+        hits
+    }
+
+    /// The right-click menu for a click at `position`, if it has any entry.
+    fn context_menu_at(
+        &self,
+        position: iced::Point,
+        anchor: Option<data::chart::kline::DrawingAnchor>,
+        drawing: Option<data::chart::kline::drawing::DrawingId>,
+    ) -> Option<context_menu::ContextMenu> {
+        let ticker = self.data.base_ticker();
+        let add_at = anchor.map(|anchor| {
+            let units =
+                anchor
+                    .y_unit
+                    .0
+                    .saturating_mul(exchange::unit::price::Price::min_tick_units(
+                        ticker.min_ticksize,
+                    ));
+            let price =
+                exchange::unit::price::Price::from_units(units).to_string(ticker.min_ticksize);
+            (anchor, price)
+        });
+        let line = drawing.and_then(|id| {
+            let drawing = self
+                .drawings
+                .tools
+                .active_drawings()
+                .iter()
+                .find(|drawing| drawing.id == id)?;
+            if drawing.locked || !drawing.supports_price_alert() {
+                return None;
+            }
+            let alert = match drawing.alert {
+                None => context_menu::LineAlert::None,
+                Some(alert) if alert.armed => context_menu::LineAlert::Armed,
+                Some(_) => context_menu::LineAlert::Fired,
+            };
+            Some((id, alert))
+        });
+        context_menu::ContextMenu::new(position, add_at, line)
+    }
+
+    fn take_indicator_alerts(&mut self, now: UnixMs) -> Vec<AlertHit> {
         let selected = self.indicators.selected_indicators();
         let indicators = &self.indicators;
         let rebuilding = indicators.pending_rebuild_job().is_some();
@@ -906,6 +997,7 @@ impl KlineChart {
     fn can_handle_escape(&self) -> bool {
         self.has_settings_target()
             || self.inspector.is_confirming_reset()
+            || self.context_menu.is_some()
             || self.drawings.tools.can_handle_escape()
     }
 
@@ -1088,6 +1180,9 @@ impl KlineChart {
     }
 
     pub fn handle_escape(&mut self) -> bool {
+        if self.context_menu.take().is_some() {
+            return true;
+        }
         if self.go_back() {
             return true;
         }

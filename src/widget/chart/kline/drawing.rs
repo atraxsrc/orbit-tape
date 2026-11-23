@@ -751,7 +751,68 @@ impl DrawingView<'_> {
                 self.snapshot.selected_drawings.contains(&drawing.id),
                 pixels,
             );
+            if let Some(alert) = drawing.alert {
+                self.draw_alert_tag(frame, drawing, alert.armed, palette, generated_accents);
+            }
         }
+    }
+
+    /// A small "Alert" tag at the right end of a price alert line. A fired
+    /// (disarmed) alert keeps a faded tag.
+    fn draw_alert_tag(
+        &self,
+        frame: &mut PaintInputs,
+        drawing: &data::chart::kline::DrawingEntity,
+        armed: bool,
+        palette: &Extended,
+        generated_accents: &[iced::Color; ACCENT_COUNT],
+    ) {
+        const TEXT_SIZE: f32 = 10.0;
+        let DrawingObject::HorizontalLine {
+            panel_id,
+            y_unit,
+            x,
+            ray,
+        } = drawing.object
+        else {
+            return;
+        };
+        let Some((bounds, y, _)) = self.drawing_horizontal_line_geometry(panel_id, y_unit, x, ray)
+        else {
+            return;
+        };
+        let mut color = iced_color(drawing.style.stroke_color, palette, generated_accents);
+        if !armed {
+            color.a *= 0.45;
+        }
+        let label = if armed { "Alert" } else { "Alert fired" };
+        let width = TEXT_SIZE * 0.62 * label.len() as f32 + 8.0;
+        let height = TEXT_SIZE + 4.0;
+        let right = bounds.x + bounds.width - 4.0;
+        let left = (right - width).max(bounds.x);
+        let top = (y - height - 2.0).max(bounds.y);
+        frame.with_clip(bounds, |frame| {
+            frame.fill_rectangle(
+                Point::new(left, top),
+                Size::new(width, height),
+                palette.background.base.color,
+            );
+            frame.stroke_rectangle(
+                Point::new(left, top),
+                Size::new(width, height),
+                canvas::Stroke::default().with_color(color).with_width(1.0),
+            );
+            frame.fill_text(canvas::Text {
+                content: label.to_owned(),
+                position: Point::new(left + width / 2.0, top + height / 2.0),
+                color,
+                size: TEXT_SIZE.into(),
+                align_x: iced::Alignment::Center.into(),
+                align_y: iced::Alignment::Center.into(),
+                font: style::AZERET_MONO,
+                ..Default::default()
+            });
+        });
     }
 
     pub(super) fn fill_drawing_interaction(

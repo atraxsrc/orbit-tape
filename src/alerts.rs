@@ -5,7 +5,7 @@
 //! chart can be open in several panes), skips muted conditions, and delivers
 //! the rest the way the alert settings ask.
 
-use data::chart::kline::alerts::AlertHit;
+use data::chart::kline::alerts::{AlertHit, AlertSource};
 use data::config::alerts::Alerts;
 use rodio::Source;
 use std::collections::VecDeque;
@@ -133,11 +133,18 @@ fn body(hit: &AlertHit) -> String {
                 .to_string()
         })
         .unwrap_or_default();
-    format!(
-        "{}\nClose {close}, bar opened {bar}\n{}",
-        hit.indicator_name,
-        exchange_name(hit)
-    )
+    match hit.source {
+        AlertSource::Indicator { .. } => format!(
+            "{}\nClose {close}, bar opened {bar}\n{}",
+            hit.source_name,
+            exchange_name(hit)
+        ),
+        AlertSource::PriceLevel { .. } => format!(
+            "{}\nLast {close} at {bar}\n{}",
+            hit.source_name,
+            exchange_name(hit)
+        ),
+    }
 }
 
 fn exchange_name(hit: &AlertHit) -> String {

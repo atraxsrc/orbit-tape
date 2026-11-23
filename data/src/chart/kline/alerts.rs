@@ -1,38 +1,60 @@
-//! Alert conditions raised by indicator plots declared with `alert = true`.
+//! Alert conditions raised by indicator plots declared with `alert = true`,
+//! and price alerts on horizontal lines.
 //!
 //! A chart pane owns one [`AlertWatch`]. It remembers, per indicator
 //! instance, the newest closed bar it has already looked at. The first poll
 //! after a chart loads only records that bar, so history never fires. Later
 //! polls report alert plots that are `true` on bars that closed since then.
+//!
+//! It also owns one [`PriceLevelWatch`], which compares the live bar with the
+//! one seen on the previous poll and reports armed alert lines the price
+//! crossed in between.
 
+use super::drawing::{DrawingEntity, DrawingId};
 use super::{IndicatorId, IndicatorInstanceId, IndicatorInstanceStore, KlineData, OutputValue};
 use crate::chart::Basis;
 use exchange::unit::price::Price;
-use exchange::{TickerInfo, UnixMs};
+use exchange::{Kline, TickerInfo, UnixMs};
 use rustc_hash::FxHashMap;
 
 /// Newly closed bars looked at in one poll. A longer gap (sleep, reconnect)
 /// only reports its newest bars.
 const MAX_CATCHUP_BARS: usize = 3;
 
-/// One alert condition that turned true on a closed bar.
+/// What raised an alert.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlertSource {
+    /// An indicator plot declared with `alert = true`.
+    Indicator {
+        indicator: IndicatorId,
+        plot_id: String,
+    },
+    /// A price alert line on the chart.
+    PriceLevel { drawing: DrawingId, level: Price },
+}
+
+/// One alert condition that turned true.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlertHit {
     pub ticker_info: TickerInfo,
     pub basis: Basis,
-    pub indicator: IndicatorId,
-    pub indicator_name: String,
-    pub plot_id: String,
+    pub source: AlertSource,
+    /// Indicator name, or "Price alert".
+    pub source_name: String,
     pub title: String,
-    /// Open time of the closed bar.
+    /// Open time of the closed bar; for price alerts, when the cross was seen.
     pub bar_time: UnixMs,
+    /// Close of the bar; for price alerts, the live price.
     pub close: Price,
 }
 
 impl AlertHit {
     /// Stable key of the condition, used for muting in settings.
     pub fn condition_key(&self) -> String {
-        condition_key(&self.indicator, &self.plot_id)
+        match &self.source {
+            AlertSource::Indicator { indicator, plot_id } => condition_key(indicator, plot_id),
+            AlertSource::PriceLevel { drawing, .. } => format!("price-level/{}", drawing.0),
+        }
     }
 }
 
@@ -122,9 +144,11 @@ impl AlertWatch {
                 hits.push(AlertHit {
                     ticker_info: scope.0,
                     basis: scope.1,
-                    indicator: instance.kind.clone(),
-                    indicator_name: definition.display_name.clone(),
-                    plot_id: plots[plot].id.clone(),
+                    source: AlertSource::Indicator {
+                        indicator: instance.kind.clone(),
+                        plot_id: plots[plot].id.clone(),
+                    },
+                    source_name: definition.display_name.clone(),
                     title: plots[plot].label.clone(),
                     bar_time: bar.time,
                     close: bar.close,
@@ -132,6 +156,141 @@ impl AlertWatch {
             }
         }
         hits
+    }
+}
+
+/// Watches the live price for crosses of armed alert lines.
+#[derive(Debug, Default)]
+pub struct PriceLevelWatch {
+    scope: Option<(TickerInfo, Basis)>,
+    last: Option<LiveBar>,
+}
+
+impl PriceLevelWatch {
+    /// Forgets the last seen price, so the next poll starts fresh.
+    pub fn reset(&mut self) {
+        self.scope = None;
+        self.last = None;
+    }
+
+    /// Reports armed alert lines in `drawings` that the live price crossed
+    /// since the last poll. The caller disarms them.
+    pub fn poll(
+        &mut self,
+        data: &KlineData,
+        drawings: &[DrawingEntity],
+        now: UnixMs,
+    ) -> Vec<AlertHit> {
+        let Some(series) = data.base_series() else {
+            self.reset();
+            return Vec::new();
+        };
+        let scope = (data.base_ticker(), series.basis());
+        if self.scope != Some(scope) {
+            self.reset();
+            self.scope = Some(scope);
+        }
+        let Some(current) = series
+            .latest_point()
+            .map(|point| LiveBar::from(point.kline))
+        else {
+            self.last = None;
+            return Vec::new();
+        };
+        let Some(previous) = self.last.replace(current) else {
+            return Vec::new();
+        };
+
+        let ticker = scope.0;
+        let unit_size = Price::min_tick_units(ticker.min_ticksize);
+        let mut hits = Vec::new();
+        for drawing in drawings {
+            let Some(level) = drawing.armed_alert_level() else {
+                continue;
+            };
+            let level = Price::from_units(level.0.saturating_mul(unit_size));
+            let Some(direction) = crossed(previous, current, level) else {
+                continue;
+            };
+            let level_text = level.to_string(ticker.min_ticksize);
+            hits.push(AlertHit {
+                ticker_info: ticker,
+                basis: scope.1,
+                source: AlertSource::PriceLevel {
+                    drawing: drawing.id,
+                    level,
+                },
+                source_name: "Price alert".to_owned(),
+                title: match direction {
+                    Cross::Up => format!("crossed above {level_text}"),
+                    Cross::Down => format!("crossed below {level_text}"),
+                },
+                bar_time: now,
+                close: current.close,
+            });
+        }
+        hits
+    }
+}
+
+/// The live bar as seen on one poll.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LiveBar {
+    time: UnixMs,
+    high: Price,
+    low: Price,
+    close: Price,
+}
+
+impl From<&Kline> for LiveBar {
+    fn from(kline: &Kline) -> Self {
+        Self {
+            time: kline.time,
+            high: kline.high,
+            low: kline.low,
+            close: kline.close,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cross {
+    Up,
+    Down,
+}
+
+/// Whether the price reached `level` between two polls, coming from the side
+/// of the previous close. Within one bar a new high or low shows how far the
+/// price went; when a new bar started, its range counts as well.
+fn crossed(previous: LiveBar, current: LiveBar, level: Price) -> Option<Cross> {
+    let (high, low) = if current.time == previous.time {
+        let high = if current.high > previous.high {
+            current.high
+        } else {
+            previous.close.max(current.close)
+        };
+        let low = if current.low < previous.low {
+            current.low
+        } else {
+            previous.close.min(current.close)
+        };
+        (high, low)
+    } else if current.time > previous.time {
+        (
+            current.high.max(previous.close),
+            current.low.min(previous.close),
+        )
+    } else {
+        // History was replaced; wait for the next poll.
+        return None;
+    };
+    let from = previous.close;
+    if from < level && high >= level {
+        Some(Cross::Up)
+    } else if from > level && low <= level {
+        Some(Cross::Down)
+    } else {
+        None
     }
 }
 
@@ -205,6 +364,70 @@ mod tests {
     use super::*;
 
     const HOUR: u64 = 3_600_000;
+
+    fn live(time: u64, high: f64, low: f64, close: f64) -> LiveBar {
+        LiveBar {
+            time: UnixMs(time),
+            high: Price::from_f64(high),
+            low: Price::from_f64(low),
+            close: Price::from_f64(close),
+        }
+    }
+
+    #[test]
+    fn close_moving_through_level_crosses() {
+        let level = Price::from_f64(100.0);
+        let before = live(HOUR, 99.5, 98.0, 99.0);
+        assert_eq!(
+            crossed(before, live(HOUR, 101.0, 98.0, 101.0), level),
+            Some(Cross::Up)
+        );
+        let before = live(HOUR, 102.0, 100.5, 101.0);
+        assert_eq!(
+            crossed(before, live(HOUR, 102.0, 99.0, 99.5), level),
+            Some(Cross::Down)
+        );
+    }
+
+    #[test]
+    fn spike_between_polls_crosses() {
+        // The close came back below the level, but the new high shows the
+        // price touched it.
+        let level = Price::from_f64(100.0);
+        let before = live(HOUR, 99.5, 98.0, 99.0);
+        let after = live(HOUR, 100.0, 98.0, 99.2);
+        assert_eq!(crossed(before, after, level), Some(Cross::Up));
+    }
+
+    #[test]
+    fn old_extremes_do_not_cross() {
+        // The bar's high was above the level before the last poll; the price
+        // has only moved below it since.
+        let level = Price::from_f64(100.0);
+        let before = live(HOUR, 101.0, 98.0, 99.0);
+        let after = live(HOUR, 101.0, 98.0, 99.5);
+        assert_eq!(crossed(before, after, level), None);
+    }
+
+    #[test]
+    fn new_bar_range_counts() {
+        let level = Price::from_f64(100.0);
+        let before = live(HOUR, 99.5, 98.0, 99.0);
+        let after = live(2 * HOUR, 100.2, 99.0, 99.8);
+        assert_eq!(crossed(before, after, level), Some(Cross::Up));
+    }
+
+    #[test]
+    fn sitting_on_level_or_replaced_history_does_not_cross() {
+        let level = Price::from_f64(100.0);
+        let on_level = live(HOUR, 100.0, 99.0, 100.0);
+        assert_eq!(
+            crossed(on_level, live(HOUR, 101.0, 99.0, 101.0), level),
+            None
+        );
+        let before = live(2 * HOUR, 99.5, 98.0, 99.0);
+        assert_eq!(crossed(before, live(HOUR, 101.0, 98.0, 101.0), level), None);
+    }
 
     fn bars(times: &[u64]) -> Vec<ClosedBar> {
         times
