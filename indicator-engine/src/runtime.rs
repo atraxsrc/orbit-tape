@@ -1757,6 +1757,10 @@ impl IndicatorInstance {
                     let mut context = IntrinsicEvalContext {
                         bar_index: self.current_bar_index,
                         bar_time: self.current_frame.as_ref().map_or(0, |frame| frame.time),
+                        bar_ohlcv: self.current_frame.as_ref().map_or([None; 5], |frame| {
+                            let chart = &frame.chart;
+                            [chart.open, chart.high, chart.low, chart.close, chart.volume]
+                        }),
                         max_heap_bytes: self.limits.max_heap_bytes,
                         max_window_length: self.limits.max_window_length,
                         fixed_window,

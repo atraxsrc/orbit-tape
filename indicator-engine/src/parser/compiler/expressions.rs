@@ -785,6 +785,10 @@ impl LoweringContext {
         {
             self.function.stateful_functions.insert(function);
         }
+        // Higher-timeframe candles are aggregated from the chart's OHLCV.
+        if name.starts_with("htf.") {
+            self.declarations.requirements.ohlc = true;
+        }
         let signature = definition.signature.clone();
         if !signature.variadic && call.arguments.len() != signature.arguments.len() {
             self.error(

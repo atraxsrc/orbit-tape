@@ -11,6 +11,7 @@ file naming, collections, and validation.
 - [Inputs and source composition](#inputs-and-source-composition)
 - [Metadata](#metadata): [indicator](#indicator), [display and format](#display-and-format)
 - [Outputs and presentation](#outputs-and-presentation): [plots](#plots), [styles and marks](#styles-and-alternate-marks), [fills, readouts, and tables](#fills-readouts-and-tables), [segments and regions](#segments-and-regions)
+- [Higher timeframes](#higher-timeframes)
 - [TA behavior](#ta-behavior)
 - [Built-in reference](#built-in-reference): [TA](#ta), [math and missing values](#math-and-missing-values), [collections, strings, and colors](#collections-strings-and-colors)
 - [Resource limits](#resource-limits)
@@ -181,7 +182,7 @@ presentation-only.
 Candle directional volume does not substitute for missing trade aggregates.
 Raw trade arrays are unavailable. Plot offsets change presentation only.
 
-Scripts cannot access files, networks, other symbols/timeframes, strategies,
+Scripts cannot access files, networks, other symbols, strategies,
 or alerts. `varip`, maps, and mutable drawing/table handles are unsupported.
 Flowsurface replays affected indicators when historical data changes.
 
@@ -432,6 +433,59 @@ region(key = 0, upper = chart.high, lower = chart.low,
 plot supplies that layer for a drawing-only source without drawing a price line.
 This example emits a snapshot region; a persistent region instead uses
 `persistent = true` and `region_remove` to manage retained keys.
+
+## Higher timeframes
+
+`htf.*` builds candles of a larger timeframe from the chart's own bars, so a
+1H chart can read 12H candles. Buckets are UTC, as on TradingView crypto charts:
+
+| Timeframe string | Candles |
+| --- | --- |
+| `"60"`, `"240"`, `"720"` (minutes) or `"4H"`, `"12H"` | Intraday, restarting at every UTC midnight (a period that doesn't divide the day ends with a short candle) |
+| `"1440"`, `"D"`, `"3D"` | Whole days from the Unix epoch |
+| `"W"`, `"1W"` | Weeks from Monday 00:00 UTC |
+| `"M"`, `"1M"` | Calendar months |
+
+| Signature | Result |
+| --- | --- |
+| `htf.bars(timeframe, count)` | Array of up to `count` closed candles, newest first. Each is a record with `time` (bucket start, Unix ms), `open`, `high`, `low`, `close`, `volume` |
+| `htf.new_bar(timeframe)` | `true` on the first chart bar after a candle closed |
+| `htf.forming(timeframe)` | The unfinished candle so far, or `na`. **Repaints** |
+
+A candle counts as closed when the first chart bar of the next bucket arrives,
+so `htf.bars` and `htf.new_bar` never repaint: a value, once emitted on a closed
+bar, never changes. This matches Pine's `request.security(..., expr[1],
+lookahead = barmerge.lookahead_on)`. Open-bar previews already see the new
+bucket, like Pine's realtime bars.
+
+- `timeframe` is a simple string and `count` a simple integer, so inputs work.
+  An unknown timeframe returns `na`.
+- The functions are stateful: call them once per bar at top level, like `ta.*`,
+  and read the array in loops.
+- Hosts load enough chart history to fill `count` whole candles. A first candle
+  that starts before the loaded history is incomplete and is dropped, and
+  buckets without chart bars produce no candle.
+- Calculations on higher-timeframe candles (an ATR, pivots) update their own
+  `state` when `htf.new_bar` is true.
+- Tick-based charts don't support `htf.*`.
+
+```text
+language(1)
+indicator("12H close", id = "community.htf-close")
+display(attachment = "overlay")
+format(precision = "base_ticker_min_tick")
+timeframe = input.string("720", "HTF", options = ["240", "720", "D", "W"])
+bars = htf.bars(timeframe, 2)
+fresh = htf.new_bar(timeframe)
+last = array.get(bars, 0)
+state atr = na
+if fresh {
+    tr = math.max(last.high - last.low, 0)
+    atr := select(na(atr), tr, (atr * 13 + tr) / 14)
+}
+plot(last.close, id = "close", title = "Last closed HTF close")
+plot(atr, id = "atr", title = "HTF range average")
+```
 
 ## TA behavior
 
