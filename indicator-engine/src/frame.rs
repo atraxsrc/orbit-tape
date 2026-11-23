@@ -325,6 +325,59 @@ pub struct RegionOutput {
     pub fill_color_slot: Option<String>,
     pub extend_right: bool,
     pub width: f32,
+    /// Text drawn inside the region, or as a label tag above/below it.
+    pub text: Option<RegionText>,
+    pub border_style: RegionBorderStyle,
+}
+
+/// Where a region's text goes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RegionTextPosition {
+    /// Centered inside the region.
+    #[default]
+    Inside,
+    /// A label tag above the region's upper edge, pointing down at it.
+    Above,
+    /// A label tag below the region's lower edge, pointing up at it.
+    Below,
+}
+
+impl RegionTextPosition {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "inside" => Some(Self::Inside),
+            "above" => Some(Self::Above),
+            "below" => Some(Self::Below),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RegionBorderStyle {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+impl RegionBorderStyle {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "solid" => Some(Self::Solid),
+            "dashed" => Some(Self::Dashed),
+            "dotted" => Some(Self::Dotted),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegionText {
+    pub content: String,
+    /// Text color; the host picks a readable default when `None`.
+    pub color: Option<Color>,
+    pub position: RegionTextPosition,
 }
 
 #[derive(Debug, Clone, PartialEq)]

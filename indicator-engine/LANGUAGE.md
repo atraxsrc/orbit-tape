@@ -401,6 +401,25 @@ Color each edge with runtime `border_color` / `fill_color` or declared
 Alternatively, a boolean `style_by` expression with paired true/false slots
 colors both edges (`na` selects false); this cannot mix with other region colors.
 
+Regions can carry text and a border style:
+
+- `text` (runtime string; `na` draws none) with optional `text_color` (runtime
+  color, white on tags by default).
+- `text_position` (literal): `"inside"` (default) centers the text in the
+  region when it fits; `"above"` and `"below"` draw a filled label tag above
+  the upper edge or below the lower edge, colored with the region's fill (or
+  border) color. A region with `upper == lower` and `left_index ==
+  right_index` is a plain point label, like Pine's `label.new`.
+- `border_style` (literal): `"solid"` (default), `"dashed"` or `"dotted"`.
+- `right_index` may lie past the last bar; the host extends the bar spacing.
+
+```text
+region(key = 0, upper = chart.low, lower = chart.low,
+       left_index = bar_index, right_index = bar_index,
+       id = "mss", persistent = true, text = "MSS", text_position = "below",
+       fill_color = color.rgb(38, 166, 154))
+```
+
 Default emissions form a complete active-set snapshot: omitted `(id, key)`
 pairs disappear on the next closed bar. `extend_right` reaches the plot clip.
 With `persistent = true`, emissions upsert regions until explicitly removed or

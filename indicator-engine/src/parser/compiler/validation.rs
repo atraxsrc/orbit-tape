@@ -1228,6 +1228,8 @@ impl LoweringContext {
                     fill_color,
                     style_by,
                     extend_right,
+                    text,
+                    text_color,
                     ..
                 } => {
                     if let Some(visible) = visible {
@@ -1243,6 +1245,8 @@ impl LoweringContext {
                         fill_color,
                         style_by,
                         extend_right,
+                        text,
+                        text_color,
                     ]
                     .into_iter()
                     .flatten()

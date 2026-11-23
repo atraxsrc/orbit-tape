@@ -783,6 +783,8 @@ mod tests {
             fill_color_slot: None,
             extend_right: false,
             width: 1.0,
+            text: None,
+            border_style: Default::default(),
         };
         let extending = |left| indicator_engine::RegionOutput {
             extend_right: true,

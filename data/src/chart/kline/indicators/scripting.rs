@@ -115,6 +115,11 @@ fn region_retained_bytes(region: &RegionOutput) -> Result<usize, RuntimeError> {
         &region.id,
         region.border_color_slot.as_deref().unwrap_or_default(),
         region.fill_color_slot.as_deref().unwrap_or_default(),
+        region
+            .text
+            .as_ref()
+            .map(|text| text.content.as_str())
+            .unwrap_or_default(),
     ])
 }
 
@@ -1921,6 +1926,8 @@ mark(title = "Bars", source = "value", kind = "histogram", color_slot = "bars")
             fill_color_slot: None,
             extend_right: true,
             width: 1.0,
+            text: None,
+            border_style: Default::default(),
         }
     }
 

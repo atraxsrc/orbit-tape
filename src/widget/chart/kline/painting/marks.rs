@@ -29,6 +29,13 @@ const TABLE_TEXT_MIN_SIZE_PX: f32 = 8.0;
 const TABLE_CELL_INSET_PX: f32 = 1.0;
 
 const INDICATOR_MARKER_TEXT_SIZE_PX: f32 = 8.0;
+/// Text size of region labels and in-region text.
+const REGION_TEXT_SIZE_PX: f32 = 10.0;
+/// Advance of one character of the monospace chart font, relative to its size.
+const MONO_CHAR_WIDTH_RATIO: f32 = 0.62;
+const REGION_TAG_PADDING_PX: f32 = 3.0;
+/// Gap between a label tag and the price it points at.
+const REGION_TAG_GAP_PX: f32 = 4.0;
 
 const DASHED_LINE_SEGMENTS: [f32; 2] = [8.0, 5.0];
 const DOTTED_LINE_SEGMENTS: [f32; 2] = [1.0, 4.0];
@@ -512,6 +519,33 @@ impl MarkRenderer<'_> {
         }
     }
 
+    /// Like [`Self::bar_unit_at_series_index`], but extends the last bar
+    /// spacing to indices past the last bar, so regions can reach into the
+    /// future.
+    fn bar_unit_extrapolated(&self, series_index: usize, point_index: usize) -> Option<i64> {
+        if let Some(unit) = self.bar_unit_at_series_index(series_index, point_index) {
+            return Some(unit);
+        }
+        let last = self
+            .indicators
+            .series
+            .get(series_index)?
+            .point_count()
+            .checked_sub(1)?;
+        if point_index <= last {
+            return None;
+        }
+        let last_unit = self.bar_unit_at_series_index(series_index, last)?;
+        let step = last
+            .checked_sub(1)
+            .and_then(|previous| self.bar_unit_at_series_index(series_index, previous))
+            .map(|previous| last_unit - previous)
+            .filter(|step| *step > 0)
+            .unwrap_or(1);
+        let ahead = i64::try_from(point_index - last).ok()?;
+        last_unit.checked_add(step.checked_mul(ahead)?)
+    }
+
     fn bar_unit_at_series_index(&self, series_index: usize, point_index: usize) -> Option<i64> {
         let scene = self.scene;
         data::chart::kline::series::KlineWindows {
@@ -941,67 +975,96 @@ impl MarkRenderer<'_> {
             let Some(left_unit) = self.bar_unit_at_series_index(0, region.left_index) else {
                 continue;
             };
+            let left_x = scene.map_x_plot(left_unit);
             let right_x = if region.extend_right {
                 plot.x
             } else {
-                let Some(right_unit) = self.bar_unit_at_series_index(0, region.right_index) else {
+                let Some(right_unit) = self.bar_unit_extrapolated(0, region.right_index) else {
                     continue;
                 };
                 scene.map_x_plot(right_unit)
             };
-            let Some(rect) = indicator_region_rect(
+            let upper_y = map_y(region.upper).unwrap_or(f32::NAN);
+            let lower_y = map_y(region.lower).unwrap_or(f32::NAN);
+            let rect = indicator_region_rect(
                 plot,
-                scene.map_x_plot(left_unit),
+                left_x,
                 right_x,
-                map_y(region.upper).unwrap_or(f32::NAN),
-                map_y(region.lower).unwrap_or(f32::NAN),
+                upper_y,
+                lower_y,
                 region.extend_right,
                 pixels,
-            ) else {
-                continue;
-            };
+            );
 
+            let slot_color = |slot: &str| {
+                self.indicators
+                    .indicator_color(Some(value_id), slot, palette, generated_accents)
+            };
             let fill_color = region
                 .fill_color
                 .map(painting::resolve_indicator_color)
                 .or_else(|| {
-                    region.fill_color_slot.as_deref().map(|slot| {
-                        self.indicators
-                            .indicator_color(Some(value_id), slot, palette, generated_accents)
-                            .scale_alpha(0.2)
-                    })
+                    region
+                        .fill_color_slot
+                        .as_deref()
+                        .map(|slot| slot_color(slot).scale_alpha(0.2))
                 });
-            if let Some(fill_color) = fill_color {
-                frame.fill_rectangle(
-                    Point::new(rect.x, rect.y),
-                    Size::new(rect.width, rect.height),
-                    fill_color,
-                );
-            }
-
             let border_color = region
                 .border_color
                 .map(painting::resolve_indicator_color)
-                .or_else(|| {
-                    region.border_color_slot.as_deref().map(|slot| {
-                        self.indicators.indicator_color(
-                            Some(value_id),
-                            slot,
-                            palette,
-                            generated_accents,
-                        )
-                    })
-                });
-            if let Some(border_color) = border_color {
-                let line_width = pixels
-                    .quantized_stroke_width(region.width.max(pixels.logical_width_from_physical(1)))
-                    .0;
-                frame.stroke(
-                    &canvas::Path::rectangle(
+                .or_else(|| region.border_color_slot.as_deref().map(slot_color));
+
+            if let Some(rect) = rect {
+                if let Some(fill_color) = fill_color {
+                    frame.fill_rectangle(
                         Point::new(rect.x, rect.y),
                         Size::new(rect.width, rect.height),
-                    ),
-                    indicator_line_stroke(line_width, LineStrokeStyle::Solid, border_color),
+                        fill_color,
+                    );
+                }
+                if let Some(border_color) = border_color {
+                    let line_width = pixels
+                        .quantized_stroke_width(
+                            region.width.max(pixels.logical_width_from_physical(1)),
+                        )
+                        .0;
+                    let style = match region.border_style {
+                        indicator_engine::RegionBorderStyle::Solid => LineStrokeStyle::Solid,
+                        indicator_engine::RegionBorderStyle::Dashed => LineStrokeStyle::Dashed,
+                        indicator_engine::RegionBorderStyle::Dotted => LineStrokeStyle::Dotted,
+                    };
+                    frame.stroke(
+                        &canvas::Path::rectangle(
+                            Point::new(rect.x, rect.y),
+                            Size::new(rect.width, rect.height),
+                        ),
+                        indicator_line_stroke(line_width, style, border_color),
+                    );
+                }
+            }
+
+            if let Some(text) = &region.text {
+                // A tag takes the solid version of the fill: a slot fill is
+                // faded for areas, which would make a label unreadable.
+                let tag_color = region
+                    .fill_color
+                    .map(painting::resolve_indicator_color)
+                    .or_else(|| region.fill_color_slot.as_deref().map(slot_color))
+                    .or(border_color)
+                    .unwrap_or(palette.primary.base.color);
+                draw_region_text(
+                    frame,
+                    plot,
+                    text,
+                    RegionTextGeometry {
+                        rect,
+                        left_x,
+                        right_x: if region.extend_right { left_x } else { right_x },
+                        upper_y,
+                        lower_y,
+                    },
+                    tag_color,
+                    border_color.unwrap_or(palette.background.base.text),
                 );
             }
         }
@@ -1909,6 +1972,103 @@ fn draw_indicator_bar_outline(
         &canvas::Path::rectangle(origin, size),
         indicator_line_stroke(line_width, stroke_style, color),
     );
+}
+
+/// Where a region sits on screen, for placing its text.
+struct RegionTextGeometry {
+    /// The visible part of the region, if any.
+    rect: Option<Rectangle>,
+    left_x: f32,
+    right_x: f32,
+    upper_y: f32,
+    lower_y: f32,
+}
+
+/// Draws region text: centered in the region, or as a filled label tag above or
+/// below it, pointing at the region's horizontal center.
+fn draw_region_text(
+    frame: &mut PaintInputs,
+    plot: Rectangle,
+    text: &indicator_engine::RegionText,
+    geometry: RegionTextGeometry,
+    tag_color: iced::Color,
+    inside_color: iced::Color,
+) {
+    use indicator_engine::RegionTextPosition;
+
+    let content = text.content.as_str();
+    if content.is_empty() {
+        return;
+    }
+    let text_width = content.chars().count() as f32 * REGION_TEXT_SIZE_PX * MONO_CHAR_WIDTH_RATIO;
+
+    let (center, color, background) = match text.position {
+        RegionTextPosition::Inside => {
+            let Some(rect) = geometry.rect else {
+                return;
+            };
+            if rect.width < text_width || rect.height < REGION_TEXT_SIZE_PX {
+                return;
+            }
+            let color = text
+                .color
+                .map(painting::resolve_indicator_color)
+                .unwrap_or(inside_color);
+            (rect.center(), color, None)
+        }
+        RegionTextPosition::Above | RegionTextPosition::Below => {
+            let x = (geometry.left_x + geometry.right_x) / 2.0;
+            let width = text_width + 2.0 * REGION_TAG_PADDING_PX;
+            let height = REGION_TEXT_SIZE_PX + 2.0 * REGION_TAG_PADDING_PX;
+            let top = if text.position == RegionTextPosition::Above {
+                geometry.upper_y - REGION_TAG_GAP_PX - height
+            } else {
+                geometry.lower_y + REGION_TAG_GAP_PX
+            };
+            if !x.is_finite() || !top.is_finite() {
+                return;
+            }
+            let tag = Rectangle {
+                x: x - width / 2.0,
+                y: top,
+                width,
+                height,
+            };
+            if tag.x + tag.width < plot.x
+                || tag.x > plot.x + plot.width
+                || tag.y + tag.height < plot.y
+                || tag.y > plot.y + plot.height
+            {
+                return;
+            }
+            let color = text
+                .color
+                .map(painting::resolve_indicator_color)
+                .unwrap_or(iced::Color::WHITE);
+            (tag.center(), color, Some((tag, tag_color)))
+        }
+    };
+
+    if let Some((tag, background)) = background {
+        frame.fill(
+            &canvas::Path::rounded_rectangle(
+                Point::new(tag.x, tag.y),
+                Size::new(tag.width, tag.height),
+                2.0.into(),
+            ),
+            background,
+        );
+    }
+    frame.fill_text(canvas::Text {
+        content: content.to_owned(),
+        position: center,
+        color,
+        size: REGION_TEXT_SIZE_PX.into(),
+        align_x: iced::Alignment::Center.into(),
+        align_y: iced::Alignment::Center.into(),
+        font: style::AZERET_MONO,
+        ..Default::default()
+    });
 }
 
 fn indicator_region_rect(

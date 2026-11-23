@@ -1112,6 +1112,10 @@ impl IndicatorInstance {
                 extend_right,
                 persistent,
                 width,
+                text,
+                text_color,
+                text_position,
+                border_style,
             } => {
                 let visible = self.output_visibility(visible, &id, "visible", true)?;
                 if !visible {
@@ -1173,6 +1177,26 @@ impl IndicatorInstance {
                         false,
                     )?,
                     width,
+                    text: match text {
+                        Some(text) => match self.evaluate_expression(text)? {
+                            Value::String(content) => Some(crate::frame::RegionText {
+                                content,
+                                color: self.evaluate_color(text_color, &id, "text_color")?,
+                                position: text_position,
+                            }),
+                            Value::Na => None,
+                            other => {
+                                return Err(RuntimeError::InvalidOutput {
+                                    output: id.clone(),
+                                    field: "text",
+                                    expected: "string",
+                                    actual: other.kind(),
+                                });
+                            }
+                        },
+                        None => None,
+                    },
+                    border_style,
                 };
                 if persistent {
                     self.charge_by(output.region_updates.len())?;

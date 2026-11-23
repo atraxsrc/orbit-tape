@@ -279,6 +279,8 @@ impl<'a> Evaluator<'a> {
                 fill_color,
                 style_by,
                 extend_right,
+                text,
+                text_color,
                 ..
             } => self.warmup_all([
                 Some(*key),
@@ -291,6 +293,8 @@ impl<'a> Evaluator<'a> {
                 *fill_color,
                 *style_by,
                 *extend_right,
+                *text,
+                *text_color,
             ]),
             StatementKind::RegionRemove { key, .. } => self.warmup(*key),
             StatementKind::If {

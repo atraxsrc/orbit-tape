@@ -333,6 +333,10 @@ impl LoweringContext {
                 "persistent",
                 "id",
                 "width",
+                "text",
+                "text_color",
+                "text_position",
+                "border_style",
             ],
         );
         let argument = |name: &str, index: usize| argument_at(call, index, name);
@@ -475,6 +479,36 @@ impl LoweringContext {
                     .insert(slot.clone(), call.span);
             }
         }
+        let text = compile_optional(self, "text");
+        if let Some(text) = text
+            && !matches!(
+                self.ir.program.expressions[text.0].ty.value,
+                ValueType::String | ValueType::Any
+            )
+        {
+            self.error(call.span, "region text must be a string");
+        }
+        let text_color = self.compile_color_named_argument(call, "text_color");
+        let text_position = match self.static_named_string(call, "text_position") {
+            None => crate::frame::RegionTextPosition::default(),
+            Some(value) => crate::frame::RegionTextPosition::parse(&value).unwrap_or_else(|| {
+                self.error(
+                    call.span,
+                    "region text_position must be \"inside\", \"above\" or \"below\"",
+                );
+                crate::frame::RegionTextPosition::default()
+            }),
+        };
+        let border_style = match self.static_named_string(call, "border_style") {
+            None => crate::frame::RegionBorderStyle::default(),
+            Some(value) => crate::frame::RegionBorderStyle::parse(&value).unwrap_or_else(|| {
+                self.error(
+                    call.span,
+                    "region border_style must be \"solid\", \"dashed\" or \"dotted\"",
+                );
+                crate::frame::RegionBorderStyle::default()
+            }),
+        };
         let id = self
             .static_named_string(call, "id")
             .unwrap_or_else(|| format!("region_{}", self.region_count()));
@@ -510,6 +544,10 @@ impl LoweringContext {
                 extend_right,
                 persistent,
                 width: if valid_width { width } else { 1.0 },
+                text,
+                text_color,
+                text_position,
+                border_style,
             },
         }))
     }

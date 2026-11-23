@@ -12,8 +12,9 @@ mod warmup;
 pub use diagnostics::{Diagnostic, Severity, Span};
 pub use frame::{
     BaseSeriesSource, ChartFrame, FrameField, FrameOutput, HorizontalLevelOutput, IndicatorFrame,
-    InstrumentContext, MarkerOutput, OhlcOutput, PlotOutput, RangeOutput, RegionOutput,
-    RegionUpdate, SegmentOutput, SeriesInputValue, TimeOrTick, TradeAggregate,
+    InstrumentContext, MarkerOutput, OhlcOutput, PlotOutput, RangeOutput, RegionBorderStyle,
+    RegionOutput, RegionText, RegionTextPosition, RegionUpdate, SegmentOutput, SeriesInputValue,
+    TimeOrTick, TradeAggregate,
 };
 pub use hir::{
     BarStateField, BinaryOperator, CallSiteId, ConstantId, ExprId, ExpressionKind, FunctionId,
@@ -598,6 +599,77 @@ mod tests {
             .evaluate_closed(hourly(0, 0, 1.0, 1.0, 1.0, 1.0))
             .expect("bar should evaluate");
         assert_eq!(plot_value(&output, "fresh"), &Value::Na);
+    }
+
+    #[test]
+    fn regions_carry_text_and_border_style() {
+        let source = r#"
+            language(1)
+            indicator("Labels", id = "test.labels")
+            display(view = "primary_overlay")
+            style("main", title = "Main", role = "primary", shade = "base")
+            plot(na, id = "anchor", display = "none", pane = "main", layer = true)
+            region(key = 0, upper = chart.high, lower = chart.high,
+                   left_index = bar_index, right_index = bar_index,
+                   id = "tag", text = select(chart.close > chart.open, "MSS", "MSS CT"),
+                   text_position = "below", text_color = color.white,
+                   fill_color = color.rgb(38, 166, 154), persistent = true)
+            region(key = 0, upper = chart.high, lower = chart.low,
+                   left_index = bar_index, right_index = bar_index + 10,
+                   id = "zone", border_color_slot = "main", border_style = "dashed")
+        "#;
+        let mut instance = compile(source, "labels.ind")
+            .expect("labels source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let output = instance
+            .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.0))
+            .expect("bar should evaluate");
+
+        let tag = output
+            .region_updates
+            .iter()
+            .find_map(|update| match update {
+                RegionUpdate::Upsert(region) if region.id == "tag" => Some(region),
+                _ => None,
+            })
+            .expect("tag region should be emitted");
+        let text = tag.text.as_ref().expect("tag should carry text");
+        assert_eq!(text.content, "MSS");
+        assert_eq!(text.position, RegionTextPosition::Below);
+        assert!(text.color.is_some());
+
+        let zone = output
+            .regions
+            .iter()
+            .find(|region| region.id == "zone")
+            .expect("zone region should be emitted");
+        assert_eq!(zone.right_index, 10);
+        assert_eq!(zone.border_style, RegionBorderStyle::Dashed);
+        assert!(zone.text.is_none());
+    }
+
+    #[test]
+    fn region_text_options_are_validated() {
+        for (argument, message) in [
+            ("text_position = \"left\"", "text_position"),
+            ("border_style = \"wavy\"", "border_style"),
+            ("text = 5", "text must be a string"),
+        ] {
+            let source = format!(
+                "language(1)\nindicator(\"Bad\", id = \"test.bad\")\ndisplay(view = \"primary_overlay\")\n\
+                 plot(na, id = \"anchor\", display = \"none\", pane = \"main\", layer = true)\n\
+                 region(key = 0, upper = 1, lower = 0, left_index = 0, right_index = 0, \
+                 border_color = color.white, {argument})"
+            );
+            let diagnostics = compile(&source, "bad.ind").expect_err("source should be rejected");
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(message)),
+                "{argument}: {diagnostics:?}"
+            );
+        }
     }
 
     #[test]
