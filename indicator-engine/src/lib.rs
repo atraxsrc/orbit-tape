@@ -715,6 +715,80 @@ mod tests {
     }
 
     #[test]
+    fn untyped_function_arguments_times_and_optional_arguments() {
+        let source = r#"
+            language(1)
+            indicator("Mixed", id = "test.mixed")
+            format(precision = "fixed_step:0.01")
+            fn twice(value) {
+                return value * 2
+            }
+            var level = na
+            level := chart.close
+            zone = { top: chart.high }
+            plot(twice(level), id = "level")
+            plot(twice(zone.top), id = "top")
+            plot(chart.time - chart.time[1], id = "spacing")
+            plot(str.tostring(chart.close) == "2.5", id = "text")
+        "#;
+        let mut instance = compile(source, "mixed.ind")
+            .expect("mixed source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        instance
+            .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.5))
+            .expect("first bar should evaluate");
+        let output = instance
+            .evaluate_closed(hourly(1, 1, 1.0, 3.0, 0.5, 2.5))
+            .expect("second bar should evaluate");
+        let value = |id: &str| {
+            output
+                .plots
+                .iter()
+                .find(|plot| plot.id == id)
+                .map(|plot| plot.value.clone())
+        };
+        assert_eq!(value("level"), Some(Value::Float(5.0)));
+        assert_eq!(value("top"), Some(Value::Float(6.0)));
+        assert_eq!(value("spacing"), Some(Value::Int(3_600_000)));
+        assert_eq!(value("text"), Some(Value::Bool(true)));
+
+        let bad = r#"
+            language(1)
+            indicator("Bad", id = "test.bad")
+            format(precision = "fixed_step:0.01")
+            fn twice(value) {
+                return value * 2
+            }
+            zone = { name: "a" }
+            plot(twice(zone.name), id = "value")
+        "#;
+        let mut instance = compile(bad, "bad.ind")
+            .expect("dynamic argument should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        assert!(
+            instance
+                .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.5))
+                .is_err(),
+            "a string argument must fail at runtime"
+        );
+
+        let diagnostics = compile(
+            "language(1)\nindicator(\"Bad\", id = \"test.bad\")\n\
+             plot(str.tostring(1, \"#\", 2) == \"1\", id = \"value\")\n",
+            "bad.ind",
+        )
+        .expect_err("too many arguments should be rejected");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("expects 1 to 2 arguments")),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn strings_only_add_to_strings() {
         let source = "language(1)\nindicator(\"Bad\", id = \"test.bad\")\n\
                       plot(chart.close, id = \"value\")\n\

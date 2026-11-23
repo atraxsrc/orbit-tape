@@ -1935,6 +1935,14 @@ impl IndicatorInstance {
                     .iter()
                     .map(|argument| self.evaluate_expression(*argument))
                     .collect::<Result<Vec<_>, _>>()?;
+                if values
+                    .iter()
+                    .any(|value| !matches!(value, Value::Int(_) | Value::Float(_) | Value::Na))
+                {
+                    return Err(RuntimeError::InvalidValue {
+                        operation: "function argument (numbers or na only)",
+                    });
+                }
                 self.charge_by(self.locals.iter().fold(self.locals.len(), |work, value| {
                     work.saturating_add(value.copy_work())
                 }))?;

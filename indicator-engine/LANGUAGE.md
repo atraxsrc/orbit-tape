@@ -43,12 +43,14 @@ Runtime failures disable the indicator; see [resource limits](#resource-limits).
   `:= na` update stays authoritative.
 - `if`, `switch`, bounded `for`/`while`, numeric non-recursive functions,
   tuples, arrays, records, destructuring, and named arguments are supported.
-  Function parameters, defaults, and returns must be numeric or `na`.
+  Function parameters, defaults, and returns must be numeric or `na`; an
+  untyped value such as a record field is checked when the call runs.
 - Integer `+`, `-`, `*`, and `%` use checked 64-bit arithmetic; `/` returns a
   float. Mixed arithmetic promotes to float. Integer overflow and division or
   remainder by zero return `na`. Integer comparisons remain exact, including
   comparisons with floats. Integer/time input defaults require integer literals.
-- Arithmetic requires numbers; ordering accepts numbers or times; logical
+- Arithmetic requires numbers, except that subtracting two times gives their
+  difference in milliseconds as an integer; ordering accepts numbers or times; logical
   operators require booleans. Equality involving `na` returns `na`: use
   `na(value)` to test missingness. An `na` condition does not match a switch
   branch. Result branches in `select`, `coalesce`, and `switch` must have

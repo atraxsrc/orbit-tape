@@ -129,6 +129,13 @@ impl LoweringContext {
                         }
                         ValueType::String
                     }
+                    // The difference of two times is a duration in milliseconds.
+                    BinaryOperator::Subtract
+                        if left_type.value == ValueType::Time
+                            && right_type.value == ValueType::Time =>
+                    {
+                        ValueType::Int
+                    }
                     _ if is_numeric_type(left_type.value) && is_numeric_type(right_type.value) => {
                         if *operator == BinaryOperator::Divide
                             || left_type.value == ValueType::Float
@@ -639,7 +646,12 @@ impl LoweringContext {
         let Some(expression) = self.ir.program.expressions.get(expression.0) else {
             return false;
         };
-        if matches!(expression.ty.value, ValueType::Int | ValueType::Float) {
+        // Any (an untyped `var x = na` or a record field) is checked when the
+        // function is called.
+        if matches!(
+            expression.ty.value,
+            ValueType::Int | ValueType::Float | ValueType::Any
+        ) {
             return true;
         }
         matches!(
@@ -810,14 +822,29 @@ impl LoweringContext {
             self.declarations.requirements.ohlc = true;
         }
         let signature = definition.signature.clone();
-        if !signature.variadic && call.arguments.len() != signature.arguments.len() {
+        let required = if signature.min_arguments > 0 {
+            signature.min_arguments
+        } else {
+            signature.arguments.len()
+        };
+        if !signature.variadic
+            && !(required..=signature.arguments.len()).contains(&call.arguments.len())
+        {
             self.error(
                 call.span,
-                format!(
-                    "{name} expects {} arguments, got {}",
-                    signature.arguments.len(),
-                    call.arguments.len()
-                ),
+                if required == signature.arguments.len() {
+                    format!(
+                        "{name} expects {} arguments, got {}",
+                        signature.arguments.len(),
+                        call.arguments.len()
+                    )
+                } else {
+                    format!(
+                        "{name} expects {required} to {} arguments, got {}",
+                        signature.arguments.len(),
+                        call.arguments.len()
+                    )
+                },
             );
         } else if signature.variadic && call.arguments.len() < signature.min_arguments {
             self.error(
