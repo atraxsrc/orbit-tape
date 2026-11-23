@@ -701,6 +701,7 @@ mod tests {
         assert_eq!(pattern(1234.6, "#").as_deref(), Some("1235"));
         assert_eq!(pattern(-0.001, "#.##").as_deref(), Some("0"));
         assert_eq!(pattern(1.0, "abc"), None);
+        assert_eq!(pattern(1.0, &format!("#.{}", "0".repeat(60_000))), None);
         let step = |value: f64, step: f64| format_number(&Value::Float(value), &Value::Float(step));
         assert_eq!(step(97123.456, 0.1).as_deref(), Some("97123.5"));
         assert_eq!(step(0.123456, 0.0001).as_deref(), Some("0.1235"));

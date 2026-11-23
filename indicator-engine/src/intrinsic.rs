@@ -1011,6 +1011,9 @@ pub(crate) fn format_number(value: &Value, format: &Value) -> Option<String> {
         _ => return None,
     };
     let decimals = required + optional;
+    if decimals > MAX_FORMAT_DECIMALS {
+        return None;
+    }
     let mut text = format!("{number:.decimals$}");
     if optional > 0 {
         let keep = text.len() - optional;
@@ -1026,6 +1029,10 @@ pub(crate) fn format_number(value: &Value, format: &Value) -> Option<String> {
     }
     Some(text)
 }
+
+/// A double carries at most 17 significant decimals; longer patterns fall back
+/// to the default conversion instead of formatting script-sized precision.
+const MAX_FORMAT_DECIMALS: usize = 17;
 
 /// Decimals needed to show multiples of `step`, e.g. 2 for 0.01, 1 for 0.5.
 fn step_decimals(step: f64) -> usize {
