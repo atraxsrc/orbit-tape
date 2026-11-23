@@ -1,7 +1,7 @@
 use flowsurface_indicator_engine::{
     ChartFrame, CompileLimits, CompiledIndicator, Diagnostic, FrameOutput, IndicatorConfig,
-    IndicatorFrame, IndicatorId, InstrumentContext, RuntimeLimits, Severity, TimeOrTick,
-    TradeAggregate, compile,
+    IndicatorFrame, IndicatorId, InputValue, InstrumentContext, RegionOutput, RegionUpdate,
+    RuntimeLimits, Severity, TimeOrTick, TradeAggregate, Value, ValueType, compile,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -21,6 +21,7 @@ fn main() {
         Some("check") => command_check(&arguments[1..], "check"),
         Some("test") => command_test(&arguments[1..]),
         Some("catalog") => command_catalog(&arguments[1..]),
+        Some("run") => command_run(&arguments[1..]),
         Some(command) => Err(format!("unknown subcommand '{command}'")),
         None => Err(usage()),
     };
@@ -31,7 +32,7 @@ fn main() {
 }
 
 fn usage() -> String {
-    "usage: flowsurface-indicator <new|check|test|catalog> ...\n\n  flowsurface-indicator new [directory] --id <namespace.name> --title <Title>\n  flowsurface-indicator check <file.ind|directory> [--namespace <prefix>]\n  flowsurface-indicator test <file.ind|directory> [--namespace <prefix>]\n  flowsurface-indicator catalog <file.ind|directory> --output <catalog.json> [--namespace <prefix>]"
+    "usage: flowsurface-indicator <new|check|test|catalog> ...\n\n  flowsurface-indicator new [directory] --id <namespace.name> --title <Title>\n  flowsurface-indicator check <file.ind|directory> [--namespace <prefix>]\n  flowsurface-indicator test <file.ind|directory> [--namespace <prefix>]\n  flowsurface-indicator catalog <file.ind|directory> --output <catalog.json> [--namespace <prefix>]\n  flowsurface-indicator run <file.ind> --bars <candles.csv> [--out <values.csv>] [--regions <regions.csv>] [--min-tick <tick>] [--input <id>=<value> ...]"
         .to_owned()
 }
 
@@ -139,6 +140,354 @@ fn command_test(arguments: &[String]) -> Result<(), String> {
     } else {
         Err(failure_summary("test", failures))
     }
+}
+
+const RUN_USAGE: &str = "usage: flowsurface-indicator run <file.ind> --bars <candles.csv> [--out <values.csv>] [--regions <regions.csv>] [--min-tick <tick>] [--input <id>=<value> ...]
+
+Evaluates every bar of a candle CSV (header with time, open, high, low, close
+and optionally volume; time in Unix seconds or milliseconds) as a closed bar and
+writes one row per bar with each plot's value. --regions writes the regions on
+the chart after the last bar, and the info panel is printed to stdout.";
+
+struct RunArguments {
+    path: PathBuf,
+    bars: PathBuf,
+    out: Option<PathBuf>,
+    regions: Option<PathBuf>,
+    min_tick: Option<f64>,
+    inputs: Vec<(String, String)>,
+}
+
+fn parse_run_arguments(arguments: &[String]) -> Result<RunArguments, String> {
+    let mut path = None;
+    let mut bars = None;
+    let mut out = None;
+    let mut regions = None;
+    let mut min_tick = None;
+    let mut inputs = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = arguments[index].as_str();
+        if !argument.starts_with("--") {
+            if path.replace(PathBuf::from(argument)).is_some() {
+                return Err("run expects exactly one .ind source file".to_owned());
+            }
+            index += 1;
+            continue;
+        }
+        let value = arguments
+            .get(index + 1)
+            .ok_or_else(|| format!("run requires a value after {argument}"))?;
+        match argument {
+            "--bars" => bars = Some(PathBuf::from(value)),
+            "--out" => out = Some(PathBuf::from(value)),
+            "--regions" => regions = Some(PathBuf::from(value)),
+            "--min-tick" => {
+                min_tick = Some(
+                    value
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|tick| tick.is_finite() && *tick > 0.0)
+                        .ok_or_else(|| format!("run: invalid --min-tick '{value}'"))?,
+                );
+            }
+            "--input" => {
+                let (id, input) = value
+                    .split_once('=')
+                    .ok_or_else(|| format!("run: --input expects <id>=<value>, got '{value}'"))?;
+                inputs.push((id.trim().to_owned(), input.to_owned()));
+            }
+            _ => return Err(format!("run received unknown argument '{argument}'")),
+        }
+        index += 2;
+    }
+    Ok(RunArguments {
+        path: path.ok_or("run expects a .ind source file")?,
+        bars: bars.ok_or("run requires --bars <candles.csv>")?,
+        out,
+        regions,
+        min_tick,
+        inputs,
+    })
+}
+
+/// One OHLCV row of a candle CSV.
+#[derive(Debug)]
+struct CsvBar {
+    time: i64,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: Option<f64>,
+}
+
+fn read_bars(path: &Path) -> Result<Vec<CsvBar>, String> {
+    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+    let header = lines
+        .next()
+        .ok_or_else(|| format!("{}: empty candle file", path.display()))?;
+    let columns = header
+        .split(',')
+        .map(|name| name.trim().trim_matches('"').to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let column = |name: &str| columns.iter().position(|column| column == name);
+    let required = |name: &str| {
+        column(name).ok_or_else(|| format!("{}: missing '{name}' column", path.display()))
+    };
+    let (time, open, high, low, close) = (
+        required("time")?,
+        required("open")?,
+        required("high")?,
+        required("low")?,
+        required("close")?,
+    );
+    let volume = column("volume");
+
+    let mut bars = Vec::new();
+    for (line_index, line) in lines.enumerate() {
+        let fields = line.split(',').map(str::trim).collect::<Vec<_>>();
+        let number = |index: usize, name: &str| {
+            fields
+                .get(index)
+                .and_then(|field| field.trim_matches('"').parse::<f64>().ok())
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| {
+                    format!(
+                        "{}:{}: invalid {name} value",
+                        path.display(),
+                        line_index + 2
+                    )
+                })
+        };
+        let raw_time = number(time, "time")?;
+        // Seconds until the year 5138; anything larger is milliseconds.
+        let time = if raw_time.abs() < 1e11 {
+            raw_time * 1000.0
+        } else {
+            raw_time
+        } as i64;
+        if bars
+            .last()
+            .is_some_and(|previous: &CsvBar| previous.time >= time)
+        {
+            return Err(format!(
+                "{}:{}: bar times must increase",
+                path.display(),
+                line_index + 2
+            ));
+        }
+        bars.push(CsvBar {
+            time,
+            open: number(open, "open")?,
+            high: number(high, "high")?,
+            low: number(low, "low")?,
+            close: number(close, "close")?,
+            volume: volume.map(|index| number(index, "volume")).transpose()?,
+        });
+    }
+    Ok(bars)
+}
+
+fn parse_input_value(value_type: ValueType, text: &str) -> Option<InputValue> {
+    Some(match value_type {
+        ValueType::Int => InputValue::Int(text.parse().ok()?),
+        ValueType::Time => InputValue::Time(text.parse().ok()?),
+        ValueType::Float => InputValue::Float(text.parse().ok()?),
+        ValueType::Bool => InputValue::Bool(match text {
+            "true" => true,
+            "false" => false,
+            _ => return None,
+        }),
+        ValueType::String => InputValue::String(text.to_owned()),
+        ValueType::Color => {
+            let hex = text.strip_prefix('#')?;
+            let rgba = u32::from_str_radix(hex, 16).ok()?;
+            InputValue::Color(match hex.len() {
+                6 => 0xff00_0000 | rgba,
+                8 => rgba.rotate_right(8),
+                _ => return None,
+            })
+        }
+        _ => return None,
+    })
+}
+
+fn csv_value(value: &Value) -> String {
+    match value {
+        Value::Na => String::new(),
+        Value::Int(value) => value.to_string(),
+        Value::Float(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::String(value) => csv_text(value),
+        Value::Color(value) => format!("#{value:08x}"),
+        other => csv_text(&format!("{other:?}")),
+    }
+}
+
+fn csv_text(text: &str) -> String {
+    if text.contains([',', '"', '\n']) {
+        format!("\"{}\"", text.replace('"', "\"\""))
+    } else {
+        text.to_owned()
+    }
+}
+
+fn command_run(arguments: &[String]) -> Result<(), String> {
+    if wants_help(arguments) {
+        println!("{RUN_USAGE}");
+        return Ok(());
+    }
+    let arguments = parse_run_arguments(arguments)?;
+    let report = load_sources(&source_paths(&arguments.path)?, None);
+    print_diagnostics(&report.diagnostics);
+    let [source] = report.sources.as_slice() else {
+        return Err(failure_summary("run", report.diagnostics.len().max(1)));
+    };
+    let indicator = &source.indicator;
+
+    let mut config = IndicatorConfig::default();
+    for (id, text) in &arguments.inputs {
+        let descriptor = indicator
+            .descriptor
+            .inputs
+            .iter()
+            .find(|input| input.id == *id || input.label == *id)
+            .ok_or_else(|| format!("run: unknown input '{id}'"))?;
+        let value = parse_input_value(descriptor.value_type, text).ok_or_else(|| {
+            format!(
+                "run: invalid value '{text}' for input '{}' ({:?})",
+                descriptor.id, descriptor.value_type
+            )
+        })?;
+        config = config.with(descriptor.id.clone(), value);
+    }
+    let mut instance = indicator
+        .instantiate_with_limits(config, RuntimeLimits::untrusted())
+        .map_err(|error| format!("could not instantiate indicator: {error}"))?;
+
+    let bars = read_bars(&arguments.bars)?;
+    let plot_ids = indicator
+        .descriptor
+        .plots
+        .iter()
+        .map(|plot| plot.id.clone())
+        .collect::<Vec<_>>();
+    let mut rows = vec![
+        ["index".to_owned(), "time".to_owned()]
+            .into_iter()
+            .chain(plot_ids.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(","),
+    ];
+    let mut persistent = BTreeMap::<(String, i64), RegionOutput>::new();
+    let mut last = FrameOutput::default();
+    for (index, bar) in bars.iter().enumerate() {
+        let frame = IndicatorFrame {
+            index,
+            time: bar.time,
+            basis: TimeOrTick::Time,
+            instrument: InstrumentContext {
+                min_tick: arguments.min_tick,
+            },
+            chart: ChartFrame {
+                open: Some(bar.open),
+                high: Some(bar.high),
+                low: Some(bar.low),
+                close: Some(bar.close),
+                volume: bar.volume,
+                directional_volume_available: false,
+                buy_qty: 0.0,
+                sell_qty: 0.0,
+                trade: None,
+            },
+            open_interest: None,
+            ..smoke_frame(index)
+        };
+        let output = instance
+            .evaluate_closed(frame)
+            .map_err(|error| format!("bar {index} ({}) failed: {error}", bar.time))?;
+        let values = output
+            .plots
+            .iter()
+            .map(|plot| (plot.id.as_str(), &plot.value))
+            .collect::<BTreeMap<_, _>>();
+        let mut row = vec![index.to_string(), bar.time.to_string()];
+        row.extend(plot_ids.iter().map(|id| {
+            values
+                .get(id.as_str())
+                .map_or_else(String::new, |value| csv_value(value))
+        }));
+        rows.push(row.join(","));
+        for update in output.region_updates.iter() {
+            match update {
+                RegionUpdate::Upsert(region) => {
+                    persistent.insert((region.id.clone(), region.key), region.clone());
+                }
+                RegionUpdate::Remove { id, key } => {
+                    persistent.remove(&(id.clone(), *key));
+                }
+            }
+        }
+        last = output;
+    }
+
+    let values = rows.join("\n") + "\n";
+    match &arguments.out {
+        Some(path) => {
+            fs::write(path, values).map_err(|error| format!("{}: {error}", path.display()))?
+        }
+        None => print!("{values}"),
+    }
+
+    if let Some(path) = &arguments.regions {
+        let mut lines =
+            vec!["id,key,persistent,left_index,right_index,upper,lower,text".to_owned()];
+        let active = last.regions.iter().map(|region| (false, region));
+        let kept = persistent.values().map(|region| (true, region));
+        for (is_persistent, region) in active.chain(kept) {
+            lines.push(
+                [
+                    csv_text(&region.id),
+                    region.key.to_string(),
+                    is_persistent.to_string(),
+                    region.left_index.to_string(),
+                    region.right_index.to_string(),
+                    region.upper.to_string(),
+                    region.lower.to_string(),
+                    region
+                        .text
+                        .as_ref()
+                        .map_or_else(String::new, |text| csv_text(&text.content)),
+                ]
+                .join(","),
+            );
+        }
+        fs::write(path, lines.join("\n") + "\n")
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+    }
+
+    if !last.info_rows.is_empty() {
+        let mut panels = BTreeMap::<&str, Vec<_>>::new();
+        for row in last.info_rows.iter() {
+            panels.entry(row.id.as_str()).or_default().push(row);
+        }
+        for (id, mut rows) in panels {
+            rows.sort_by_key(|row| row.row);
+            let width = rows
+                .iter()
+                .map(|row| row.left.chars().count())
+                .max()
+                .unwrap_or(0);
+            eprintln!("info panel '{id}' after the last bar:");
+            for row in rows {
+                eprintln!("  {:width$}  {}", row.left, row.right);
+            }
+        }
+    }
+    eprintln!("run: {} bars evaluated", bars.len());
+    Ok(())
 }
 
 fn command_catalog(arguments: &[String]) -> Result<(), String> {
@@ -715,6 +1064,63 @@ fn escape_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn run_reads_candles_in_seconds_or_milliseconds() {
+        let directory = std::env::temp_dir().join(format!("run-bars-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("bars.csv");
+        fs::write(
+            &path,
+            "Time,Open,High,Low,Close\n1700000000,1,2,0.5,1.5\n1700003600,1.5,3,1,2\n",
+        )
+        .unwrap();
+        let bars = read_bars(&path).unwrap();
+        assert_eq!(
+            bars.iter().map(|bar| bar.time).collect::<Vec<_>>(),
+            vec![1_700_000_000_000, 1_700_003_600_000]
+        );
+        assert_eq!(bars[1].high, 3.0);
+        assert!(bars[0].volume.is_none());
+
+        fs::write(
+            &path,
+            "time,open,high,low,close,volume\n1700000000000,1,2,0.5,1.5,7\n",
+        )
+        .unwrap();
+        let bars = read_bars(&path).unwrap();
+        assert_eq!(
+            (bars[0].time, bars[0].volume),
+            (1_700_000_000_000, Some(7.0))
+        );
+
+        fs::write(
+            &path,
+            "time,open,high,low,close\n120,1,2,0.5,1.5\n60,1,2,0.5,1.5\n",
+        )
+        .unwrap();
+        assert!(read_bars(&path).unwrap_err().contains("must increase"));
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn run_parses_input_values_by_type() {
+        assert_eq!(
+            parse_input_value(ValueType::Color, "#89b4fa"),
+            Some(InputValue::Color(0xff89_b4fa))
+        );
+        assert_eq!(
+            parse_input_value(ValueType::Color, "#89b4fa80"),
+            Some(InputValue::Color(0x8089_b4fa))
+        );
+        assert_eq!(
+            parse_input_value(ValueType::Bool, "false"),
+            Some(InputValue::Bool(false))
+        );
+        assert_eq!(parse_input_value(ValueType::Int, "1.5"), None);
+        assert_eq!(csv_value(&Value::String("a,b".to_owned())), "\"a,b\"");
+        assert_eq!(csv_value(&Value::Na), "");
+    }
     use super::*;
 
     fn arguments(values: &[&str]) -> Vec<String> {
