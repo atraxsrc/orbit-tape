@@ -6,19 +6,21 @@ use crate::{
 
 use data::{
     config::cosmic::ThemeSource,
+    config::glass::{self, Glass},
     config::theme::default_theme,
     sidebar::{Menu, Position as SidebarPosition},
 };
 use iced::{
     Alignment, Element,
     widget::tooltip::Position,
-    widget::{button, checkbox, column, container, pick_list, row, scrollable, text},
+    widget::{button, checkbox, column, container, pick_list, row, scrollable, slider, text},
 };
 
 #[derive(Debug, Clone)]
 pub enum Message {
     ThemeSelected(iced::Theme),
     SetFollowCosmic(bool),
+    Glass(GlassChange),
     TimezoneChanged(data::UserTimezone),
     SetMetadataCaching(bool),
     RefreshMetadata,
@@ -37,11 +39,30 @@ pub enum Action {
     Persist,
     ThemeSelected(iced::Theme),
     SetThemeSource(ThemeSource),
+    Glass(GlassChange),
     SetMetadataCaching(bool),
     RefreshMetadata,
     OpenDataFolder,
     OpenUrl(Cow<'static, str>),
     Sidebar(sidebar::Message),
+}
+
+/// An edit to the glass setting, which lives in the theme state.
+#[derive(Debug, Clone, Copy)]
+pub enum GlassChange {
+    Enabled(bool),
+    FollowCosmic(bool),
+    Opacity(f32),
+}
+
+impl GlassChange {
+    pub fn apply(self, glass: &mut Glass) {
+        match self {
+            Self::Enabled(enabled) => glass.enabled = enabled,
+            Self::FollowCosmic(follow) => glass.follow_cosmic = follow,
+            Self::Opacity(opacity) => glass.opacity = glass::clamp_opacity(opacity),
+        }
+    }
 }
 
 /// The settings the app owns and edits from the settings modal.
@@ -93,6 +114,7 @@ impl Settings {
                     ThemeSource::Selected
                 }));
             }
+            Message::Glass(change) => return Some(Action::Glass(change)),
             Message::SetMetadataCaching(enabled) => {
                 return Some(Action::SetMetadataCaching(enabled));
             }
@@ -149,6 +171,12 @@ impl Settings {
                 );
             }
             col.spacing(4)
+        };
+
+        let glass_section: Element<'_, Message> = if cfg!(target_os = "linux") {
+            glass_view(theme)
+        } else {
+            column![].into()
         };
 
         let toggle_theme_editor = button(text("Theme editor")).on_press(Message::Sidebar(
@@ -400,7 +428,7 @@ impl Settings {
             column![text("Sidebar position").size(crate::style::text_size::SECTION), sidebar_pos_picklist,].spacing(12),
             column![text("Time zone").size(crate::style::text_size::SECTION), timezone_picklist,].spacing(12),
             column![text("Market data").size(crate::style::text_size::SECTION), column![size_in_quote_ccy_checkbox, cache_metadata_checkbox].spacing(4)].spacing(12),
-            column![text("Theme").size(crate::style::text_size::SECTION), follow_cosmic, theme_picklist,].spacing(12),
+            column![text("Theme").size(crate::style::text_size::SECTION), follow_cosmic, theme_picklist, glass_section,].spacing(12),
             column![text("Interface scale").size(crate::style::text_size::SECTION), scale_factor,].spacing(12),
             column![text("Rendering").size(crate::style::text_size::SECTION), antialiasing_checkbox,].spacing(12),
             column![
@@ -426,4 +454,68 @@ impl Settings {
             .style(style::dashboard_modal)
             .into()
     }
+}
+
+/// The glass controls: on/off, follow COSMIC's frosted glass, or a hand-set
+/// opacity.
+fn glass_view(theme: &ThemeState) -> Element<'_, Message> {
+    let glass = theme.glass();
+
+    let enabled = tooltip(
+        checkbox(glass.enabled)
+            .label("Glass window")
+            .on_toggle(|on| Message::Glass(GlassChange::Enabled(on))),
+        Some(
+            "See-through window background, blurred by the desktop.\n- Candles, text and lines stay opaque.",
+        ),
+        Position::Top,
+    );
+    let mut col = column![row![enabled].height(24).align_y(Alignment::Center)].spacing(4);
+    if !glass.enabled {
+        return col.into();
+    }
+
+    let follow = tooltip(
+        checkbox(glass.follow_cosmic)
+            .label("Use COSMIC frosted glass")
+            .on_toggle(|on| Message::Glass(GlassChange::FollowCosmic(on))),
+        Some("Take the opacity from COSMIC Settings > Appearance > Frosted glass."),
+        Position::Top,
+    );
+    col = col.push(row![follow].height(24).align_y(Alignment::Center));
+
+    if glass.follow_cosmic {
+        let note = match theme.cosmic_glass() {
+            Some(cosmic) if cosmic.frosted_windows => {
+                format!(
+                    "COSMIC frosted windows: {:.0}% opacity",
+                    cosmic.alpha * 100.0
+                )
+            }
+            Some(_) => "Frosted windows are off in COSMIC, the window stays opaque".to_owned(),
+            None => "COSMIC frosted glass not found, the window stays opaque".to_owned(),
+        };
+        col = col.push(
+            text(note)
+                .size(crate::style::text_size::SMALL)
+                .style(style::secondary_text),
+        );
+    } else {
+        let opacity = slider(glass::MIN_OPACITY..=1.0, glass.opacity, |value| {
+            Message::Glass(GlassChange::Opacity(value))
+        })
+        .step(0.01_f32)
+        .width(160)
+        .style(style::inspector_slider);
+        col = col.push(
+            row![
+                text("Opacity"),
+                opacity,
+                text(format!("{:.0}%", glass.opacity * 100.0)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+    }
+    col.into()
 }

@@ -1190,6 +1190,7 @@ dependencies = [
  "log",
  "num-traits",
  "palette",
+ "raw-window-handle",
  "reqwest",
  "ring",
  "rodio",
@@ -1200,6 +1201,9 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

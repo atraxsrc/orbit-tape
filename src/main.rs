@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
+#[cfg(target_os = "linux")]
+mod blur;
 mod connector;
 mod deferred;
 mod layout;
@@ -76,6 +78,7 @@ fn main() {
     })
     .title(Flowsurface::title)
     .theme(Flowsurface::theme)
+    .style(Flowsurface::style)
     .scale_factor(Flowsurface::scale_factor)
     .subscription(Flowsurface::subscription);
 
@@ -174,7 +177,11 @@ impl Flowsurface {
             sidebar,
             data_sources,
             settings,
-            theme: ThemeState::new(saved_state.theme, saved_state.theme_source),
+            theme: ThemeState::new(
+                saved_state.theme,
+                saved_state.theme_source,
+                saved_state.glass,
+            ),
             notifications: Notifications::new(),
             network_editor: NetworkEditor::new(&network),
             network,
@@ -537,6 +544,7 @@ impl Flowsurface {
             Message::PollCosmicTheme => {
                 let changed = self.theme.poll_cosmic();
                 self.theme_changed(changed);
+                self.sync_blur();
             }
             Message::ThemeEditor(msg) => {
                 let action = self.theme_editor.update(msg, self.theme.current());
@@ -563,6 +571,12 @@ impl Flowsurface {
                     Some(Action::SetThemeSource(source)) => {
                         let changed = self.theme.set_source(source);
                         self.theme_changed(changed);
+                    }
+                    Some(Action::Glass(change)) => {
+                        let mut glass = self.theme.glass();
+                        change.apply(&mut glass);
+                        self.theme.set_glass(glass);
+                        self.sync_blur();
                     }
                     Some(Action::SetMetadataCaching(enabled)) => {
                         self.sidebar.set_cache_enabled(enabled);
@@ -785,6 +799,19 @@ impl Flowsurface {
         self.theme.current().clone()
     }
 
+    /// The window background, see-through when glass is on.
+    fn style(&self, theme: &iced_core::Theme) -> iced::theme::Style {
+        let palette = theme.extended_palette();
+        iced::theme::Style {
+            background_color: palette
+                .background
+                .base
+                .color
+                .scale_alpha(self.theme.window_opacity()),
+            text_color: palette.background.base.text,
+        }
+    }
+
     fn title(&self, _window: window::Id) -> String {
         if let Some(id) = self.layout_manager.active_layout_id() {
             format!("Flowsurface [{}]", id.name)
@@ -820,7 +847,7 @@ impl Flowsurface {
 
         // COSMIC rewrites its theme files on a change; polling their mtimes is
         // cheap and needs no file watcher.
-        let cosmic_theme = if self.theme.source().follows_cosmic() {
+        let cosmic_theme = if self.theme.polls_cosmic() {
             iced::time::every(COSMIC_THEME_POLL_INTERVAL).map(|_| Message::PollCosmicTheme)
         } else {
             Subscription::none()
@@ -899,6 +926,12 @@ impl Flowsurface {
         self.theme_changed(changed);
     }
 
+    /// Blurs what is behind the windows while their background is see-through.
+    fn sync_blur(&self) {
+        #[cfg(target_os = "linux")]
+        blur::set_all(self.theme.window_opacity() < 1.0);
+    }
+
     /// Pushes the effective theme to the panes after it changed.
     fn theme_changed(&mut self, changed: bool) {
         if !changed {
@@ -914,12 +947,28 @@ impl Flowsurface {
     fn handle_window_event(&mut self, event: window::Event) -> Task<Message> {
         match event {
             window::Event::Opened(window_id) => {
-                window::scale_factor(window_id, |window, scale_factor| {
+                let scale_factor = window::scale_factor(window_id, |window, scale_factor| {
                     Message::WindowScaleFactorUpdated {
                         window,
                         scale_factor,
                     }
-                })
+                });
+                #[cfg(target_os = "linux")]
+                let blur = {
+                    let blurred = self.theme.window_opacity() < 1.0;
+                    iced::window::run(window_id, move |window| {
+                        blur::attach(window_id, window, blurred);
+                    })
+                    .discard()
+                };
+                #[cfg(not(target_os = "linux"))]
+                let blur = Task::none();
+                Task::batch([scale_factor, blur])
+            }
+            window::Event::Closed(_window_id) => {
+                #[cfg(target_os = "linux")]
+                blur::detach(_window_id);
+                Task::none()
             }
             window::Event::Rescaled(window_id, scale_factor) => {
                 self.window_scale_factors.set(window_id, scale_factor);
@@ -1229,6 +1278,7 @@ impl Flowsurface {
             self.theme.data_theme(),
             self.theme_editor.custom_theme.clone().map(data::Theme),
             self.theme.source(),
+            self.theme.glass(),
             main_window_spec,
             self.settings.timezone,
             self.sidebar.state.clone(),

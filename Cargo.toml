@@ -85,6 +85,14 @@ indicator_engine.workspace = true
 [features]
 debug = ["iced/hot"]
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Window blur on compositors without KDE's blur protocol (COSMIC), see src/blur.rs.
+# All already in the tree through winit.
+raw-window-handle = "0.6.2"
+wayland-backend = { version = "0.3.15", features = ["client_system"] }
+wayland-client = "0.31.14"
+wayland-protocols = { version = "0.32.12", features = ["client", "staging"] }
+
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3.0.2"
 

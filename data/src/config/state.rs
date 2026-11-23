@@ -1,5 +1,6 @@
 use super::ScaleFactor;
 use super::cosmic::ThemeSource;
+use super::glass::Glass;
 use super::sidebar::Sidebar;
 use super::timezone::UserTimezone;
 use crate::config::network::Network;
@@ -40,6 +41,7 @@ pub struct State {
     pub selected_theme: Theme,
     pub custom_theme: Option<Theme>,
     pub theme_source: ThemeSource,
+    pub glass: Glass,
     pub main_window: Option<WindowSpec>,
     pub timezone: UserTimezone,
     pub sidebar: Sidebar,
@@ -58,6 +60,7 @@ impl State {
         selected_theme: Theme,
         custom_theme: Option<Theme>,
         theme_source: ThemeSource,
+        glass: Glass,
         main_window: Option<WindowSpec>,
         timezone: UserTimezone,
         sidebar: Sidebar,
@@ -73,6 +76,7 @@ impl State {
             selected_theme: Theme(selected_theme.0),
             custom_theme: custom_theme.map(|t| Theme(t.0)),
             theme_source,
+            glass,
             main_window,
             timezone,
             sidebar,
