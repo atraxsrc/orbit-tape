@@ -1102,6 +1102,35 @@ impl DrawingView<'_> {
         }
     }
 
+    /// The alert line closest to `point` vertically, within `max_px`. Lets a
+    /// right click find an alert line without hovering exactly on it.
+    pub(super) fn nearest_alert_line(&self, point: Point, max_px: f32) -> Option<DrawingId> {
+        self.snapshot
+            .entities
+            .iter()
+            .filter(|drawing| drawing.visible && drawing.alert.is_some())
+            .filter_map(|drawing| {
+                let DrawingObject::HorizontalLine {
+                    panel_id,
+                    y_unit,
+                    x,
+                    ray,
+                } = drawing.object
+                else {
+                    return None;
+                };
+                let (bounds, y, start_x) =
+                    self.drawing_horizontal_line_geometry(panel_id, y_unit, x, ray)?;
+                let distance = (point.y - y).abs();
+                (distance <= max_px
+                    && point.x >= start_x - max_px
+                    && point.x <= bounds.x + bounds.width)
+                    .then_some((distance, drawing.id))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, id)| id)
+    }
+
     fn hit_test_drawings(&self, point: Point) -> Option<DrawingId> {
         self.snapshot
             .entities

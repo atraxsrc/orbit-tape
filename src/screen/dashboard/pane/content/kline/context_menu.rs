@@ -1,5 +1,5 @@
-//! The chart's right-click menu: add a price alert at the clicked price, or
-//! arm and remove the alert on the line under the cursor.
+//! The chart's right-click menu: add a price alert at the clicked price, arm
+//! and remove the alert on the line under the cursor, and clear the chart.
 
 use crate::style;
 use crate::widget::chart::kline::drawing::{DrawingAnchor, DrawingId};
@@ -26,6 +26,16 @@ pub(super) struct ContextMenu {
     add_at: Option<(DrawingAnchor, String)>,
     /// Line under the cursor that can carry an alert.
     line: Option<(DrawingId, LineAlert)>,
+    counts: ChartCounts,
+}
+
+/// How many things the "Remove all" entries would remove.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct ChartCounts {
+    pub alerts: usize,
+    pub drawings: usize,
+    pub indicators: usize,
+    pub studies: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +44,10 @@ pub enum Message {
     AddAlert(DrawingAnchor),
     ArmAlert(DrawingId),
     RemoveAlert(DrawingId),
+    RemoveAllAlerts,
+    RemoveAllDrawings,
+    RemoveAllIndicators,
+    RemoveAllStudies,
 }
 
 impl ContextMenu {
@@ -42,12 +56,15 @@ impl ContextMenu {
         position: Point,
         add_at: Option<(DrawingAnchor, String)>,
         line: Option<(DrawingId, LineAlert)>,
+        counts: ChartCounts,
     ) -> Option<Self> {
-        (add_at.is_some() || line.is_some()).then_some(Self {
+        let menu = Self {
             position,
             add_at,
             line,
-        })
+            counts,
+        };
+        (!menu.items().is_empty()).then_some(menu)
     }
 
     fn items(&self) -> Vec<(String, Message)> {
@@ -68,6 +85,21 @@ impl ContextMenu {
         }
         if let Some((anchor, price)) = &self.add_at {
             items.push((format!("Add alert at {price}"), Message::AddAlert(*anchor)));
+        }
+        let counts = self.counts;
+        for (count, what, message) in [
+            (counts.alerts, "alerts", Message::RemoveAllAlerts),
+            (counts.drawings, "drawings", Message::RemoveAllDrawings),
+            (
+                counts.indicators,
+                "indicators",
+                Message::RemoveAllIndicators,
+            ),
+            (counts.studies, "studies", Message::RemoveAllStudies),
+        ] {
+            if count > 0 {
+                items.push((format!("Remove all {what} ({count})"), message));
+            }
         }
         items
     }

@@ -257,6 +257,9 @@ impl From<KlineWidgetDrawingEvent> for KlineWidgetEvent {
     }
 }
 
+/// How far from an alert line a right click still picks it, in pixels.
+const ALERT_LINE_PICK_PX: f32 = 12.0;
+
 pub struct KlineWidget<'a> {
     series: &'a [KlineSeries],
     indicator_host: &'a IndicatorHost,
@@ -2260,7 +2263,13 @@ where
                                 | drawing::DrawingHit::Handle { id, .. },
                             )) => Some(id),
                             _ => None,
-                        };
+                        }
+                        .or_else(|| {
+                            scene.as_ref().and_then(|scene| {
+                                self.drawing_view(scene)
+                                    .nearest_alert_line(cursor_pos, ALERT_LINE_PICK_PX)
+                            })
+                        });
                         shell.publish(M::from(KlineWidgetEvent::ContextMenu {
                             position: cursor_pos,
                             anchor,

@@ -315,6 +315,17 @@ impl DrawingState {
         self.record_update(update, before)
     }
 
+    /// Deletes every unlocked line that carries a price alert.
+    pub(super) fn remove_alert_lines(&mut self) -> DrawingUpdate {
+        let before = self.tools.edit_state();
+        let update = if self.tools.remove_alert_lines() {
+            DrawingUpdate::AtomicEdit
+        } else {
+            DrawingUpdate::None
+        };
+        self.record_update(update, before)
+    }
+
     /// Arms (true) or removes (false) the price alert on one line.
     pub(super) fn set_alert(&mut self, id: DrawingId, armed: bool) -> DrawingUpdate {
         let before = self.tools.edit_state();
@@ -2294,6 +2305,16 @@ impl DrawingTools {
         changed
     }
 
+    fn remove_alert_lines(&mut self) -> bool {
+        let before = self.drawings.len();
+        self.drawings
+            .retain(|drawing| drawing.locked || drawing.alert.is_none());
+        let drawings = &self.drawings;
+        self.selected_drawings
+            .retain(|id| drawings.iter().any(|drawing| drawing.id == *id));
+        self.drawings.len() != before
+    }
+
     /// Disarms alerts that fired. The lines and their tags stay.
     pub(super) fn disarm_alerts(&mut self, ids: &[DrawingId]) -> bool {
         let mut changed = false;
@@ -2377,5 +2398,22 @@ mod price_alert_tests {
         );
         assert!(matches!(update, DrawingUpdate::AtomicEdit), "{update:?}");
         assert!(state.tools.time_drawings().is_empty());
+    }
+
+    #[test]
+    fn remove_all_alerts_keeps_plain_lines() {
+        let mut state = DrawingState::default();
+        let settings = DrawingSettings::default();
+        state.add_price_alert(anchor(), &settings);
+        state.add_price_alert(anchor(), &settings);
+        let plain = state.tools.active_drawings()[1].id;
+        state.set_alert(plain, false);
+        assert!(matches!(
+            state.remove_alert_lines(),
+            DrawingUpdate::AtomicEdit
+        ));
+        let left = state.tools.active_drawings();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, plain);
     }
 }

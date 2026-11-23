@@ -324,6 +324,21 @@ impl KlineChart {
                         drawing::Event::Tools(DrawingMessage::DeleteDrawing(id)),
                         &mut chart_settings.drawing,
                     ),
+                    context_menu::Message::RemoveAllAlerts => self.drawings.remove_alert_lines(),
+                    context_menu::Message::RemoveAllDrawings => self.drawings.update(
+                        drawing::Event::Tools(DrawingMessage::DeleteAllDrawings),
+                        &mut chart_settings.drawing,
+                    ),
+                    context_menu::Message::RemoveAllIndicators => {
+                        for id in self.indicators.selected_indicators() {
+                            let _ = self.apply_command(ChartCommand::RemoveIndicator(id));
+                        }
+                        DrawingUpdate::None
+                    }
+                    context_menu::Message::RemoveAllStudies => {
+                        let _ = self.apply_command(ChartCommand::Study(StudyCommand::RemoveAll));
+                        DrawingUpdate::None
+                    }
                 };
                 log::info!("chart menu: {message:?} -> {update:?}");
                 self.apply_drawing_update(update);
@@ -915,7 +930,17 @@ impl KlineChart {
             };
             Some((id, alert))
         });
-        context_menu::ContextMenu::new(position, add_at, line)
+        let drawings = self.drawings.tools.active_drawings();
+        let counts = context_menu::ChartCounts {
+            alerts: drawings
+                .iter()
+                .filter(|drawing| drawing.alert.is_some() && !drawing.locked)
+                .count(),
+            drawings: drawings.len(),
+            indicators: self.indicators.selected_indicators().len(),
+            studies: self.studies.active().count(),
+        };
+        context_menu::ContextMenu::new(position, add_at, line, counts)
     }
 
     fn take_indicator_alerts(&mut self, now: UnixMs) -> Vec<AlertHit> {
