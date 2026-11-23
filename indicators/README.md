@@ -39,6 +39,15 @@ on a script, load it directly instead:
 ./target/release/flowsurface --indicator-path indicators/roman/enhanced-ob.ind
 ```
 
+## Alerts
+
+Both scripts mark their signal plots with `alert = true`: HTF bias flips, HTF
+SFPs, LTF MSS and counter-trend MSS (Roman Setup), and OB formed / mitigated
+(Enhanced OB). With a chart showing the indicator, Flowsurface sends a desktop
+notification and a chime when one is true on a newly closed bar. Turn single
+conditions off under Settings > Alerts. After updating a script, copy it again
+(or load it with `--indicator-path`) and restart.
+
 ## Check a script against candles
 
 `flowsurface-indicator run` evaluates a script on a candle CSV and writes every

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod alerts;
 mod audio;
 #[cfg(target_os = "linux")]
 mod blur;
@@ -102,6 +103,8 @@ struct Flowsurface {
     settings: modal::settings::Settings,
     theme: ThemeState,
     notifications: Notifications,
+    alert_center: alerts::AlertCenter,
+    last_alert_poll: std::time::Instant,
     window_scale_factors: window::WindowScaleFactors,
     network: Deferred<data::Network>,
 }
@@ -165,6 +168,7 @@ impl Flowsurface {
             saved_state.scale_factor,
             saved_state.volume_size_unit,
             boot,
+            saved_state.alerts,
         );
         let network = Deferred::new(saved_state.network);
 
@@ -183,6 +187,8 @@ impl Flowsurface {
                 saved_state.glass,
             ),
             notifications: Notifications::new(),
+            alert_center: alerts::AlertCenter::default(),
+            last_alert_poll: std::time::Instant::now(),
             network_editor: NetworkEditor::new(&network),
             network,
         };
@@ -289,6 +295,7 @@ impl Flowsurface {
                 let task = self
                     .active_dashboard_mut()
                     .tick(now, &data_sources, main_window_id);
+                self.poll_alerts(now);
                 return self.map_dashboard_task(task, None);
             }
             Message::WindowEvent(event) => return self.handle_window_event(event),
@@ -593,6 +600,11 @@ impl Flowsurface {
                         }
                     }
                     Some(Action::OpenUrl(url)) => self.open_url(url.as_ref()),
+                    Some(Action::TestAlert) => {
+                        if let Some(err) = self.alert_center.test(&self.settings.alerts) {
+                            self.notifications.push(Toast::error(err));
+                        }
+                    }
                     Some(Action::Sidebar(message)) => {
                         return self.update(Message::Sidebar(message));
                     }
@@ -689,6 +701,25 @@ impl Flowsurface {
             }
         }
         Task::none()
+    }
+
+    /// Collects alert conditions from the charts and delivers them. Runs at
+    /// most twice a second; bar closes are rarer than that.
+    fn poll_alerts(&mut self, now: std::time::Instant) {
+        const INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+        if now.saturating_duration_since(self.last_alert_poll) < INTERVAL {
+            return;
+        }
+        self.last_alert_poll = now;
+        let hits = self
+            .active_dashboard_mut()
+            .take_alerts(exchange::UnixMs::now());
+        if hits.is_empty() {
+            return;
+        }
+        if let Some(err) = self.alert_center.deliver(hits, &self.settings.alerts) {
+            self.notifications.push(Toast::error(err));
+        }
     }
 
     fn save_now(&self) -> Task<Message> {
@@ -1284,6 +1315,7 @@ impl Flowsurface {
             self.sidebar.state.clone(),
             self.settings.scale_factor,
             audio_cfg,
+            self.settings.alerts.clone(),
             self.network.wanted().for_persistence(),
             *self.settings.volume_size_unit.wanted(),
             self.sidebar.cache_enabled(),

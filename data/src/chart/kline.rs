@@ -1,3 +1,4 @@
+pub mod alerts;
 pub mod bar;
 pub mod chart_data;
 pub mod composition;

@@ -312,11 +312,18 @@ without visual layers; readouts default to hidden.
 | `layer_title`, `overlay`, `layer` | Plot title, `true`, `true` |
 | `data_kind` | Inferred; `scalar`, `histogram`, `ohlc`, `range` |
 | `mark`, `axis` | Inferred; axis is `primary` or `secondary` |
+| `alert` | `false`; boolean literal, only for boolean plots |
 
 Dynamic values are checked when emitted: numeric channels accept numbers or
 `na`, boolean channels accept booleans or `na`, and scene fields require their
 declared kinds. Wrong kinds fail with an output ID and field diagnostic; the
 host quarantines the indicator.
+
+`alert = true` marks a boolean plot as an alert condition. While the app runs,
+it sends a desktop notification (and optional sound) when the plot is `true` on
+a newly closed bar of a chart that shows the indicator. The open bar never
+fires, and bars that were already closed when the chart loaded do not fire.
+The plot title is the alert's name.
 
 `layer = false` keeps a private channel for presentation wiring; it cannot be a
 dependency source. Numeric plot layers must share one pane. Primary overlays

@@ -272,6 +272,9 @@ pub struct PlotDescriptor {
     pub presentation_mark: Option<PresentationMarkKind>,
     pub presentation_axis: Option<PresentationAxis>,
     pub layer: bool,
+    /// Boolean plot the host may raise an alert for when it turns true on a
+    /// closed bar (`alert = true`).
+    pub alert: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

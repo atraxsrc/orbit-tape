@@ -1,4 +1,5 @@
 use super::ScaleFactor;
+use super::alerts::Alerts;
 use super::cosmic::ThemeSource;
 use super::glass::Glass;
 use super::sidebar::Sidebar;
@@ -47,6 +48,7 @@ pub struct State {
     pub sidebar: Sidebar,
     pub scale_factor: ScaleFactor,
     pub audio_cfg: AudioStream,
+    pub alerts: Alerts,
     pub network: Network,
     pub size_in_quote_ccy: exchange::SizeUnit,
     pub cache_market_metadata: bool,
@@ -66,6 +68,7 @@ impl State {
         sidebar: Sidebar,
         scale_factor: ScaleFactor,
         audio_cfg: AudioStream,
+        alerts: Alerts,
         network: Network,
         volume_size_unit: exchange::SizeUnit,
         cache_market_metadata: bool,
@@ -82,6 +85,7 @@ impl State {
             sidebar,
             scale_factor,
             audio_cfg,
+            alerts,
             network,
             size_in_quote_ccy: volume_size_unit,
             cache_market_metadata,

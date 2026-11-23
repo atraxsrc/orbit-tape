@@ -14,8 +14,9 @@
 //   - HTF candles are built from the chart's own bars, so the first HTF candle
 //     after the start of the loaded history is skipped if it is incomplete.
 //   - The settings guide table is left out.
-//   - Alerts are boolean outputs (see ALERT OUTPUTS) instead of
-//     alertcondition() calls, and HTF MSS diagnostics are dots, not triangles.
+//   - Alerts are boolean outputs with alert = true (see ALERT OUTPUTS) instead
+//     of alertcondition() calls; the app notifies when one is true on a newly
+//     closed bar. HTF MSS diagnostics are dots, not triangles.
 //   - "HTF timeframe" takes the engine's timeframe names (720, 12H, D, W, M) and
 //     is not checked against the chart timeframe.
 
@@ -920,14 +921,14 @@ info_row(select(showTable, "Bearish MSS", ""), select(showTable, dnTxt, ""), lef
          right_color = select(na(dnFlip), color.gray, cDn))
 
 // ============================= ALERT OUTPUTS =================================
-plot(evBull, id = "htf_bias_bullish", title = "HTF bias -> Bullish")
-plot(evBear, id = "htf_bias_bearish", title = "HTF bias -> Bearish")
-plot(sfpBull, id = "htf_sfp_bullish", title = "HTF Bullish SFP")
-plot(sfpBear, id = "htf_sfp_bearish", title = "HTF Bearish SFP")
-plot(alnUp, id = "ltf_mss_up", title = "LTF MSS up")
-plot(alnDn, id = "ltf_mss_down", title = "LTF MSS down")
-plot(mssCtUp, id = "ltf_ct_mss_up", title = "LTF counter-trend MSS up")
-plot(mssCtDn, id = "ltf_ct_mss_down", title = "LTF counter-trend MSS down")
+plot(evBull, id = "htf_bias_bullish", title = "HTF bias -> Bullish", alert = true)
+plot(evBear, id = "htf_bias_bearish", title = "HTF bias -> Bearish", alert = true)
+plot(sfpBull, id = "htf_sfp_bullish", title = "HTF Bullish SFP", alert = true)
+plot(sfpBear, id = "htf_sfp_bearish", title = "HTF Bearish SFP", alert = true)
+plot(alnUp, id = "ltf_mss_up", title = "LTF MSS up", alert = true)
+plot(alnDn, id = "ltf_mss_down", title = "LTF MSS down", alert = true)
+plot(mssCtUp, id = "ltf_ct_mss_up", title = "LTF counter-trend MSS up", alert = true)
+plot(mssCtDn, id = "ltf_ct_mss_down", title = "LTF counter-trend MSS down", alert = true)
 
 // ============================= DEBUG EXPORT ==================================
 // Hidden values for comparing with TradingView via flowsurface-indicator run.

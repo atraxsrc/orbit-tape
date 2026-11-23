@@ -49,6 +49,11 @@ aims to look native on the [COSMIC](https://system76.com/cosmic) desktop. Change
   Trade Setup (H12 to H1) and Enhanced Roman Order Block Pine scripts. Not bundled; copy them
   into the indicators folder. Roman Setup matches the TradingView original bar for bar on
   the recorded test candles.
+- **Indicator alerts**: boolean plots declared with `alert = true` send a desktop
+  notification and a short chime when they are true on a newly closed bar. Alerts only run
+  while the app is open, on charts that show the indicator. Settings → Alerts turns delivery
+  and each condition on or off; "Test alert" checks both. The Roman ports mark their
+  signals (HTF bias flip, HTF SFP, LTF MSS, counter-trend MSS, OB formed/mitigated) as alerts.
 - **`flowsurface-indicator run`**: evaluates a script on a candle CSV and exports every
   output per bar, for checking a port against another platform.
 

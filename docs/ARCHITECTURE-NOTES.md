@@ -115,5 +115,14 @@ starting over.
 
 ## Alerts and notifications
 
-- `src/notify.rs` only handles in-app toasts. `src/audio.rs` plays trade sounds
-  via `rodio`. There is no alert system and no desktop notification yet.
+- `src/notify.rs` handles in-app toasts. `src/audio.rs` plays trade sounds via
+  `rodio`.
+- Indicator alerts (fork): `plot(..., alert = true)` sets `PlotDescriptor::alert`
+  (engine) and `OutputChannelSpec::alert` (host). Each kline pane owns an
+  `AlertWatch` (`data/src/chart/kline/alerts.rs`) that remembers the newest closed
+  bar it checked per indicator instance; the first look only sets that baseline,
+  so history never fires. `Flowsurface::poll_alerts` collects hits from every
+  pane twice a second and `src/alerts.rs` drops duplicates and muted conditions,
+  then sends a freedesktop notification (`notify-rust`, on a background thread)
+  and a synthesized chime. Settings live in `data::config::alerts::Alerts`
+  (`State::alerts`).

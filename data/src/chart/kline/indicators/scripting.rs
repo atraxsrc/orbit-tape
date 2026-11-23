@@ -728,6 +728,7 @@ impl From<&PlotDescriptor> for OutputChannelSpec {
             offset_bars: plot.offset_bars,
             style_by: plot.style_by.clone(),
             independent_scale: matches!(plot.scale, indicator_engine::PlotScale::Independent),
+            alert: plot.alert,
         }
     }
 }

@@ -71,6 +71,9 @@ fern = "0.7.1"
 reqwest.workspace = true
 tokio.workspace = true
 rodio = { version = "0.22.2", default-features = false, features = [ "playback", "wav" ]}
+# Desktop notifications for indicator alerts (freedesktop spec over zbus on
+# Linux), see src/alerts.rs.
+notify-rust = { version = "4.11", default-features = false, features = ["z"] }
 
 bytemuck = "1.25.0"
 iced_wgpu = "0.14.0"
