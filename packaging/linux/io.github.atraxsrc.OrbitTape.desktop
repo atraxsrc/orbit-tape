@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Orbit Tape
+GenericName=Crypto Charting
+Comment=Native crypto charting desk for the COSMIC desktop
+Exec=orbit-tape
+Icon=io.github.atraxsrc.OrbitTape
+Terminal=false
+Categories=Finance;Office;
+Keywords=crypto;orderbook;heatmap;footprint;trading;
+StartupNotify=true
+StartupWMClass=io.github.atraxsrc.OrbitTape
