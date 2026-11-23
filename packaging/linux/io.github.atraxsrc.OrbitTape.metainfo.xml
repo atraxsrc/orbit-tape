@@ -57,6 +57,12 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.9.1" date="2026-11-24">
+      <description>
+        <p>Right-click price alerts on the chart, and chart menu entries to
+        remove all alerts, drawings, indicators or studies.</p>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-11-24">
       <description>
         <p>First Orbit Tape release: Linux and COSMIC only, new name and icon,

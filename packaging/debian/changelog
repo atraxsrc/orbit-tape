@@ -1,3 +1,11 @@
+orbit-tape (0.9.1-1) unstable; urgency=medium
+
+  * Right-click price alerts on the chart: an alert line fires once when the
+    live price crosses it. The chart menu can also remove all alerts,
+    drawings, indicators or studies.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Tue, 24 Nov 2026 20:00:00 +1100
+
 orbit-tape (0.9.0-1) unstable; urgency=medium
 
   * First Orbit Tape release: Linux and COSMIC only fork of Flowsurface with
