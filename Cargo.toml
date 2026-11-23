@@ -10,6 +10,49 @@ edition.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+# .deb built with cargo-deb, see scripts/package-deb.sh.
+[package.metadata.deb]
+name = "orbit-tape"
+maintainer = "atraxsrc <92285717+atraxsrc@users.noreply.github.com>"
+# DEP-5 copyright file pointing at /usr/share/common-licenses.
+license-file = ["packaging/debian/copyright", "0"]
+changelog = "packaging/debian/changelog"
+section = "misc"
+priority = "optional"
+extended-description = """\
+Orbit Tape is a native crypto charting desk for the COSMIC desktop, a fork \
+of Flowsurface. It streams trades and order books from Binance, Bybit, \
+Hyperliquid, OKX and MEXC and shows them as heatmaps, footprint and \
+candlestick charts, time and sales and a DOM ladder, with scriptable \
+indicators and desktop alerts. Includes orbit-tape-indicator, the CLI for \
+writing and testing indicator scripts."""
+# $auto finds directly linked libraries (ALSA). Graphics, Wayland and
+# keyboard libraries are loaded at runtime with dlopen, so they are listed
+# here; X11 is only a fallback and therefore recommended.
+depends = "$auto, libvulkan1, libwayland-client0, libwayland-egl1, libegl1, libxkbcommon0"
+recommends = "libx11-6, libx11-xcb1, libxcursor1, libxi6, libxkbcommon-x11-0, mesa-vulkan-drivers"
+assets = [
+    ["target/release/orbit-tape", "usr/bin/", "755"],
+    ["target/release/orbit-tape-indicator", "usr/bin/", "755"],
+    ["packaging/linux/io.github.atraxsrc.OrbitTape.desktop", "usr/share/applications/", "644"],
+    ["packaging/linux/io.github.atraxsrc.OrbitTape.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["assets/app-icon/hicolor/16x16/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/16x16/apps/", "644"],
+    ["assets/app-icon/hicolor/24x24/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/24x24/apps/", "644"],
+    ["assets/app-icon/hicolor/32x32/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/32x32/apps/", "644"],
+    ["assets/app-icon/hicolor/48x48/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/48x48/apps/", "644"],
+    ["assets/app-icon/hicolor/64x64/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/64x64/apps/", "644"],
+    ["assets/app-icon/hicolor/128x128/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/128x128/apps/", "644"],
+    ["assets/app-icon/hicolor/256x256/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["assets/app-icon/hicolor/512x512/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
+    ["assets/app-icon/hicolor/scalable/apps/io.github.atraxsrc.OrbitTape.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["LICENSE", "usr/share/doc/orbit-tape/LICENSE", "644"],
+    ["indicator-engine/LICENSE", "usr/share/doc/orbit-tape/LICENSE-Apache-2.0-indicator-engine", "644"],
+    ["exchange/LICENSE", "usr/share/doc/orbit-tape/LICENSE-MIT-exchange", "644"],
+    ["indicators/LICENSE-MIT", "usr/share/doc/orbit-tape/LICENSE-MIT-roman-indicators", "644"],
+    ["indicators/roman/*.ind", "usr/share/doc/orbit-tape/indicators/roman/", "644"],
+    ["README.md", "usr/share/doc/orbit-tape/README.md", "644"],
+]
+
 [workspace.package]
 version = "0.9.0"
 edition = "2024"

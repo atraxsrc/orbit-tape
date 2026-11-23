@@ -1,0 +1,6 @@
+orbit-tape (0.9.0-1) unstable; urgency=medium
+
+  * First Orbit Tape release: Linux and COSMIC only fork of Flowsurface with
+    a new name and icon, indicator alerts, COSMIC theme and frosted glass.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Tue, 24 Nov 2026 12:00:00 +1100
