@@ -28,9 +28,9 @@ indicators and desktop alerts. Includes orbit-tape-indicator, the CLI for \
 writing and testing indicator scripts."""
 # $auto finds directly linked libraries (ALSA). Graphics, Wayland and
 # keyboard libraries are loaded at runtime with dlopen, so they are listed
-# here; X11 is only a fallback and therefore recommended.
+# here. Wayland only: there is no X11 backend.
 depends = "$auto, libvulkan1, libwayland-client0, libwayland-egl1, libegl1, libxkbcommon0"
-recommends = "libx11-6, libx11-xcb1, libxcursor1, libxi6, libxkbcommon-x11-0, mesa-vulkan-drivers"
+recommends = "mesa-vulkan-drivers"
 assets = [
     ["target/release/orbit-tape", "usr/bin/", "755"],
     ["target/release/orbit-tape-indicator", "usr/bin/", "755"],
@@ -98,7 +98,6 @@ iced = { version = "0.14.0", default-features = false, features = [
     "advanced",
     "unconditional-rendering",
     "crisp",
-    "x11",
     "wayland",
 ] }
 iced_core.workspace = true

@@ -101,7 +101,7 @@ What is COSMIC-specific today:
   is the Wayland app_id and matches the `.desktop` entry, so COSMIC shows the
   right icon and groups the windows in the dock.
 - **Original icon** in the hicolor theme, sized from 16 to 512 px.
-- **Wayland-native** rendering (X11 remains as a fallback).
+- **Wayland-only** rendering (no X11 backend).
 - **COSMIC theme** (Settings → Theme, on by default): the app reads COSMIC's
   theme files and follows its light/dark mode, accent, background, text,
   success/warning/destructive colors and corner radii live. The 8 color

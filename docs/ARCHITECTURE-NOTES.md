@@ -12,7 +12,7 @@ chart and indicator work. Based on upstream 0.9.0 (commit `bc545fc`).
 | `orbit-tape-exchange` | `exchange/` | Exchange adapters (REST + WebSocket), market types |
 | `orbit-tape-indicator-engine` | `indicator-engine/` | Compiler and runtime for `.ind` indicator scripts (Apache-2.0) |
 
-- iced **0.14.0** from crates.io (features: `wgpu`, `canvas`, `advanced`, `x11`,
+- iced **0.14.0** from crates.io (features: `wgpu`, `canvas`, `advanced`,
   `wayland`, ...). Not a fork, so libcosmic (which ships its own iced fork) cannot
   simply be dropped in.
 - Toolchain pinned to Rust 1.95.0 (`rust-toolchain.toml`), edition 2024.
