@@ -24,8 +24,9 @@ const LIGHT: &str = "com.system76.CosmicTheme.Light";
 
 /// Theme keys read from the active theme directory, including the frosted
 /// glass ones.
-const THEME_KEYS: [&str; 9] = [
+const THEME_KEYS: [&str; 10] = [
     "background",
+    "palette",
     "accent",
     "success",
     "warning",
@@ -92,7 +93,14 @@ pub struct CosmicTheme {
     pub radius_xs: f32,
     /// COSMIC's small radius, used for containers and menus.
     pub radius_s: f32,
+    /// The palette's accent colors, used for drawing, indicator and series
+    /// colors. `None` when the palette file is missing or unreadable.
+    pub accents: Option<[Color; PALETTE_ACCENT_COUNT]>,
 }
+
+/// Accent colors taken from a COSMIC palette, in this order: blue, indigo,
+/// purple, pink, red, orange, yellow, green.
+pub const PALETTE_ACCENT_COUNT: usize = 8;
 
 impl CosmicTheme {
     /// Loads the active theme from the user's config directory.
@@ -111,6 +119,13 @@ impl CosmicTheme {
         let warning: RonComponent = read_ron(&dir.join("warning"))?;
         let destructive: RonComponent = read_ron(&dir.join("destructive"))?;
         let radii: RonCornerRadii = read_ron(&dir.join("corner_radii"))?;
+        let accents = match read_ron::<RonPalette>(&dir.join("palette")) {
+            Ok(palette) => Some(palette.accents()),
+            Err(err) => {
+                log::warn!("COSMIC palette not used: {err}");
+                None
+            }
+        };
 
         Ok(Self {
             is_dark,
@@ -122,6 +137,7 @@ impl CosmicTheme {
             destructive: destructive.base.into(),
             radius_xs: radii.radius_xs.uniform(),
             radius_s: radii.radius_s.uniform(),
+            accents,
         })
     }
 
@@ -380,6 +396,35 @@ struct RonComponent {
     base: RonColor,
 }
 
+/// A COSMIC palette; only the accent colors.
+#[derive(Debug, Deserialize)]
+struct RonPalette {
+    accent_blue: RonColor,
+    accent_indigo: RonColor,
+    accent_purple: RonColor,
+    accent_pink: RonColor,
+    accent_red: RonColor,
+    accent_orange: RonColor,
+    accent_yellow: RonColor,
+    accent_green: RonColor,
+}
+
+impl RonPalette {
+    fn accents(&self) -> [Color; PALETTE_ACCENT_COUNT] {
+        [
+            self.accent_blue,
+            self.accent_indigo,
+            self.accent_purple,
+            self.accent_pink,
+            self.accent_red,
+            self.accent_orange,
+            self.accent_yellow,
+            self.accent_green,
+        ]
+        .map(Color::from)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize)]
 struct RonRadius(f32, f32, f32, f32);
 
@@ -493,6 +538,51 @@ mod tests {
             close(a.r, b.r) && close(a.g, b.g) && close(a.b, b.b) && close(a.a, b.a),
             "{a:?} != {b:?}"
         );
+    }
+
+    #[test]
+    fn reads_palette_accents_in_order() {
+        let fx = Fixture::new("palette");
+        fx.write_mode("v1", true);
+        fx.write_theme(&format!("{DARK}/v2"), Format::Hex, (20, 20, 20), 4.0);
+        // No palette file: the theme still loads, without accents.
+        assert_eq!(CosmicTheme::load_from(&fx.0).unwrap().accents, None);
+
+        let names = [
+            "blue", "indigo", "purple", "pink", "red", "orange", "yellow", "green",
+        ];
+        let fields = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                format!(
+                    "accent_{name}: {},",
+                    color(Format::Hex, (i as u8 * 10, 1, 2))
+                )
+            })
+            .collect::<String>();
+        fx.write(
+            &format!("{DARK}/v2/palette"),
+            &format!(
+                "(name: \"Test\", bright_red: \"#FF0000FF\", {fields} ext_blue: \"#000000FF\")"
+            ),
+        );
+        let accents = CosmicTheme::load_from(&fx.0).unwrap().accents.unwrap();
+        for (i, accent) in accents.iter().enumerate() {
+            assert_close(*accent, rgb((i as u8 * 10, 1, 2)));
+        }
+
+        // Old float format works too.
+        let fields = names
+            .iter()
+            .map(|name| format!("accent_{name}: {},", color(Format::Floats, (0, 0, 255))))
+            .collect::<String>();
+        fx.write(
+            &format!("{DARK}/v2/palette"),
+            &format!("(name: \"Test\", {fields})"),
+        );
+        let accents = CosmicTheme::load_from(&fx.0).unwrap().accents.unwrap();
+        assert_close(accents[7], rgb((0, 0, 255)));
     }
 
     #[test]

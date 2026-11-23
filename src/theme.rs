@@ -10,9 +10,15 @@ pub struct ThemeAccents {
 }
 
 impl ThemeAccents {
-    fn from_theme(theme: &Theme, generation: u64) -> Self {
+    /// The COSMIC palette's accents when given, else colors generated from
+    /// the theme.
+    fn new(
+        theme: &Theme,
+        cosmic: Option<[Color; data::config::cosmic::PALETTE_ACCENT_COUNT]>,
+        generation: u64,
+    ) -> Self {
         Self {
-            colors: generated_theme_accents(theme.extended_palette()),
+            colors: cosmic.unwrap_or_else(|| generated_theme_accents(theme.extended_palette())),
             generation,
         }
     }
@@ -62,7 +68,7 @@ impl ThemeState {
         );
 
         let state = Self {
-            accents: ThemeAccents::from_theme(&effective, 0),
+            accents: ThemeAccents::new(&effective, cosmic_accents(source, cosmic.as_ref()), 0),
             selected,
             source,
             cosmic,
@@ -156,12 +162,17 @@ impl ThemeState {
     fn recompute(&mut self) -> bool {
         apply_radii(self.source, self.cosmic.as_ref());
         let effective = effective_theme(&self.selected, self.source, self.cosmic.as_ref());
-        if effective == self.effective {
+        let generation = self.accents.generation().wrapping_add(1);
+        let accents = ThemeAccents::new(
+            &effective,
+            cosmic_accents(self.source, self.cosmic.as_ref()),
+            generation,
+        );
+        if effective == self.effective && accents.colors == self.accents.colors {
             return false;
         }
 
-        let generation = self.accents.generation().wrapping_add(1);
-        self.accents = ThemeAccents::from_theme(&effective, generation);
+        self.accents = accents;
         self.effective = effective;
         true
     }
@@ -189,6 +200,17 @@ impl ThemeState {
     pub fn accents(&self) -> ThemeAccents {
         self.accents
     }
+}
+
+/// The COSMIC palette's accents, while COSMIC is followed and its palette
+/// could be read.
+fn cosmic_accents(
+    source: ThemeSource,
+    cosmic: Option<&CosmicTheme>,
+) -> Option<[Color; data::config::cosmic::PALETTE_ACCENT_COUNT]> {
+    cosmic
+        .filter(|_| source.follows_cosmic())
+        .and_then(|cosmic| cosmic.accents)
 }
 
 fn effective_theme(
@@ -258,6 +280,7 @@ mod tests {
             destructive: Color::from_rgb(0.9, 0.3, 0.3),
             radius_xs: 4.0,
             radius_s: 8.0,
+            accents: None,
         }
     }
 
@@ -312,6 +335,45 @@ mod tests {
             effective_theme(&selected, ThemeSource::Cosmic, None),
             Theme::Nord
         );
+    }
+
+    #[test]
+    fn accents_come_from_the_cosmic_palette_when_followed() {
+        let palette: [Color; ACCENT_COUNT] =
+            std::array::from_fn(|i| Color::from_rgb(i as f32 / 10.0, 0.5, 0.5));
+        let with_palette = CosmicTheme {
+            accents: Some(palette),
+            ..cosmic()
+        };
+        assert_eq!(
+            cosmic_accents(ThemeSource::Cosmic, Some(&with_palette)),
+            Some(palette)
+        );
+        assert_eq!(
+            cosmic_accents(ThemeSource::Selected, Some(&with_palette)),
+            None
+        );
+        assert_eq!(cosmic_accents(ThemeSource::Cosmic, Some(&cosmic())), None);
+
+        let mut state = ThemeState::new(
+            data::Theme(Theme::Nord),
+            ThemeSource::Selected,
+            manual_glass(),
+        );
+        state.cosmic = Some(with_palette);
+        state.source = ThemeSource::Cosmic;
+        assert!(state.recompute());
+        assert_eq!(state.accents().as_array(), &palette);
+
+        // A palette change alone, with the same theme colors, still updates.
+        let mut changed = palette;
+        changed[0] = Color::WHITE;
+        state.cosmic = Some(CosmicTheme {
+            accents: Some(changed),
+            ..with_palette
+        });
+        assert!(state.recompute());
+        assert_eq!(state.accents().as_array()[0], Color::WHITE);
     }
 
     #[test]
