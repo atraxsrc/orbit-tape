@@ -304,9 +304,16 @@ impl From<Theme> for iced_core::Theme {
     }
 }
 
+/// Display name of the built-in default palette.
+pub const DEFAULT_THEME_NAME: &str = "Orbit Tape";
+/// Saved-state ID of the default palette.
+const DEFAULT_THEME_ID: &str = "orbit-tape";
+/// ID the default palette had in Flowsurface state files.
+const LEGACY_DEFAULT_THEME_ID: &str = "flowsurface";
+
 pub fn default_theme() -> Custom {
     Custom::new(
-        "Flowsurface".to_string(),
+        DEFAULT_THEME_NAME.to_string(),
         Palette {
             background: Color::from_rgb8(24, 22, 22),
             text: Color::from_rgb8(197, 201, 197),
@@ -324,10 +331,10 @@ impl Serialize for Theme {
         S: serde::Serializer,
     {
         if let iced_core::Theme::Custom(custom) = &self.0 {
-            let is_default_theme = custom.to_string() == "Flowsurface";
+            let is_default_theme = custom.to_string() == DEFAULT_THEME_NAME;
             let ser_theme = SerTheme {
                 name: if is_default_theme {
-                    "flowsurface"
+                    DEFAULT_THEME_ID
                 } else {
                     "custom"
                 }
@@ -402,7 +409,7 @@ impl<'de> Deserialize<'de> for Theme {
                 "moonfly" => iced_core::Theme::Moonfly,
                 "nightfly" => iced_core::Theme::Nightfly,
                 "oxocarbon" => iced_core::Theme::Oxocarbon,
-                "flowsurface" => Theme::default().0,
+                DEFAULT_THEME_ID | LEGACY_DEFAULT_THEME_ID => Theme::default().0,
                 _ => {
                     return Err(serde::de::Error::custom(format!("Invalid theme: {}", s)));
                 }
@@ -413,7 +420,7 @@ impl<'de> Deserialize<'de> for Theme {
         let serialized = SerTheme::deserialize(value).map_err(serde::de::Error::custom)?;
 
         let theme = match serialized.name.as_str() {
-            "flowsurface" => Theme::default().0,
+            DEFAULT_THEME_ID | LEGACY_DEFAULT_THEME_ID => Theme::default().0,
             "custom" => {
                 if let Some(palette) = serialized.palette {
                     iced_core::Theme::Custom(Custom::new("Custom".to_string(), palette).into())

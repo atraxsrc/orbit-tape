@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// Settings that must exist before the running application state does.
 ///
 /// iced consumes these while the daemon is being constructed, so they are read
-/// once before `Flowsurface` exists and never mutated in place. Everything the
+/// once before `OrbitTape` exists and never mutated in place. Everything the
 /// running app reads and writes belongs in `State` instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]

@@ -1,6 +1,6 @@
-# Flowsurface indicator engine
+# Orbit Tape indicator engine
 
-The Rust library and `flowsurface-indicator` CLI compile and run `.ind` chart
+The Rust library and `orbit-tape-indicator` CLI compile and run `.ind` chart
 indicators. See [LANGUAGE.md](LANGUAGE.md) for authoring and
 [indicator catalog](https://github.com/flowsurface-rs/indicators#install-and-run) for installation.
 
@@ -9,11 +9,11 @@ indicators. See [LANGUAGE.md](LANGUAGE.md) for authoring and
 Build once with Rust, then use the native executable:
 
 ```sh
-cargo build --locked -p flowsurface-indicator-engine --bin flowsurface-indicator
-target/debug/flowsurface-indicator new /tmp/my-indicators --id community.example --title "Example"
-target/debug/flowsurface-indicator check /tmp/my-indicators
-target/debug/flowsurface-indicator test /tmp/my-indicators
-target/debug/flowsurface-indicator catalog /tmp/my-indicators --output /tmp/catalog.json
+cargo build --locked -p orbit-tape-indicator-engine --bin orbit-tape-indicator
+target/debug/orbit-tape-indicator new /tmp/my-indicators --id community.example --title "Example"
+target/debug/orbit-tape-indicator check /tmp/my-indicators
+target/debug/orbit-tape-indicator test /tmp/my-indicators
+target/debug/orbit-tape-indicator catalog /tmp/my-indicators --output /tmp/catalog.json
 ```
 
 `new` creates `<short-name>.ind` without overwriting an existing file.

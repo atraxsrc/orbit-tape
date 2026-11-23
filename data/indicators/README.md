@@ -1,6 +1,6 @@
 # Bundled indicators
 
-The `.ind` files in [sources/](sources/) are bundled with Flowsurface and licensed
+The `.ind` files in [sources/](sources/) are bundled with Orbit Tape and licensed
 under [GPL-3.0-or-later](LICENSE).
 
 Use `core.<name>` IDs and `<name>.ind` filenames. After editing a source,
@@ -13,5 +13,5 @@ indicators without rebuilding.
 Validate the bundled collection from the repository root:
 
 ```sh
-cargo run --locked -p flowsurface-indicator-engine --bin flowsurface-indicator -- test data/indicators/sources --namespace core
+cargo run --locked -p orbit-tape-indicator-engine --bin orbit-tape-indicator -- test data/indicators/sources --namespace core
 ```

@@ -11,24 +11,24 @@ fn main() {
         return;
     };
 
-    println!("cargo:rustc-env=FLOWSURFACE_GIT_SHA={git_sha}");
+    println!("cargo:rustc-env=ORBIT_TAPE_GIT_SHA={git_sha}");
 
     let pkg_version = env::var("CARGO_PKG_VERSION").unwrap_or_default();
     let is_release_tag = git_head_has_release_tag(&pkg_version);
     println!(
-        "cargo:rustc-env=FLOWSURFACE_IS_RELEASE_TAG={}",
+        "cargo:rustc-env=ORBIT_TAPE_IS_RELEASE_TAG={}",
         if is_release_tag { "true" } else { "false" }
     );
 
     let is_official_release = is_official_release_build();
     println!(
-        "cargo:rustc-env=FLOWSURFACE_IS_OFFICIAL_RELEASE={}",
+        "cargo:rustc-env=ORBIT_TAPE_IS_OFFICIAL_RELEASE={}",
         if is_official_release { "true" } else { "false" }
     );
 }
 
 fn is_official_release_build() -> bool {
-    if !env_var_is_truthy("FLOWSURFACE_OFFICIAL_RELEASE") {
+    if !env_var_is_truthy("ORBIT_TAPE_OFFICIAL_RELEASE") {
         return false;
     }
 

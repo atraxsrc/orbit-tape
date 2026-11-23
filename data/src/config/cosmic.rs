@@ -442,7 +442,7 @@ mod tests {
     impl Fixture {
         fn new(name: &str) -> Self {
             let root = std::env::temp_dir()
-                .join(format!("flowsurface-cosmic-{name}-{}", std::process::id()));
+                .join(format!("orbit-tape-cosmic-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             Self(root)
         }
@@ -665,7 +665,7 @@ mod tests {
     }
 
     /// Parses the theme of the machine running the tests:
-    /// `cargo test -p flowsurface-data cosmic -- --ignored --nocapture`.
+    /// `cargo test -p orbit-tape-data cosmic -- --ignored --nocapture`.
     #[test]
     #[ignore = "reads the real COSMIC config"]
     fn reads_local_theme() {

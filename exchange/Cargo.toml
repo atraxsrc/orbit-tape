@@ -1,7 +1,8 @@
 [package]
-name = "flowsurface-exchange"
-description = "Adapters for data providers/crypto exchanges to work with Flowsurface"
+name = "orbit-tape-exchange"
+description = "Adapters for data providers/crypto exchanges to work with Orbit Tape"
 version.workspace = true
+authors.workspace = true
 license = "MIT"
 edition.workspace = true
 repository.workspace = true

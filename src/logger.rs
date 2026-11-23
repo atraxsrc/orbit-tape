@@ -56,9 +56,9 @@ pub fn setup(is_debug: bool) -> Result<(), data::log::Error> {
         .level(log::LevelFilter::Off)
         .level_for("panic", log::LevelFilter::Error)
         .level_for("iced_wgpu", log::LevelFilter::Info)
-        .level_for("flowsurface_exchange", level_filter)
-        .level_for("flowsurface_data", level_filter)
-        .level_for("flowsurface", level_filter)
+        .level_for("orbit_tape_exchange", level_filter)
+        .level_for("orbit_tape_data", level_filter)
+        .level_for("orbit_tape", level_filter)
         .chain(io_sink)
         .apply()?;
 
@@ -67,7 +67,7 @@ pub fn setup(is_debug: bool) -> Result<(), data::log::Error> {
 
 fn initial_rotation(log_path: &PathBuf) -> io::Result<()> {
     let dir = log_path.parent().unwrap_or(std::path::Path::new("."));
-    let previous = dir.join("flowsurface-previous.log");
+    let previous = dir.join("orbit-tape-previous.log");
 
     if let Err(e) = fs::remove_file(&previous)
         && e.kind() != io::ErrorKind::NotFound

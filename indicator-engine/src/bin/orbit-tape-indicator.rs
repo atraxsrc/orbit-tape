@@ -1,4 +1,4 @@
-use flowsurface_indicator_engine::{
+use orbit_tape_indicator_engine::{
     ChartFrame, CompileLimits, CompiledIndicator, Diagnostic, FrameOutput, IndicatorConfig,
     IndicatorFrame, IndicatorId, InputValue, InstrumentContext, RegionOutput, RegionUpdate,
     RuntimeLimits, Severity, TimeOrTick, TradeAggregate, Value, ValueType, compile,
@@ -32,7 +32,7 @@ fn main() {
 }
 
 fn usage() -> String {
-    "usage: flowsurface-indicator <new|check|test|catalog> ...\n\n  flowsurface-indicator new [directory] --id <namespace.name> --title <Title>\n  flowsurface-indicator check <file.ind|directory> [--namespace <prefix>]\n  flowsurface-indicator test <file.ind|directory> [--namespace <prefix>]\n  flowsurface-indicator catalog <file.ind|directory> --output <catalog.json> [--namespace <prefix>]\n  flowsurface-indicator run <file.ind> --bars <candles.csv> [--out <values.csv>] [--regions <regions.csv>] [--min-tick <tick>] [--input <id>=<value> ...]"
+    "usage: orbit-tape-indicator <new|check|test|catalog|run> ...\n\n  orbit-tape-indicator new [directory] --id <namespace.name> --title <Title>\n  orbit-tape-indicator check <file.ind|directory> [--namespace <prefix>]\n  orbit-tape-indicator test <file.ind|directory> [--namespace <prefix>]\n  orbit-tape-indicator catalog <file.ind|directory> --output <catalog.json> [--namespace <prefix>]\n  orbit-tape-indicator run <file.ind> --bars <candles.csv> [--out <values.csv>] [--regions <regions.csv>] [--min-tick <tick>] [--input <id>=<value> ...]"
         .to_owned()
 }
 
@@ -47,7 +47,7 @@ fn global_output(arguments: &[String]) -> Option<String> {
 fn command_new(arguments: &[String]) -> Result<(), String> {
     if wants_help(arguments) {
         println!(
-            "usage: flowsurface-indicator new [directory] --id <namespace.name> --title <Title>"
+            "usage: orbit-tape-indicator new [directory] --id <namespace.name> --title <Title>"
         );
         return Ok(());
     }
@@ -98,7 +98,7 @@ fn command_new(arguments: &[String]) -> Result<(), String> {
 fn command_check(arguments: &[String], command: &str) -> Result<(), String> {
     if wants_help(arguments) {
         println!(
-            "usage: flowsurface-indicator {command} <file.ind|directory> [--namespace <prefix>]"
+            "usage: orbit-tape-indicator {command} <file.ind|directory> [--namespace <prefix>]"
         );
         return Ok(());
     }
@@ -115,7 +115,7 @@ fn command_check(arguments: &[String], command: &str) -> Result<(), String> {
 
 fn command_test(arguments: &[String]) -> Result<(), String> {
     if wants_help(arguments) {
-        println!("usage: flowsurface-indicator test <file.ind|directory> [--namespace <prefix>]");
+        println!("usage: orbit-tape-indicator test <file.ind|directory> [--namespace <prefix>]");
         return Ok(());
     }
     let (path, namespace) = parse_source_arguments(arguments, "test")?;
@@ -142,7 +142,7 @@ fn command_test(arguments: &[String]) -> Result<(), String> {
     }
 }
 
-const RUN_USAGE: &str = "usage: flowsurface-indicator run <file.ind> --bars <candles.csv> [--out <values.csv>] [--regions <regions.csv>] [--min-tick <tick>] [--input <id>=<value> ...]
+const RUN_USAGE: &str = "usage: orbit-tape-indicator run <file.ind> --bars <candles.csv> [--out <values.csv>] [--regions <regions.csv>] [--min-tick <tick>] [--input <id>=<value> ...]
 
 Evaluates every bar of a candle CSV (header with time, open, high, low, close
 and optionally volume; time in Unix seconds or milliseconds) as a closed bar and
@@ -493,7 +493,7 @@ fn command_run(arguments: &[String]) -> Result<(), String> {
 fn command_catalog(arguments: &[String]) -> Result<(), String> {
     if wants_help(arguments) {
         println!(
-            "usage: flowsurface-indicator catalog <file.ind|directory> --output <catalog.json> [--namespace <prefix>]"
+            "usage: orbit-tape-indicator catalog <file.ind|directory> --output <catalog.json> [--namespace <prefix>]"
         );
         return Ok(());
     }
@@ -1000,7 +1000,7 @@ fn source_paths(path: &Path) -> Result<Vec<PathBuf>, String> {
         return Ok(vec![path.to_owned()]);
     }
 
-    let (paths, diagnostics) = flowsurface_indicator_engine::source_files_in_directory(path)?;
+    let (paths, diagnostics) = orbit_tape_indicator_engine::source_files_in_directory(path)?;
     if !diagnostics.is_empty() {
         return Err(diagnostics.join("\n"));
     }
@@ -1140,7 +1140,7 @@ mod tests {
         assert_eq!(parsed.id, "community.example");
 
         let root = std::env::temp_dir().join(format!(
-            "flowsurface-indicator-cli-new-{}",
+            "orbit-tape-indicator-cli-new-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -1187,7 +1187,7 @@ mod tests {
     #[test]
     fn directory_validation_reports_invalid_sources_and_duplicates() {
         let root = std::env::temp_dir().join(format!(
-            "flowsurface-indicator-cli-directory-{}",
+            "orbit-tape-indicator-cli-directory-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -1279,7 +1279,7 @@ mod tests {
     #[test]
     fn test_runs_ta_smoke_and_reports_runtime_failures() {
         let root = std::env::temp_dir().join(format!(
-            "flowsurface-indicator-cli-test-{}",
+            "orbit-tape-indicator-cli-test-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
@@ -1307,7 +1307,7 @@ mod tests {
     #[test]
     fn namespace_filter_accepts_matching_ids_and_rejects_other_ids() {
         let root = std::env::temp_dir().join(format!(
-            "flowsurface-indicator-cli-namespace-{}",
+            "orbit-tape-indicator-cli-namespace-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);

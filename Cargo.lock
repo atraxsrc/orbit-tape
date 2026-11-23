@@ -1346,110 +1346,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
 
 [[package]]
-name = "flowsurface"
-version = "0.9.0"
-dependencies = [
- "arrow-array",
- "arrow-ipc",
- "arrow-schema",
- "bytemuck",
- "bytes",
- "chrono",
- "enum-map",
- "fern",
- "flowsurface-data",
- "flowsurface-exchange",
- "flowsurface-indicator-engine",
- "iced",
- "iced_core",
- "iced_wgpu",
- "log",
- "notify-rust",
- "num-traits",
- "palette",
- "raw-window-handle",
- "reqwest",
- "ring",
- "rodio",
- "rustc-hash 2.1.2",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "url",
- "uuid",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
-]
-
-[[package]]
-name = "flowsurface-data"
-version = "0.9.0"
-dependencies = [
- "chrono",
- "dirs-next",
- "enum-map",
- "flowsurface-exchange",
- "flowsurface-indicator-engine",
- "iced_core",
- "keyring",
- "log",
- "open",
- "palette",
- "regex",
- "ron",
- "rustc-hash 2.1.2",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "flowsurface-exchange"
-version = "0.9.0"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "chrono",
- "csv",
- "enum-map",
- "fastwebsockets",
- "futures",
- "http-body-util",
- "hyper",
- "hyper-util",
- "log",
- "rand 0.10.1",
- "reqwest",
- "rustc-hash 2.1.2",
- "serde",
- "serde_json",
- "sonic-rs",
- "thiserror 2.0.18",
- "tokio",
- "tokio-rustls",
- "tokio-socks",
- "url",
- "webpki-roots",
- "zip",
-]
-
-[[package]]
-name = "flowsurface-indicator-engine"
-version = "0.9.0"
-dependencies = [
- "chrono",
- "ring",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "url",
-]
-
-[[package]]
 name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3315,6 +3211,110 @@ checksum = "a570f6bca41d29acb2139229a7c873ec99bc9a313bd10804081d89bfac8ff329"
 dependencies = [
  "libc",
  "libredox",
+]
+
+[[package]]
+name = "orbit-tape"
+version = "0.9.0"
+dependencies = [
+ "arrow-array",
+ "arrow-ipc",
+ "arrow-schema",
+ "bytemuck",
+ "bytes",
+ "chrono",
+ "enum-map",
+ "fern",
+ "iced",
+ "iced_core",
+ "iced_wgpu",
+ "log",
+ "notify-rust",
+ "num-traits",
+ "orbit-tape-data",
+ "orbit-tape-exchange",
+ "orbit-tape-indicator-engine",
+ "palette",
+ "raw-window-handle",
+ "reqwest",
+ "ring",
+ "rodio",
+ "rustc-hash 2.1.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
+ "uuid",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+]
+
+[[package]]
+name = "orbit-tape-data"
+version = "0.9.0"
+dependencies = [
+ "chrono",
+ "dirs-next",
+ "enum-map",
+ "iced_core",
+ "keyring",
+ "log",
+ "open",
+ "orbit-tape-exchange",
+ "orbit-tape-indicator-engine",
+ "palette",
+ "regex",
+ "ron",
+ "rustc-hash 2.1.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "orbit-tape-exchange"
+version = "0.9.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "csv",
+ "enum-map",
+ "fastwebsockets",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "log",
+ "rand 0.10.1",
+ "reqwest",
+ "rustc-hash 2.1.2",
+ "serde",
+ "serde_json",
+ "sonic-rs",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
+ "tokio-socks",
+ "url",
+ "webpki-roots",
+ "zip",
+]
+
+[[package]]
+name = "orbit-tape-indicator-engine"
+version = "0.9.0"
+dependencies = [
+ "chrono",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "url",
 ]
 
 [[package]]

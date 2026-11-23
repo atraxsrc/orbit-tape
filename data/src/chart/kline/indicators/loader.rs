@@ -30,7 +30,8 @@ impl IndicatorCatalogPaths {
 }
 
 fn default_installed_directory() -> PathBuf {
-    std::env::var_os("FLOWSURFACE_INDICATORS_PATH")
+    std::env::var_os("ORBIT_TAPE_INDICATORS_PATH")
+        .or_else(|| std::env::var_os("FLOWSURFACE_INDICATORS_PATH"))
         .map(PathBuf::from)
         .unwrap_or_else(|| data_path(Some("indicators")))
 }
@@ -288,7 +289,7 @@ mod tests {
     #[test]
     fn origins_and_full_ids_control_collection_loading() {
         let root =
-            std::env::temp_dir().join(format!("flowsurface-host-loading-{}", std::process::id()));
+            std::env::temp_dir().join(format!("orbit-tape-host-loading-{}", std::process::id()));
         let bundled = root.join("bundled");
         let installed = root.join("installed");
         std::fs::create_dir_all(&bundled).unwrap();
@@ -326,7 +327,7 @@ mod tests {
     #[test]
     fn embedded_bundle_initializes_without_a_source_directory() {
         let root =
-            std::env::temp_dir().join(format!("flowsurface-host-embedded-{}", std::process::id()));
+            std::env::temp_dir().join(format!("orbit-tape-host-embedded-{}", std::process::id()));
         let paths = IndicatorCatalogPaths {
             bundled_directory: None,
             installed_directory: root.clone(),

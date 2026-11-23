@@ -931,7 +931,7 @@ plot(mssCtUp, id = "ltf_ct_mss_up", title = "LTF counter-trend MSS up", alert = 
 plot(mssCtDn, id = "ltf_ct_mss_down", title = "LTF counter-trend MSS down", alert = true)
 
 // ============================= DEBUG EXPORT ==================================
-// Hidden values for comparing with TradingView via flowsurface-indicator run.
+// Hidden values for comparing with TradingView via orbit-tape-indicator run.
 plot(bias, id = "dbg_bias", display = "none")
 plot(fib50, id = "dbg_fib50", display = "none")
 plot(brkLvl, id = "dbg_broken_level", display = "none")
