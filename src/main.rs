@@ -16,6 +16,7 @@ mod window;
 
 use connector::client::DataSources;
 use data::chart::kline::indicators::manifest;
+use data::config::cosmic::ThemeSource;
 use data::{layout::WindowSpec, sidebar};
 use deferred::Deferred;
 use layout::{LayoutId, configuration};
@@ -85,6 +86,8 @@ fn main() {
     }
 }
 
+const COSMIC_THEME_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
 struct Flowsurface {
     main_window: window::Window,
     sidebar: screen::sidebar::Sidebar,
@@ -125,6 +128,8 @@ enum Message {
     Layouts(modal::layout_manager::Message),
     SharedChartResources(manifest::Message),
     AudioStream(modal::audio::Message),
+    /// Periodic check for COSMIC theme changes.
+    PollCosmicTheme,
 }
 
 impl Flowsurface {
@@ -169,7 +174,7 @@ impl Flowsurface {
             sidebar,
             data_sources,
             settings,
-            theme: ThemeState::new(saved_state.theme),
+            theme: ThemeState::new(saved_state.theme, saved_state.theme_source),
             notifications: Notifications::new(),
             network_editor: NetworkEditor::new(&network),
             network,
@@ -529,6 +534,10 @@ impl Flowsurface {
                     }
                 }
             }
+            Message::PollCosmicTheme => {
+                let changed = self.theme.poll_cosmic();
+                self.theme_changed(changed);
+            }
             Message::ThemeEditor(msg) => {
                 let action = self.theme_editor.update(msg, self.theme.current());
 
@@ -537,7 +546,7 @@ impl Flowsurface {
                         self.sidebar.set_menu(Some(sidebar::Menu::Settings));
                     }
                     Some(modal::theme_editor::Action::UpdateTheme(theme)) => {
-                        self.replace_theme(theme);
+                        self.select_theme(theme);
                     }
                     None => {}
                 }
@@ -549,7 +558,11 @@ impl Flowsurface {
                     Some(Action::Persist) => return self.save_now(),
                     Some(Action::ThemeSelected(theme)) => {
                         self.theme_editor.reset_input();
-                        self.replace_theme(theme);
+                        self.select_theme(theme);
+                    }
+                    Some(Action::SetThemeSource(source)) => {
+                        let changed = self.theme.set_source(source);
+                        self.theme_changed(changed);
                     }
                     Some(Action::SetMetadataCaching(enabled)) => {
                         self.sidebar.set_cache_enabled(enabled);
@@ -805,12 +818,21 @@ impl Flowsurface {
             }
         });
 
+        // COSMIC rewrites its theme files on a change; polling their mtimes is
+        // cheap and needs no file watcher.
+        let cosmic_theme = if self.theme.source().follows_cosmic() {
+            iced::time::every(COSMIC_THEME_POLL_INTERVAL).map(|_| Message::PollCosmicTheme)
+        } else {
+            Subscription::none()
+        };
+
         Subscription::batch(vec![
             exchange_streams,
             sidebar,
             window_events,
             tick,
             hotkeys,
+            cosmic_theme,
         ])
     }
 
@@ -868,11 +890,22 @@ impl Flowsurface {
         }
     }
 
-    fn replace_theme(&mut self, theme: iced_core::Theme) {
-        if !self.theme.replace(theme.clone()) {
+    /// Picks a built-in or custom theme, which stops following COSMIC.
+    fn select_theme(&mut self, theme: iced_core::Theme) {
+        let mut changed = self.theme.select(theme);
+        if self.theme.source().follows_cosmic() {
+            changed |= self.theme.set_source(ThemeSource::Selected);
+        }
+        self.theme_changed(changed);
+    }
+
+    /// Pushes the effective theme to the panes after it changed.
+    fn theme_changed(&mut self, changed: bool) {
+        if !changed {
             return;
         }
 
+        let theme = self.theme.current().clone();
         let main_window = self.main_window.id;
         self.active_dashboard_mut()
             .theme_updated(main_window, &theme);
@@ -1195,6 +1228,7 @@ impl Flowsurface {
             layouts,
             self.theme.data_theme(),
             self.theme_editor.custom_theme.clone().map(data::Theme),
+            self.theme.source(),
             main_window_spec,
             self.settings.timezone,
             self.sidebar.state.clone(),

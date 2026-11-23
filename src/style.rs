@@ -20,6 +20,81 @@ pub const AZERET_MONO: Font = Font {
 
 pub const TITLE_PADDING_TOP: f32 = if cfg!(target_os = "macos") { 20.0 } else { 0.0 };
 
+/// Corner radii for widget borders.
+///
+/// Styles are plain functions of the iced theme, which has no radius, so the
+/// active scale lives here. It holds the old fixed radii unless the COSMIC theme
+/// is followed, in which case [`set_cosmic`](radius::set_cosmic) maps them onto
+/// COSMIC's `radius_xs` (small controls) and `radius_s` (containers).
+pub mod radius {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Marks that no COSMIC radii are set.
+    const UNSET: u64 = u64::MAX;
+    /// Fixed radius at and above which a border counts as a container.
+    const CONTAINER: f32 = 4.0;
+    /// Largest fixed radius of a small control.
+    const CONTROL: f32 = 3.0;
+
+    static COSMIC: AtomicU64 = AtomicU64::new(UNSET);
+
+    /// Sets COSMIC's `radius_xs` and `radius_s`, or `None` for the fixed radii.
+    pub fn set_cosmic(radii: Option<(f32, f32)>) {
+        let packed = radii.map_or(UNSET, |(xs, s)| {
+            (u64::from(xs.to_bits()) << 32) | u64::from(s.to_bits())
+        });
+        COSMIC.store(packed, Ordering::Relaxed);
+    }
+
+    fn cosmic() -> Option<(f32, f32)> {
+        let packed = COSMIC.load(Ordering::Relaxed);
+        (packed != UNSET).then(|| {
+            (
+                f32::from_bits((packed >> 32) as u32),
+                f32::from_bits(packed as u32),
+            )
+        })
+    }
+
+    /// Maps a fixed radius onto the active scale.
+    pub fn scaled(fixed: f32) -> f32 {
+        map(cosmic(), fixed)
+    }
+
+    pub fn of(fixed: f32) -> iced::border::Radius {
+        scaled(fixed).into()
+    }
+
+    fn map(cosmic: Option<(f32, f32)>, fixed: f32) -> f32 {
+        match cosmic {
+            None => fixed,
+            Some((_, s)) if fixed >= CONTAINER => s * fixed / CONTAINER,
+            Some((xs, _)) => xs * fixed / CONTROL,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn maps_fixed_radii() {
+            assert_eq!(map(None, 3.0), 3.0);
+            assert_eq!(map(None, 4.0), 4.0);
+
+            let round = Some((4.0, 8.0));
+            assert_eq!(map(round, 4.0), 8.0);
+            assert_eq!(map(round, 3.0), 4.0);
+            assert_eq!(map(round, 2.0), 4.0 * 2.0 / 3.0);
+            assert_eq!(map(round, 0.0), 0.0);
+
+            let square = Some((0.0, 0.0));
+            assert_eq!(map(square, 4.0), 0.0);
+            assert_eq!(map(square, 2.0), 0.0);
+        }
+    }
+}
+
 pub mod text_size {
     pub const SMALL: f32 = 11.0;
     pub const BODY: f32 = 12.0;
@@ -166,7 +241,7 @@ pub fn tooltip(theme: &Theme) -> Style {
         border: Border {
             width: 1.0,
             color: palette.background.strong.color,
-            radius: 4.0.into(),
+            radius: crate::style::radius::of(4.0),
         },
         shadow: Shadow {
             offset: iced::Vector { x: 0.0, y: 0.0 },
@@ -202,7 +277,7 @@ pub mod button {
                 _ => None,
             },
             border: Border {
-                radius: 3.0.into(),
+                radius: crate::style::radius::of(3.0),
                 ..Default::default()
             },
             ..Default::default()
@@ -228,7 +303,7 @@ pub mod button {
                 _ => None,
             },
             border: Border {
-                radius: 3.0.into(),
+                radius: crate::style::radius::of(3.0),
                 ..Default::default()
             },
             ..Default::default()
@@ -248,7 +323,7 @@ pub mod button {
             background: bg_color,
             text_color: palette.background.base.text,
             border: Border {
-                radius: 4.0.into(),
+                radius: crate::style::radius::of(4.0),
                 width: 1.0,
                 color: iced::Color::TRANSPARENT,
             },
@@ -262,7 +337,7 @@ pub mod button {
         Style {
             text_color: palette.background.base.text,
             border: Border {
-                radius: 3.0.into(),
+                radius: crate::style::radius::of(3.0),
                 ..Default::default()
             },
             background: match status {
@@ -298,7 +373,7 @@ pub mod button {
                 palette.background.base.text
             },
             border: Border {
-                radius: 3.0.into(),
+                radius: crate::style::radius::of(3.0),
                 width: if enabled && !active { 1.0 } else { 0.0 },
                 color: enabled_color.scale_alpha(0.75),
             },
@@ -330,7 +405,7 @@ pub mod button {
                 palette.background.base.text
             },
             border: Border {
-                radius: 3.0.into(),
+                radius: crate::style::radius::of(3.0),
                 ..Default::default()
             },
             background: match status {
@@ -369,7 +444,7 @@ pub mod button {
                 }
             },
             border: iced::Border {
-                radius: 3.0.into(),
+                radius: crate::style::radius::of(3.0),
                 width: if is_active { 2.0 } else { 1.0 },
                 color: palette.background.weak.color,
             },
@@ -407,7 +482,7 @@ pub mod button {
                 }
             },
             border: iced::Border {
-                radius: if is_active { 4.0.into() } else { 2.0.into() },
+                radius: crate::style::radius::of(if is_active { 4.0 } else { 2.0 }),
                 width: if is_active { 2.0 } else { 1.0 },
                 color: if is_active {
                     palette.background.strong.color
@@ -441,7 +516,7 @@ pub mod button {
         Style {
             text_color: palette.background.base.text,
             border: Border {
-                radius: 3.0.into(),
+                radius: crate::style::radius::of(3.0),
                 ..Default::default()
             },
             background: Some(palette.background.weakest.color.into()),
@@ -458,7 +533,7 @@ pub mod button {
             border: Border {
                 width: 1.0,
                 color: accent.scale_alpha(0.75),
-                radius: 3.0.into(),
+                radius: crate::style::radius::of(3.0),
             },
             background: match status {
                 Status::Active => Some(accent.scale_alpha(0.1).into()),
@@ -484,7 +559,7 @@ pub mod button {
             text_color,
             background: None,
             border: Border {
-                radius: 0.0.into(),
+                radius: crate::style::radius::of(0.0),
                 width: 0.0,
                 color: iced::Color::TRANSPARENT,
             },
@@ -506,7 +581,7 @@ pub mod button {
             text_color,
             background: None,
             border: Border {
-                radius: 0.0.into(),
+                radius: crate::style::radius::of(0.0),
                 width: 0.0,
                 color: iced::Color::TRANSPARENT,
             },
@@ -520,7 +595,7 @@ pub mod button {
         Style {
             text_color: palette.background.base.text,
             border: Border {
-                radius: 3.0.into(),
+                radius: crate::style::radius::of(3.0),
                 width: if is_selected { 2.0 } else { 0.0 },
                 color: palette.background.strong.color,
             },
@@ -561,7 +636,7 @@ pub mod button {
                 background: Some(palette.background.weak.color.into()),
                 border: Border {
                     width: 1.0,
-                    radius: 2.0.into(),
+                    radius: crate::style::radius::of(2.0),
                     color,
                 },
                 ..Default::default()
@@ -571,7 +646,7 @@ pub mod button {
                 text_color: palette.background.base.text,
                 border: Border {
                     width: 1.0,
-                    radius: 2.0.into(),
+                    radius: crate::style::radius::of(2.0),
                     color: color.scale_alpha(0.8),
                 },
                 ..Default::default()
@@ -590,7 +665,7 @@ pub fn pane_grid(theme: &Theme) -> widget::pane_grid::Style {
             border: Border {
                 width: 1.0,
                 color: palette.background.strongest.color,
-                radius: 4.0.into(),
+                radius: crate::style::radius::of(4.0),
             },
         },
         picked_split: Line {
@@ -636,13 +711,13 @@ pub fn pane_background(theme: &Theme, is_focused: bool) -> Style {
                 Border {
                     width: 1.0,
                     color: palette.background.strong.color,
-                    radius: 4.0.into(),
+                    radius: crate::style::radius::of(4.0),
                 }
             } else {
                 Border {
                     width: 1.0,
                     color: color.scale_alpha(0.5),
-                    radius: 2.0.into(),
+                    radius: crate::style::radius::of(2.0),
                 }
             }
         },
@@ -666,7 +741,7 @@ pub fn chart_modal(theme: &Theme) -> Style {
         border: Border {
             width: 1.0,
             color: palette.background.weak.color,
-            radius: 4.0.into(),
+            radius: crate::style::radius::of(4.0),
         },
         shadow: Shadow {
             offset: iced::Vector { x: 0.0, y: 0.0 },
@@ -691,7 +766,7 @@ pub fn dashboard_modal(theme: &Theme) -> Style {
         border: Border {
             width: 1.0,
             color: palette.background.weak.color,
-            radius: 4.0.into(),
+            radius: crate::style::radius::of(4.0),
         },
         shadow: Shadow {
             offset: iced::Vector { x: 0.0, y: 0.0 },
@@ -711,7 +786,7 @@ pub fn modal_container(theme: &Theme) -> Style {
         border: Border {
             width: 1.0,
             color: palette.background.weak.color,
-            radius: 4.0.into(),
+            radius: crate::style::radius::of(4.0),
         },
         shadow: Shadow {
             offset: iced::Vector { x: 0.0, y: 0.0 },
@@ -780,7 +855,7 @@ pub fn chart_toolbar(theme: &Theme) -> Style {
         border: Border {
             width: 1.0,
             color: palette.background.strong.color,
-            radius: 4.0.into(),
+            radius: crate::style::radius::of(4.0),
         },
         shadow: Shadow {
             offset: iced::Vector { x: 0.0, y: 0.0 },
@@ -800,7 +875,7 @@ pub fn chart_info_tooltip(theme: &Theme) -> Style {
         border: Border {
             width: 1.0,
             color: palette.primary.strong.color,
-            radius: 4.0.into(),
+            radius: crate::style::radius::of(4.0),
         },
         shadow: Shadow {
             offset: iced::Vector { x: 0.0, y: 0.0 },
@@ -836,7 +911,7 @@ pub fn dragger_row_container(theme: &Theme) -> Style {
         border: Border {
             width: 1.0,
             color: bg_color,
-            radius: 4.0.into(),
+            radius: crate::style::radius::of(4.0),
         },
         shadow: Shadow {
             offset: iced::Vector { x: 0.0, y: 0.0 },
@@ -876,7 +951,7 @@ pub fn validated_text_input(
     widget::text_input::Style {
         background: background.into(),
         border: Border {
-            radius: 3.0.into(),
+            radius: crate::style::radius::of(3.0),
             width: 1.0,
             color: if is_valid {
                 border_color
@@ -903,7 +978,7 @@ pub fn ticker_card(theme: &Theme) -> Style {
             }
         },
         border: Border {
-            radius: 4.0.into(),
+            radius: crate::style::radius::of(4.0),
             width: 1.0,
             color: palette.background.strong.color,
         },
@@ -924,7 +999,7 @@ pub fn ticker_card_bar(theme: &Theme, color_alpha: f32) -> Style {
             }
         },
         border: Border {
-            radius: 4.0.into(),
+            radius: crate::style::radius::of(4.0),
             width: 1.0,
             color: if color_alpha > 0.0 {
                 palette.success.strong.color.scale_alpha(color_alpha)
@@ -956,14 +1031,14 @@ pub fn scroll_bar(theme: &Theme, status: widget::scrollable::Status) -> widget::
     let rail = Rail {
         background: Some(iced::Background::Color(rail_bg)),
         border: Border {
-            radius: 2.0.into(),
+            radius: crate::style::radius::of(2.0),
             width: 1.0,
             color: Color::TRANSPARENT,
         },
         scroller: Scroller {
             background: iced::Background::Color(scroller_bg),
             border: Border {
-                radius: 2.0.into(),
+                radius: crate::style::radius::of(2.0),
                 width: 0.0,
                 color: Color::TRANSPARENT,
             },
@@ -973,7 +1048,7 @@ pub fn scroll_bar(theme: &Theme, status: widget::scrollable::Status) -> widget::
     let auto_scroll = AutoScroll {
         background: iced::Background::Color(palette.background.weakest.color),
         border: Border {
-            radius: 2.0.into(),
+            radius: crate::style::radius::of(2.0),
             width: 1.0,
             color: Color::TRANSPARENT,
         },
