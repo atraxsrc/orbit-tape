@@ -1171,6 +1171,33 @@ impl LoweringContext {
                     returns = true;
                     restricted = true;
                 }
+                StatementKind::InfoRow {
+                    left,
+                    right,
+                    left_color,
+                    right_color,
+                    background,
+                    position,
+                    size,
+                    panel_color,
+                    ..
+                } => {
+                    for value in [
+                        Some(left),
+                        Some(right),
+                        left_color,
+                        right_color,
+                        background,
+                        position,
+                        size,
+                        panel_color,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        self.validate_ta_expression(value, restricted);
+                    }
+                }
                 StatementKind::Plot {
                     expression, color, ..
                 }

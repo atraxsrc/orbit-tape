@@ -1,7 +1,7 @@
 use crate::CompiledIndicator;
 use crate::frame::{
-    FrameOutput, HorizontalLevelOutput, IndicatorFrame, MarkerOutput, OhlcOutput, PlotOutput,
-    RangeOutput, RegionOutput, RegionUpdate, SegmentOutput, SeriesInputValue,
+    FrameOutput, HorizontalLevelOutput, IndicatorFrame, InfoRowOutput, MarkerOutput, OhlcOutput,
+    PlotOutput, RangeOutput, RegionOutput, RegionUpdate, SegmentOutput, SeriesInputValue,
 };
 use crate::hir::{
     BarStateField, BinaryOperator, ExprId, ExpressionKind, SourceInputSlot, StateSlot,
@@ -326,6 +326,7 @@ struct OutputBuffer {
     markers: Vec<MarkerOutput>,
     segments: Vec<SegmentOutput>,
     levels: Vec<HorizontalLevelOutput>,
+    info_rows: Vec<InfoRowOutput>,
     ohlc: Vec<OhlcOutput>,
     ranges: Vec<RangeOutput>,
     regions: Vec<RegionOutput>,
@@ -341,6 +342,7 @@ impl OutputBuffer {
             markers: Vec::new(),
             segments: Vec::new(),
             levels: Vec::new(),
+            info_rows: Vec::new(),
             ohlc: Vec::new(),
             ranges: Vec::new(),
             regions: Vec::new(),
@@ -377,6 +379,12 @@ impl OutputBuffer {
     fn push_level(&mut self, value: HorizontalLevelOutput) -> Result<(), RuntimeError> {
         self.reserve()?;
         self.levels.push(value);
+        Ok(())
+    }
+
+    fn push_info_row(&mut self, value: InfoRowOutput) -> Result<(), RuntimeError> {
+        self.reserve()?;
+        self.info_rows.push(value);
         Ok(())
     }
 
@@ -448,6 +456,11 @@ impl OutputBuffer {
                     .capacity()
                     .saturating_mul(size_of::<HorizontalLevelOutput>()),
             )
+            .saturating_add(
+                self.info_rows
+                    .capacity()
+                    .saturating_mul(size_of::<InfoRowOutput>()),
+            )
             .saturating_add(self.ohlc.capacity().saturating_mul(size_of::<OhlcOutput>()))
             .saturating_add(
                 self.ranges
@@ -482,6 +495,12 @@ impl OutputBuffer {
         for level in &self.levels {
             bytes = bytes.saturating_add(level.id.capacity());
         }
+        for row in &self.info_rows {
+            bytes = bytes
+                .saturating_add(row.id.capacity())
+                .saturating_add(row.left.capacity())
+                .saturating_add(row.right.capacity());
+        }
         for ohlc in &self.ohlc {
             bytes = bytes.saturating_add(ohlc.id.capacity());
         }
@@ -497,7 +516,8 @@ impl OutputBuffer {
                         .as_ref()
                         .map_or(0, String::capacity),
                 )
-                .saturating_add(region.fill_color_slot.as_ref().map_or(0, String::capacity));
+                .saturating_add(region.fill_color_slot.as_ref().map_or(0, String::capacity))
+                .saturating_add(region_text_capacity(region));
         }
         for update in &self.region_updates {
             match update {
@@ -510,9 +530,8 @@ impl OutputBuffer {
                                 .as_ref()
                                 .map_or(0, String::capacity),
                         )
-                        .saturating_add(
-                            region.fill_color_slot.as_ref().map_or(0, String::capacity),
-                        );
+                        .saturating_add(region.fill_color_slot.as_ref().map_or(0, String::capacity))
+                        .saturating_add(region_text_capacity(region));
                 }
                 RegionUpdate::Remove { id, .. } => {
                     bytes = bytes.saturating_add(id.capacity());
@@ -541,6 +560,11 @@ impl OutputBuffer {
                         .is_some_and(|text| text.capacity() > limit)
             })
             || self.levels.iter().any(|level| level.id.capacity() > limit)
+            || self.info_rows.iter().any(|row| {
+                row.id.capacity() > limit
+                    || row.left.capacity() > limit
+                    || row.right.capacity() > limit
+            })
             || self.ohlc.iter().any(|ohlc| ohlc.id.capacity() > limit)
             || self.ranges.iter().any(|range| range.id.capacity() > limit)
             || self.regions.iter().any(|region| {
@@ -553,6 +577,7 @@ impl OutputBuffer {
                         .fill_color_slot
                         .as_ref()
                         .is_some_and(|slot| slot.capacity() > limit)
+                    || region_text_capacity(region) > limit
             })
             || self.region_updates.iter().any(|update| match update {
                 RegionUpdate::Upsert(region) => {
@@ -565,6 +590,7 @@ impl OutputBuffer {
                             .fill_color_slot
                             .as_ref()
                             .is_some_and(|slot| slot.capacity() > limit)
+                        || region_text_capacity(region) > limit
                 }
                 RegionUpdate::Remove { id, .. } => id.capacity() > limit,
             })
@@ -578,6 +604,7 @@ impl OutputBuffer {
             markers: self.markers.into(),
             segments: self.segments.into(),
             levels: self.levels.into(),
+            info_rows: self.info_rows.into(),
             ohlc: self.ohlc.into(),
             ranges: self.ranges.into(),
             regions: self.regions.into(),
@@ -917,6 +944,25 @@ impl IndicatorInstance {
         })
     }
 
+    /// Evaluates an info panel string; `na` becomes empty text.
+    fn info_text(
+        &mut self,
+        expression: ExprId,
+        output: &str,
+        field: &'static str,
+    ) -> Result<String, RuntimeError> {
+        match self.evaluate_expression(expression)? {
+            Value::String(text) => Ok(text),
+            Value::Na => Ok(String::new()),
+            other => Err(RuntimeError::InvalidOutput {
+                output: output.to_owned(),
+                field,
+                expected: "string",
+                actual: other.kind(),
+            }),
+        }
+    }
+
     fn output_visibility(
         &mut self,
         expression: Option<ExprId>,
@@ -1212,6 +1258,48 @@ impl IndicatorInstance {
                 };
                 self.charge_by(output.region_updates.len())?;
                 output.push_region_update(RegionUpdate::Remove { id, key })?;
+            }
+            StatementKind::InfoRow {
+                id,
+                row,
+                left,
+                right,
+                left_color,
+                right_color,
+                background,
+                position,
+                size,
+                panel_color,
+            } => {
+                let left = self.info_text(left, &id, "left")?;
+                let right = self.info_text(right, &id, "right")?;
+                let position = match position {
+                    Some(position) => {
+                        let text = self.info_text(position, &id, "position")?;
+                        crate::frame::InfoPosition::parse(&text)
+                    }
+                    None => None,
+                };
+                let size = match size {
+                    Some(size) => {
+                        let text = self.info_text(size, &id, "size")?;
+                        crate::frame::InfoTextSize::parse(&text)
+                    }
+                    None => None,
+                };
+                self.charge_by(left.len().saturating_add(right.len()))?;
+                output.push_info_row(InfoRowOutput {
+                    row,
+                    left,
+                    right,
+                    left_color: self.evaluate_color(left_color, &id, "left_color")?,
+                    right_color: self.evaluate_color(right_color, &id, "right_color")?,
+                    background: self.evaluate_color(background, &id, "background")?,
+                    position,
+                    size,
+                    panel_color: self.evaluate_color(panel_color, &id, "panel_color")?,
+                    id,
+                })?;
             }
             StatementKind::HorizontalLevel {
                 id,
@@ -1668,6 +1756,11 @@ impl IndicatorInstance {
                     left
                 } else {
                     let right = self.evaluate_expression(right)?;
+                    if let (BinaryOperator::Add, Value::String(left), Value::String(right)) =
+                        (operator, &left, &right)
+                    {
+                        self.charge_by(left.len().saturating_add(right.len()))?;
+                    }
                     if matches!(operator, BinaryOperator::Equal | BinaryOperator::NotEqual) {
                         self.charge_by(
                             left.comparison_work()
@@ -2332,4 +2425,11 @@ pub(crate) fn charge_work(used: &mut usize, limit: usize, work: usize) -> bool {
         }
         _ => false,
     }
+}
+
+fn region_text_capacity(region: &RegionOutput) -> usize {
+    region
+        .text
+        .as_ref()
+        .map_or(0, |text| text.content.capacity())
 }

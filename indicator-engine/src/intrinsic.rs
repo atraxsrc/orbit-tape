@@ -414,13 +414,20 @@ impl IntrinsicRegistry {
         registry.register(
             "str.tostring",
             signature(
-                vec![ArgumentSignature {
-                    name: "value",
-                    ty: Type::series(ValueType::Any),
-                }],
+                vec![
+                    ArgumentSignature {
+                        name: "value",
+                        ty: Type::series(ValueType::Any),
+                    },
+                    ArgumentSignature {
+                        name: "format",
+                        ty: Type::series(ValueType::Any),
+                    },
+                ],
                 Type::series(ValueType::String),
                 false,
-            ),
+            )
+            .at_least(1),
             IntrinsicEffects::PURE,
             eval_tostring,
         );
@@ -429,6 +436,25 @@ impl IntrinsicRegistry {
             color_rgb_signature(),
             IntrinsicEffects::PURE,
             eval_color_rgb,
+        );
+        registry.register(
+            "color.new",
+            signature(
+                vec![
+                    ArgumentSignature {
+                        name: "color",
+                        ty: Type::series(ValueType::Color),
+                    },
+                    ArgumentSignature {
+                        name: "transp",
+                        ty: Type::series(ValueType::Float),
+                    },
+                ],
+                Type::series(ValueType::Color),
+                false,
+            ),
+            IntrinsicEffects::PURE,
+            eval_color_new,
         );
         registry.register(
             "array.new",
@@ -933,6 +959,9 @@ fn eval_tostring(
             .fold(0usize, |work, value| work.saturating_add(value.copy_work())),
     )?;
     let value = args.first().cloned().unwrap_or(Value::Na);
+    if let Some(text) = args.get(1).and_then(|format| format_number(&value, format)) {
+        return Ok(Value::String(text));
+    }
     let text = match value {
         Value::Int(value) => value.to_string(),
         Value::Float(value) => value.to_string(),
@@ -945,6 +974,67 @@ fn eval_tostring(
         Value::Na => "na".to_owned(),
     };
     Ok(Value::String(text))
+}
+
+/// Formats a number with a Pine-style pattern (`"#.##"` drops trailing zeros,
+/// `"0.00"` keeps them) or a numeric step such as `instrument.min_tick`, which
+/// rounds to the step and shows its decimals. `None` falls back to the default
+/// conversion: non-numeric values, `na` formats and unknown patterns.
+pub(crate) fn format_number(value: &Value, format: &Value) -> Option<String> {
+    let number = value.as_float()?;
+    let (number, required, optional) = match format {
+        Value::String(pattern) => {
+            let fraction = match pattern.split_once('.') {
+                Some((whole, fraction)) => {
+                    if !whole.chars().all(|c| matches!(c, '#' | '0' | ',')) {
+                        return None;
+                    }
+                    fraction
+                }
+                None if pattern.chars().all(|c| matches!(c, '#' | '0' | ',')) => "",
+                None => return None,
+            };
+            let required = fraction.chars().take_while(|c| *c == '0').count();
+            if fraction[required..].chars().any(|c| c != '#') {
+                return None;
+            }
+            (number, required, fraction.len() - required)
+        }
+        Value::Int(_) | Value::Float(_) => {
+            let step = format.as_float()?;
+            if !step.is_finite() || step <= 0.0 {
+                return None;
+            }
+            let decimals = step_decimals(step);
+            ((number / step).round() * step, decimals, 0)
+        }
+        _ => return None,
+    };
+    let decimals = required + optional;
+    let mut text = format!("{number:.decimals$}");
+    if optional > 0 {
+        let keep = text.len() - optional;
+        while text.len() > keep && text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+    }
+    if text.starts_with('-') && text[1..].chars().all(|c| matches!(c, '0' | '.')) {
+        text.remove(0);
+    }
+    Some(text)
+}
+
+/// Decimals needed to show multiples of `step`, e.g. 2 for 0.01, 1 for 0.5.
+fn step_decimals(step: f64) -> usize {
+    (0..=12)
+        .find(|&decimals| {
+            let scaled = step * 10f64.powi(decimals);
+            (scaled - scaled.round()).abs() < 1e-9 * scaled.max(1.0)
+        })
+        .unwrap_or(12) as usize
 }
 
 fn eval_color_rgb(
@@ -970,6 +1060,27 @@ fn eval_color_rgb(
     Ok(Value::Color(
         (alpha << 24) | (red << 16) | (green << 8) | blue,
     ))
+}
+
+/// Pine's `color.new`: replaces the alpha with `transp` on a 0 (opaque) to 100
+/// (invisible) scale. A missing color or transparency gives `na`.
+fn eval_color_new(
+    _context: &mut IntrinsicEvalContext<'_>,
+    _site: CallSiteId,
+    args: &[Value],
+) -> Result<Value, IntrinsicError> {
+    let (Some(Value::Color(color)), Some(transp)) =
+        (args.first(), args.get(1).and_then(Value::as_float))
+    else {
+        return Ok(Value::Na);
+    };
+    if !(0.0..=100.0).contains(&transp) {
+        return Err(IntrinsicError::InvalidArguments(
+            "color.new transp must be between 0 and 100",
+        ));
+    }
+    let alpha = (255.0 * (1.0 - transp / 100.0)).round() as u32;
+    Ok(Value::Color((alpha << 24) | (color & 0x00ff_ffff)))
 }
 
 fn eval_array_new(

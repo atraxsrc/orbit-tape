@@ -109,6 +109,17 @@ impl LoweringContext {
                         }
                         ValueType::Bool
                     }
+                    BinaryOperator::Add
+                        if left_type.value == ValueType::String
+                            || right_type.value == ValueType::String =>
+                    {
+                        if !matches!(left_type.value, ValueType::String | ValueType::Any)
+                            || !matches!(right_type.value, ValueType::String | ValueType::Any)
+                        {
+                            self.error(*span, "strings can only be added to strings");
+                        }
+                        ValueType::String
+                    }
                     _ if is_numeric_type(left_type.value) && is_numeric_type(right_type.value) => {
                         if *operator == BinaryOperator::Divide
                             || left_type.value == ValueType::Float

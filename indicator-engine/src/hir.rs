@@ -213,6 +213,18 @@ pub enum StatementKind {
         id: String,
         key: ExprId,
     },
+    InfoRow {
+        id: String,
+        row: usize,
+        left: ExprId,
+        right: ExprId,
+        left_color: Option<ExprId>,
+        right_color: Option<ExprId>,
+        background: Option<ExprId>,
+        position: Option<ExprId>,
+        size: Option<ExprId>,
+        panel_color: Option<ExprId>,
+    },
     HorizontalLevel {
         id: String,
         expression: ExprId,

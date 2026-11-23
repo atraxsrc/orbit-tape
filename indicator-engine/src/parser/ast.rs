@@ -348,6 +348,19 @@ pub(super) fn named_color(name: &str) -> Option<u32> {
         "color.blue" => Some(0xff00_00ff),
         "color.white" => Some(0xffff_ffff),
         "color.black" => Some(0xff00_0000),
+        // Pine Script's palette.
+        "color.gray" => Some(0xff78_7b86),
+        "color.silver" => Some(0xffb2_b5be),
+        "color.orange" => Some(0xffff_9800),
+        "color.yellow" => Some(0xffff_eb3b),
+        "color.lime" => Some(0xff00_e676),
+        "color.teal" => Some(0xff08_9981),
+        "color.aqua" => Some(0xff00_bcd4),
+        "color.navy" => Some(0xff31_1b92),
+        "color.purple" => Some(0xff9c_27b0),
+        "color.fuchsia" => Some(0xffe0_40fb),
+        "color.maroon" => Some(0xff88_0e4f),
+        "color.olive" => Some(0xff80_8000),
         _ => None,
     }
 }

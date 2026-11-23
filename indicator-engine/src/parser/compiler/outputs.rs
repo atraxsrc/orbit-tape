@@ -624,6 +624,88 @@ impl LoweringContext {
         }))
     }
 
+    pub(super) fn compile_info_row(&mut self, call: &AstCall) -> Option<crate::hir::StatementId> {
+        if !self.is_top_level_declaration() {
+            self.error(call.span, "info_row declarations must be top-level");
+            return None;
+        }
+        self.validate_positional_arguments(call, 2, "info_row");
+        self.validate_named_arguments(
+            call,
+            &[
+                "left",
+                "right",
+                "id",
+                "left_color",
+                "right_color",
+                "background",
+                "position",
+                "size",
+                "panel_color",
+            ],
+        );
+        let mut texts = [None, None];
+        for (index, name) in ["left", "right"].into_iter().enumerate() {
+            let Some(argument) = argument_at(call, index, name) else {
+                self.error(call.span, format!("info_row expects a {name} expression"));
+                return None;
+            };
+            let expression = self.compile_expression(&argument.expression);
+            if !matches!(
+                self.ir.program.expressions[expression.0].ty.value,
+                ValueType::String | ValueType::Any
+            ) {
+                self.error(
+                    argument.expression.span(),
+                    format!("info_row {name} must be a string"),
+                );
+            }
+            texts[index] = Some(expression);
+        }
+        let [Some(left), Some(right)] = texts else {
+            return None;
+        };
+        let mut strings = [None, None];
+        for (index, name) in ["position", "size"].into_iter().enumerate() {
+            let expression = call
+                .arguments
+                .iter()
+                .find(|argument| argument.name.as_deref() == Some(name))
+                .map(|argument| self.compile_expression(&argument.expression));
+            if let Some(expression) = expression
+                && !matches!(
+                    self.ir.program.expressions[expression.0].ty.value,
+                    ValueType::String | ValueType::Any
+                )
+            {
+                self.error(call.span, format!("info_row {name} must be a string"));
+            }
+            strings[index] = expression;
+        }
+        let id = self
+            .static_named_string(call, "id")
+            .unwrap_or_else(|| "info".to_owned());
+        let row = self.info_row_count(&id);
+        let left_color = self.compile_color_named_argument(call, "left_color");
+        let right_color = self.compile_color_named_argument(call, "right_color");
+        let background = self.compile_color_named_argument(call, "background");
+        let panel_color = self.compile_color_named_argument(call, "panel_color");
+        Some(self.push_statement(TypedStatement {
+            kind: StatementKind::InfoRow {
+                id,
+                row,
+                left,
+                right,
+                left_color,
+                right_color,
+                background,
+                position: strings[0],
+                size: strings[1],
+                panel_color,
+            },
+        }))
+    }
+
     pub(super) fn compile_ohlc(&mut self, call: &AstCall) -> Option<crate::hir::StatementId> {
         if !self.is_top_level_declaration() {
             self.error(call.span, "plot declarations must be top-level");

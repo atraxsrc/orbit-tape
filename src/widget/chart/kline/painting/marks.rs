@@ -36,6 +36,10 @@ const MONO_CHAR_WIDTH_RATIO: f32 = 0.62;
 const REGION_TAG_PADDING_PX: f32 = 3.0;
 /// Gap between a label tag and the price it points at.
 const REGION_TAG_GAP_PX: f32 = 4.0;
+const INFO_PANEL_MARGIN_PX: f32 = 8.0;
+const INFO_PANEL_PADDING_PX: f32 = 5.0;
+const INFO_PANEL_COLUMN_GAP_PX: f32 = 16.0;
+const INFO_PANEL_ROW_GAP_PX: f32 = 3.0;
 
 const DASHED_LINE_SEGMENTS: [f32; 2] = [8.0, 5.0];
 const DOTTED_LINE_SEGMENTS: [f32; 2] = [1.0, 4.0];
@@ -1066,6 +1070,137 @@ impl MarkRenderer<'_> {
                     tag_color,
                     border_color.unwrap_or(palette.background.base.text),
                 );
+            }
+        }
+    }
+
+    /// Draws the info panels of the given indicators in their plot corners.
+    /// Panels sharing a corner stack away from it instead of overlapping.
+    pub fn draw_info_panels(&self, frame: &mut PaintInputs, value_ids: &[PanelValueId]) {
+        use indicator_engine::{InfoPosition, InfoTextSize};
+
+        let plot = *self.scene.primary_plot();
+        let mut offsets: BTreeMap<u8, f32> = BTreeMap::new();
+        for value_id in value_ids {
+            let rows = self.indicators.indicator_info_rows(*value_id);
+            let mut panels: BTreeMap<&str, Vec<&indicator_engine::InfoRowOutput>> = BTreeMap::new();
+            for row in &rows {
+                panels.entry(row.id.as_str()).or_default().push(row);
+            }
+            for rows in panels.values_mut() {
+                rows.sort_by_key(|row| row.row);
+                rows.retain(|row| !row.left.is_empty() || !row.right.is_empty());
+                if rows.is_empty() {
+                    continue;
+                }
+                let position = rows.iter().find_map(|row| row.position).unwrap_or_default();
+                let size = match rows.iter().find_map(|row| row.size).unwrap_or_default() {
+                    InfoTextSize::Tiny => 8.0,
+                    InfoTextSize::Small => 10.0,
+                    InfoTextSize::Normal => 11.0,
+                    InfoTextSize::Large => 13.0,
+                    InfoTextSize::Huge => 16.0,
+                };
+                let panel_color = rows
+                    .iter()
+                    .find_map(|row| row.panel_color)
+                    .map(painting::resolve_indicator_color)
+                    .unwrap_or_else(|| self.palette.background.weak.color.scale_alpha(0.92));
+                let text_color = self.palette.background.base.text;
+
+                let char_width = size * MONO_CHAR_WIDTH_RATIO;
+                let width_of = |text: &str| text.chars().count() as f32 * char_width;
+                let left_width = rows
+                    .iter()
+                    .map(|row| width_of(&row.left))
+                    .fold(0.0, f32::max);
+                let right_width = rows
+                    .iter()
+                    .map(|row| width_of(&row.right))
+                    .fold(0.0, f32::max);
+                let gap = if left_width > 0.0 && right_width > 0.0 {
+                    INFO_PANEL_COLUMN_GAP_PX
+                } else {
+                    0.0
+                };
+                let row_height = size + 2.0 * INFO_PANEL_ROW_GAP_PX;
+                let width = left_width + gap + right_width + 2.0 * INFO_PANEL_PADDING_PX;
+                let height = rows.len() as f32 * row_height + 2.0 * INFO_PANEL_PADDING_PX;
+
+                let (column, line) = match position {
+                    InfoPosition::TopLeft => (0, 0),
+                    InfoPosition::TopCenter => (1, 0),
+                    InfoPosition::TopRight => (2, 0),
+                    InfoPosition::MiddleLeft => (0, 1),
+                    InfoPosition::MiddleCenter => (1, 1),
+                    InfoPosition::MiddleRight => (2, 1),
+                    InfoPosition::BottomLeft => (0, 2),
+                    InfoPosition::BottomCenter => (1, 2),
+                    InfoPosition::BottomRight => (2, 2),
+                };
+                let x = match column {
+                    0 => plot.x + INFO_PANEL_MARGIN_PX,
+                    1 => plot.x + (plot.width - width) / 2.0,
+                    _ => plot.x + plot.width - width - INFO_PANEL_MARGIN_PX,
+                };
+                let offset = offsets.entry(column * 3 + line).or_insert(0.0);
+                let y = match line {
+                    0 => plot.y + INFO_PANEL_MARGIN_PX + *offset,
+                    1 => plot.y + (plot.height - height) / 2.0 + *offset,
+                    _ => plot.y + plot.height - height - INFO_PANEL_MARGIN_PX - *offset,
+                };
+                *offset += height + INFO_PANEL_MARGIN_PX;
+
+                frame.fill(
+                    &canvas::Path::rounded_rectangle(
+                        Point::new(x, y),
+                        Size::new(width, height),
+                        style::radius::of(4.0),
+                    ),
+                    panel_color,
+                );
+                for (index, row) in rows.iter().enumerate() {
+                    let top = y + INFO_PANEL_PADDING_PX + index as f32 * row_height;
+                    if let Some(background) = row.background {
+                        frame.fill_rectangle(
+                            Point::new(x, top),
+                            Size::new(width, row_height),
+                            painting::resolve_indicator_color(background),
+                        );
+                    }
+                    let center_y = top + row_height / 2.0;
+                    let text = |content: &str, x: f32, align, color| canvas::Text {
+                        content: content.to_owned(),
+                        position: Point::new(x, center_y),
+                        color,
+                        size: size.into(),
+                        align_x: align,
+                        align_y: iced::Alignment::Center.into(),
+                        font: style::AZERET_MONO,
+                        ..Default::default()
+                    };
+                    let color = |color: Option<indicator_engine::Color>| {
+                        color
+                            .map(painting::resolve_indicator_color)
+                            .unwrap_or(text_color)
+                    };
+                    if !row.left.is_empty() {
+                        frame.fill_text(text(
+                            &row.left,
+                            x + INFO_PANEL_PADDING_PX,
+                            iced::Alignment::Start.into(),
+                            color(row.left_color),
+                        ));
+                    }
+                    if !row.right.is_empty() {
+                        frame.fill_text(text(
+                            &row.right,
+                            x + width - INFO_PANEL_PADDING_PX,
+                            iced::Alignment::End.into(),
+                            color(row.right_color),
+                        ));
+                    }
+                }
             }
         }
     }

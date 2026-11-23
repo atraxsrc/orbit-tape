@@ -433,6 +433,17 @@ impl LoweringContext {
             .count()
     }
 
+    pub(super) fn info_row_count(&self, id: &str) -> usize {
+        self.ir
+            .program
+            .statements
+            .iter()
+            .filter(|statement| {
+                matches!(&statement.kind, StatementKind::InfoRow { id: row_id, .. } if row_id == id)
+            })
+            .count()
+    }
+
     pub(super) fn level_count(&self) -> usize {
         self.ir
             .program

@@ -20,9 +20,10 @@ use crate::config::theme::{ThemeColorRole, ThemeColorShade};
 use exchange::UnixMs;
 use indicator_engine::{
     Color, CompiledIndicator, FrameOutput, HorizontalLevelOutput,
-    IndicatorConfig as EngineIndicatorConfig, IndicatorFrame, IndicatorInstance, InputValue,
-    MarkerOutput, OhlcOutput, PlanningError, PlotDescriptor, PlotValueType, RangeOutput,
-    RegionOutput, RegionUpdate, RuntimeError, RuntimeLimits, SegmentOutput, Value, ValueType,
+    IndicatorConfig as EngineIndicatorConfig, IndicatorFrame, IndicatorInstance, InfoRowOutput,
+    InputValue, MarkerOutput, OhlcOutput, PlanningError, PlotDescriptor, PlotValueType,
+    RangeOutput, RegionOutput, RegionUpdate, RuntimeError, RuntimeLimits, SegmentOutput, Value,
+    ValueType,
 };
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
@@ -50,6 +51,7 @@ struct IndicatorOutputStore {
     markers: BTreeMap<String, BTreeMap<usize, MarkerOutput>>,
     segments: BTreeMap<String, BTreeMap<usize, SegmentOutput>>,
     levels: BTreeMap<String, HorizontalLevelOutput>,
+    info_rows: BTreeMap<(String, usize), InfoRowOutput>,
     ohlc: BTreeMap<String, BTreeMap<usize, OhlcOutput>>,
     ranges: BTreeMap<String, BTreeMap<usize, RangeOutput>>,
     regions: BTreeMap<String, BTreeMap<i64, RegionOutput>>,
@@ -107,6 +109,12 @@ fn segment_retained_bytes(segment: &SegmentOutput) -> Result<usize, RuntimeError
     retained_record_bytes::<(usize, SegmentOutput)>(&[
         &segment.id,
         segment.text.as_deref().unwrap_or_default(),
+    ])
+}
+
+fn info_row_retained_bytes(row: &InfoRowOutput) -> Result<usize, RuntimeError> {
+    retained_record_bytes::<((String, usize), InfoRowOutput)>(&[
+        &row.id, &row.id, &row.left, &row.right,
     ])
 }
 
@@ -279,6 +287,10 @@ impl IndicatorOutputStore {
         self.levels.values().cloned().collect()
     }
 
+    fn info_row_values(&self) -> Vec<InfoRowOutput> {
+        self.info_rows.values().cloned().collect()
+    }
+
     fn ohlc_value(&self, plot: &str, index: usize) -> Option<OhlcOutput> {
         self.ohlc.get(plot)?.get(&index).cloned()
     }
@@ -443,6 +455,15 @@ impl IndicatorOutputStore {
                     &[&level.id, &level.id],
                 )?)?;
             self.levels.insert(level.id.clone(), level.clone());
+        }
+
+        for row in output.info_rows.iter() {
+            let key = (row.id.clone(), row.row);
+            if let Some(previous) = self.info_rows.remove(&key) {
+                self.budget.release(info_row_retained_bytes(&previous)?)?;
+            }
+            self.budget.reserve(info_row_retained_bytes(row)?)?;
+            self.info_rows.insert(key, row.clone());
         }
 
         for ohlc in output.ohlc.iter() {
@@ -1529,6 +1550,10 @@ impl ScriptIndicatorRuntime {
 
     pub(super) fn level_outputs(&self) -> Vec<HorizontalLevelOutput> {
         self.outputs.level_values()
+    }
+
+    pub(super) fn info_row_outputs(&self) -> Vec<InfoRowOutput> {
+        self.outputs.info_row_values()
     }
 
     pub(super) fn ohlc_output(&self, channel_id: &str, index: usize) -> Option<OhlcOutput> {

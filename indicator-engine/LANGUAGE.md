@@ -10,7 +10,7 @@ file naming, collections, and validation.
 - [Chart data](#chart-data)
 - [Inputs and source composition](#inputs-and-source-composition)
 - [Metadata](#metadata): [indicator](#indicator), [display and format](#display-and-format)
-- [Outputs and presentation](#outputs-and-presentation): [plots](#plots), [styles and marks](#styles-and-alternate-marks), [fills, readouts, and tables](#fills-readouts-and-tables), [segments and regions](#segments-and-regions)
+- [Outputs and presentation](#outputs-and-presentation): [plots](#plots), [styles and marks](#styles-and-alternate-marks), [fills, readouts, and tables](#fills-readouts-and-tables), [info panels](#info-panels), [segments and regions](#segments-and-regions)
 - [Higher timeframes](#higher-timeframes)
 - [TA behavior](#ta-behavior)
 - [Built-in reference](#built-in-reference): [TA](#ta), [math and missing values](#math-and-missing-values), [collections, strings, and colors](#collections-strings-and-colors)
@@ -89,7 +89,9 @@ Operators, from highest to lowest precedence: unary `+`, `-`, `!`; `*`, `/`,
 `%`; `+`, `-`; `<`, `<=`, `>`, `>=`; `==`, `!=`; `&&`; `||`. Parentheses group
 expressions. `&&` and `||` short-circuit; `select` provides conditional values.
 Only boolean `true` takes an `if` branch or continues a `while`; `false` and `na`
-do not. Statements end at a newline or semicolon; braces group bodies.
+do not. Statements end at a newline or semicolon; braces group bodies. A line
+ending in a binary operator (`+`, `&&`, `>=`, ...) continues on the next line,
+as does a call's argument list after a comma.
 Calls and collection literals may span lines. `//` starts a line comment.
 
 ### Control flow and collections
@@ -378,6 +380,32 @@ automatic `main` style. `color_mode = "signed"` requires numeric output and
 `positive_color_slot` / `negative_color_slot`, with no `color_slot`. Zero uses
 the positive slot; unavailable values are blank.
 
+### Info panels
+
+`info_row(left, right)` adds one row to a panel drawn in a corner of the price
+chart, like a two-column Pine `table`. Rows appear in source order and show the
+latest bar's values; a row whose texts are both empty or `na` is hidden.
+
+```text
+pos = input.string("Top right", "Table position",
+                   options = ["Top right", "Top left", "Bottom right", "Bottom left"])
+info_row("Roman Trade Setup", "12H", background = color.new(color.gray, 75),
+         position = pos, size = "small")
+info_row("Close", str.tostring(chart.close, instrument.min_tick),
+         right_color = select(chart.close > chart.open, color.teal, color.red))
+```
+
+| Option | Meaning |
+| --- | --- |
+| `id` | Literal panel ID, default `"info"`; separate IDs draw separate panels |
+| `left_color`, `right_color`, `background` | Runtime colors for the texts and the row |
+| `position` | Runtime string: `top_right` (default), `top_left`, `top_center`, `middle_*`, `bottom_*`; Pine labels like `"Top right"` also work |
+| `size` | Runtime string: `tiny`, `small`, `normal` (default), `large`, `huge` |
+| `panel_color` | Runtime panel background; defaults to the theme |
+
+Panel-wide options come from the first row that sets them. Panels in the same
+corner stack instead of overlapping. `info_row` must be top-level.
+
 ### Segments and regions
 
 `segment(start_value, end_value, start_index, end_index, id = "projection")`
@@ -613,10 +641,15 @@ require hoisting, even when their expression looks constant.
 | `record.set(record, key, value)` | Updated record; string key; adds or replaces a field |
 | `record.get(record, key)` | Field of dynamic kind `Any`; string key; `na` for absent fields or runtime non-record values |
 | `str.tostring(value)` | String for any kind; missing value becomes `"na"`; collections report their element/field count |
+| `str.tostring(value, format)` | Number with a Pine-style pattern (`"#.##"` drops trailing zeros, `"0.00"` keeps them) or a numeric step such as `instrument.min_tick` (Pine's `format.mintick`) |
+| `color.new(color, transp)` | Color with Pine transparency: 0 opaque to 100 invisible; `na` for a missing color |
 | `color.rgb(red, green, blue, alpha)` | Color; integer components in 0–255; omitted or missing alpha defaults to 255 |
 
 Colors also have constants `color.red`, `color.green`, `color.blue`,
-`color.white`, and `color.black`. `color.rgb(...)` with positional literal
+`color.white`, and `color.black`, plus Pine's palette: `color.gray`,
+`color.silver`, `color.orange`, `color.yellow`, `color.lime`, `color.teal`,
+`color.aqua`, `color.navy`, `color.purple`, `color.fuchsia`, `color.maroon`
+and `color.olive`. Strings join with `+`; both sides must be strings. `color.rgb(...)` with positional literal
 components can supply input defaults; runtime color expressions can style
 outputs. Invalid runtime components fail rather than being clamped. Collection
 operations remain subject to heap, nesting, element-count, and weighted

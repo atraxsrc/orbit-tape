@@ -238,6 +238,26 @@ impl<'a> Evaluator<'a> {
                 color,
                 ..
             } => self.warmup_all([Some(*expression), *visible, *color]),
+            StatementKind::InfoRow {
+                left,
+                right,
+                left_color,
+                right_color,
+                background,
+                position,
+                size,
+                panel_color,
+                ..
+            } => self.warmup_all([
+                Some(*left),
+                Some(*right),
+                *left_color,
+                *right_color,
+                *background,
+                *position,
+                *size,
+                *panel_color,
+            ]),
             StatementKind::Segment {
                 start_value,
                 end_value,

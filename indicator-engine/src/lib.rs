@@ -12,9 +12,9 @@ mod warmup;
 pub use diagnostics::{Diagnostic, Severity, Span};
 pub use frame::{
     BaseSeriesSource, ChartFrame, FrameField, FrameOutput, HorizontalLevelOutput, IndicatorFrame,
-    InstrumentContext, MarkerOutput, OhlcOutput, PlotOutput, RangeOutput, RegionBorderStyle,
-    RegionOutput, RegionText, RegionTextPosition, RegionUpdate, SegmentOutput, SeriesInputValue,
-    TimeOrTick, TradeAggregate,
+    InfoPosition, InfoRowOutput, InfoTextSize, InstrumentContext, MarkerOutput, OhlcOutput,
+    PlotOutput, RangeOutput, RegionBorderStyle, RegionOutput, RegionText, RegionTextPosition,
+    RegionUpdate, SegmentOutput, SeriesInputValue, TimeOrTick, TradeAggregate,
 };
 pub use hir::{
     BarStateField, BinaryOperator, CallSiteId, ConstantId, ExprId, ExpressionKind, FunctionId,
@@ -647,6 +647,84 @@ mod tests {
         assert_eq!(zone.right_index, 10);
         assert_eq!(zone.border_style, RegionBorderStyle::Dashed);
         assert!(zone.text.is_none());
+    }
+
+    #[test]
+    fn info_rows_build_a_panel_from_strings() {
+        let source = r##"
+            language(1)
+            indicator("Info", id = "test.info")
+            display(view = "primary_overlay")
+            where = input.string("Bottom left", "Table position",
+                                 options = ["Top right", "Bottom left"])
+            plot(na, id = "anchor", display = "none", pane = "main", layer = true)
+            info_row("Setup", "12H", background = color.new(color.gray, 75), position = where, size = "small")
+            info_row("Close", str.tostring(chart.close, "#.##") + " / " +
+                     str.tostring(chart.close, instrument.min_tick),
+                     right_color = select(chart.close > chart.open, color.green, color.red))
+            info_row("Hidden", na)
+        "##;
+        let mut instance = compile(source, "info.ind")
+            .expect("info source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let mut frame = hourly(0, 0, 1.0, 3.0, 0.5, 2.5);
+        frame.instrument.min_tick = Some(0.01);
+        let output = instance
+            .evaluate_closed(frame)
+            .expect("bar should evaluate");
+
+        let rows = &output.info_rows;
+        assert_eq!(rows.len(), 3);
+        assert_eq!((rows[0].row, rows[0].left.as_str()), (0, "Setup"));
+        assert_eq!(rows[0].position, Some(InfoPosition::BottomLeft));
+        assert_eq!(rows[0].size, Some(InfoTextSize::Small));
+        assert!(rows[0].background.is_some());
+        assert_eq!(rows[1].right, "2.5 / 2.50");
+        assert!(rows[1].right_color.is_some());
+        assert_eq!(rows[1].position, None);
+        assert_eq!((rows[2].row, rows[2].right.as_str()), (2, ""));
+    }
+
+    #[test]
+    fn number_formats_match_pine_patterns() {
+        use crate::intrinsic::format_number;
+        let pattern = |value: f64, format: &str| {
+            format_number(&Value::Float(value), &Value::String(format.to_owned()))
+        };
+        assert_eq!(pattern(1.23456, "#.##").as_deref(), Some("1.23"));
+        assert_eq!(pattern(1.5, "#.##").as_deref(), Some("1.5"));
+        assert_eq!(pattern(2.0, "#.##").as_deref(), Some("2"));
+        assert_eq!(pattern(2.0, "0.00").as_deref(), Some("2.00"));
+        assert_eq!(pattern(2.456, "#.0#").as_deref(), Some("2.46"));
+        assert_eq!(pattern(2.4, "#.0#").as_deref(), Some("2.4"));
+        assert_eq!(pattern(1234.6, "#").as_deref(), Some("1235"));
+        assert_eq!(pattern(-0.001, "#.##").as_deref(), Some("0"));
+        assert_eq!(pattern(1.0, "abc"), None);
+        let step = |value: f64, step: f64| format_number(&Value::Float(value), &Value::Float(step));
+        assert_eq!(step(97123.456, 0.1).as_deref(), Some("97123.5"));
+        assert_eq!(step(0.123456, 0.0001).as_deref(), Some("0.1235"));
+        assert_eq!(step(12.0, 0.5).as_deref(), Some("12.0"));
+        assert_eq!(step(13.0, 5.0).as_deref(), Some("15"));
+        assert_eq!(step(1.0, 0.0), None);
+        assert_eq!(
+            format_number(&Value::Int(7), &Value::String("0.0".to_owned())).as_deref(),
+            Some("7.0")
+        );
+    }
+
+    #[test]
+    fn strings_only_add_to_strings() {
+        let source = "language(1)\nindicator(\"Bad\", id = \"test.bad\")\n\
+                      plot(chart.close, id = \"value\")\n\
+                      text = \"close \" + chart.close\n";
+        let diagnostics = compile(source, "bad.ind").expect_err("source should be rejected");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("strings can only be added")),
+            "{diagnostics:?}"
+        );
     }
 
     #[test]
