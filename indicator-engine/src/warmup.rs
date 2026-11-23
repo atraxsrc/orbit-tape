@@ -39,16 +39,58 @@ pub(super) fn anchor_start(
     let mut evaluator = Evaluator::new(program, registry, descriptor, config, usize::MAX);
     evaluator.budget.charge(program.expressions.len())?;
     let mut earliest: Option<i64> = None;
-    for arguments in anchored_arguments(program, registry) {
+    for (kind, arguments) in anchored_arguments(program, registry) {
         evaluator.budget.charge(1)?;
-        if let Some(anchor) = arguments.get(2).copied()
-            && let Some(Value::String(name)) = evaluator.static_value(anchor)?
-            && let Some(start) = crate::intrinsic::anchored_start(reference_time, &name)
-        {
+        let start = match kind {
+            Anchored::Vwap => {
+                if let Some(anchor) = arguments.get(2).copied()
+                    && let Some(Value::String(name)) = evaluator.static_value(anchor)?
+                {
+                    crate::intrinsic::anchored_start(reference_time, &name)
+                } else {
+                    None
+                }
+            }
+            Anchored::HtfBars | Anchored::HtfCurrent => {
+                let period = match arguments.first().copied() {
+                    Some(timeframe) => match evaluator.static_value(timeframe)? {
+                        Some(Value::String(text)) => crate::htf::Period::parse(&text),
+                        _ => None,
+                    },
+                    None => None,
+                };
+                let count = match (kind, arguments.get(1).copied()) {
+                    (Anchored::HtfBars, Some(count)) => match evaluator.static_value(count)? {
+                        Some(Value::Int(count)) => usize::try_from(count).ok(),
+                        _ => None,
+                    },
+                    _ => Some(0),
+                };
+                match (period, count) {
+                    (Some(period), Some(count)) => {
+                        evaluator.budget.charge(count)?;
+                        period.history_start(reference_time, count)
+                    }
+                    _ => None,
+                }
+            }
+        };
+        if let Some(start) = start {
             earliest = Some(earliest.map_or(start, |current| current.min(start)));
         }
     }
     Ok(earliest)
+}
+
+/// Intrinsics whose history must start at a time boundary.
+#[derive(Debug, Clone, Copy)]
+enum Anchored {
+    /// `ta.avwap`: from the start of its anchor period.
+    Vwap,
+    /// `htf.bars`: `count` whole higher-timeframe candles back.
+    HtfBars,
+    /// `htf.new_bar` / `htf.forming`: the current higher-timeframe candle.
+    HtfCurrent,
 }
 
 pub(super) fn requires_anchored_history(
@@ -61,8 +103,14 @@ pub(super) fn requires_anchored_history(
 fn anchored_arguments<'a>(
     program: &'a HirProgram,
     registry: &IntrinsicRegistry,
-) -> impl Iterator<Item = &'a [ExprId]> {
-    let avwap = registry.find("ta.avwap").map(|(id, _)| id);
+) -> impl Iterator<Item = (Anchored, &'a [ExprId])> {
+    let find = |name| registry.find(name).map(|(id, _)| id);
+    let kinds = [
+        (find("ta.avwap"), Anchored::Vwap),
+        (find("htf.bars"), Anchored::HtfBars),
+        (find("htf.new_bar"), Anchored::HtfCurrent),
+        (find("htf.forming"), Anchored::HtfCurrent),
+    ];
     program
         .expressions
         .iter()
@@ -71,7 +119,10 @@ fn anchored_arguments<'a>(
                 intrinsic,
                 arguments,
                 ..
-            } if Some(*intrinsic) == avwap => Some(arguments.as_slice()),
+            } => kinds
+                .iter()
+                .find(|(id, _)| *id == Some(*intrinsic))
+                .map(|(_, kind)| (*kind, arguments.as_slice())),
             _ => None,
         })
 }

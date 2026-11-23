@@ -63,6 +63,7 @@ pub enum IntrinsicState {
         price_volume: f64,
         volume: f64,
     },
+    Htf(Box<crate::htf::HtfState>),
 }
 
 impl IntrinsicState {
@@ -78,6 +79,7 @@ impl IntrinsicState {
             Self::PreviousWhen { value } => {
                 1usize.saturating_add(value.as_ref().map_or(0, Value::copy_work))
             }
+            Self::Htf(state) => state.copy_work(),
             _ => 1,
         }
     }
@@ -113,6 +115,7 @@ impl IntrinsicState {
                     .capacity()
                     .saturating_mul(size_of::<Option<(f64, usize)>>()),
             ),
+            Self::Htf(state) => state_bytes.saturating_add(state.heap_bytes()),
         }
     }
 }
@@ -213,6 +216,8 @@ impl std::error::Error for IntrinsicError {}
 pub struct IntrinsicEvalContext<'a> {
     pub bar_index: usize,
     pub bar_time: i64,
+    /// Open, high, low, close and volume of the chart bar being evaluated.
+    pub bar_ohlcv: [Option<f64>; 5],
     pub max_heap_bytes: usize,
     pub max_window_length: usize,
     pub fixed_window: bool,
@@ -361,6 +366,24 @@ impl IntrinsicRegistry {
             ta_avwap_signature(),
             IntrinsicEffects::STATEFUL,
             eval_anchored_vwap,
+        );
+        registry.register(
+            "htf.bars",
+            htf_bars_signature(),
+            IntrinsicEffects::STATEFUL,
+            crate::htf::eval_bars,
+        );
+        registry.register(
+            "htf.new_bar",
+            htf_signature(Type::series(ValueType::Bool)),
+            IntrinsicEffects::STATEFUL,
+            crate::htf::eval_new_bar,
+        );
+        registry.register(
+            "htf.forming",
+            htf_signature(Type::series(ValueType::Record)),
+            IntrinsicEffects::STATEFUL,
+            crate::htf::eval_forming,
         );
         registry.register("nz", nz_signature(), IntrinsicEffects::PURE, eval_nz);
         registry.register(
@@ -699,6 +722,31 @@ fn ta_tr_signature() -> IntrinsicSignature {
         Type::series(ValueType::Float),
         false,
     )
+}
+
+fn htf_timeframe_argument() -> ArgumentSignature {
+    ArgumentSignature {
+        name: "timeframe",
+        ty: Type::simple(ValueType::String),
+    }
+}
+
+fn htf_bars_signature() -> IntrinsicSignature {
+    signature(
+        vec![
+            htf_timeframe_argument(),
+            ArgumentSignature {
+                name: "count",
+                ty: Type::simple(ValueType::Int),
+            },
+        ],
+        Type::series(ValueType::Array),
+        false,
+    )
+}
+
+fn htf_signature(result: Type) -> IntrinsicSignature {
+    signature(vec![htf_timeframe_argument()], result, false)
 }
 
 fn ta_avwap_signature() -> IntrinsicSignature {
@@ -1567,7 +1615,7 @@ fn eval_cum(
     Ok(float_value(next))
 }
 
-fn window_length(
+pub(crate) fn window_length(
     context: &IntrinsicEvalContext<'_>,
     args: &[Value],
     index: usize,

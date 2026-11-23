@@ -1,6 +1,7 @@
 mod diagnostics;
 mod frame;
 mod hir;
+mod htf;
 mod intrinsic;
 mod parser;
 mod runtime;
@@ -394,6 +395,209 @@ mod tests {
                     .any(|diagnostic| diagnostic.message.contains("bases"))
             );
         }
+    }
+
+    const HTF_HOUR: i64 = 3_600_000;
+    /// 2024-01-01 00:00 UTC.
+    const HTF_EPOCH: i64 = 1_704_067_200_000;
+
+    const HTF_SOURCE: &str = r#"
+        language(1)
+        indicator("HTF", id = "test.htf")
+        format(precision = "base_ticker_min_tick")
+        bars = htf.bars("120", 3)
+        fresh = htf.new_bar("120")
+        live = htf.forming("120")
+        newest = array.get(bars, 0)
+        plot(array.size(bars), id = "count")
+        plot(newest.open, id = "open")
+        plot(newest.high, id = "high")
+        plot(newest.low, id = "low")
+        plot(newest.close, id = "close")
+        plot(newest.volume, id = "volume")
+        plot(newest.time, id = "time")
+        plot(live.close, id = "live")
+        plot(fresh, id = "fresh")
+    "#;
+
+    /// A 1H chart bar `hour` hours after [`HTF_EPOCH`].
+    fn hourly(
+        index: usize,
+        hour: i64,
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+    ) -> IndicatorFrame {
+        let mut frame = frame(index, HTF_EPOCH + hour * HTF_HOUR, close);
+        frame.chart.open = Some(open);
+        frame.chart.high = Some(high);
+        frame.chart.low = Some(low);
+        frame.chart.volume = Some(1.0);
+        frame
+    }
+
+    fn htf_instance() -> IndicatorInstance {
+        compile(HTF_SOURCE, "htf.ind")
+            .expect("htf source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("htf inputs should bind")
+    }
+
+    fn float_plot(output: &FrameOutput, id: &str) -> Option<f64> {
+        match plot_value(output, id) {
+            Value::Float(value) => Some(*value),
+            Value::Int(value) => Some(*value as f64),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn htf_candles_close_on_the_next_bucket() {
+        let mut instance = htf_instance();
+        let bars = [
+            (0, 10.0, 12.0, 9.0, 11.0),
+            (1, 11.0, 15.0, 10.0, 14.0),
+            (2, 14.0, 14.5, 13.0, 13.5),
+            (3, 13.5, 16.0, 13.0, 15.0),
+            (4, 15.0, 15.5, 11.0, 12.0),
+        ];
+        let outputs: Vec<FrameOutput> = bars
+            .iter()
+            .enumerate()
+            .map(|(index, &(hour, open, high, low, close))| {
+                instance
+                    .evaluate_closed(hourly(index, hour, open, high, low, close))
+                    .expect("bar should evaluate")
+            })
+            .collect();
+
+        // 00:00-02:00 is still forming on the first two bars.
+        for output in &outputs[..2] {
+            assert_eq!(float_plot(output, "count"), Some(0.0));
+            assert_eq!(plot_value(output, "fresh"), &Value::Bool(false));
+            assert_eq!(float_plot(output, "close"), None);
+        }
+        assert_eq!(float_plot(&outputs[1], "live"), Some(14.0));
+
+        // 02:00 closes the first candle: bars 0 and 1 aggregated.
+        let first = &outputs[2];
+        assert_eq!(plot_value(first, "fresh"), &Value::Bool(true));
+        assert_eq!(float_plot(first, "count"), Some(1.0));
+        assert_eq!(float_plot(first, "open"), Some(10.0));
+        assert_eq!(float_plot(first, "high"), Some(15.0));
+        assert_eq!(float_plot(first, "low"), Some(9.0));
+        assert_eq!(float_plot(first, "close"), Some(14.0));
+        assert_eq!(float_plot(first, "volume"), Some(2.0));
+        assert_eq!(float_plot(first, "time"), Some(HTF_EPOCH as f64));
+        assert_eq!(float_plot(first, "live"), Some(13.5));
+
+        assert_eq!(plot_value(&outputs[3], "fresh"), &Value::Bool(false));
+        assert_eq!(float_plot(&outputs[3], "close"), Some(14.0));
+
+        // 04:00 closes the second candle; newest comes first.
+        let second = &outputs[4];
+        assert_eq!(plot_value(second, "fresh"), &Value::Bool(true));
+        assert_eq!(float_plot(second, "count"), Some(2.0));
+        assert_eq!(float_plot(second, "open"), Some(14.0));
+        assert_eq!(float_plot(second, "high"), Some(16.0));
+        assert_eq!(float_plot(second, "close"), Some(15.0));
+        assert_eq!(
+            float_plot(second, "time"),
+            Some((HTF_EPOCH + 2 * HTF_HOUR) as f64)
+        );
+    }
+
+    #[test]
+    fn htf_previews_do_not_commit_and_match_the_close() {
+        let mut instance = htf_instance();
+        instance
+            .evaluate_closed(hourly(0, 0, 10.0, 12.0, 9.0, 11.0))
+            .expect("bar should evaluate");
+        instance
+            .evaluate_closed(hourly(1, 1, 11.0, 15.0, 10.0, 14.0))
+            .expect("bar should evaluate");
+
+        for close in [20.0, 5.0] {
+            let preview = instance
+                .preview_open(hourly(2, 2, 14.0, 20.0, 5.0, close))
+                .expect("preview should evaluate");
+            assert_eq!(plot_value(&preview, "fresh"), &Value::Bool(true));
+            assert_eq!(float_plot(&preview, "close"), Some(14.0));
+            assert_eq!(float_plot(&preview, "live"), Some(close));
+        }
+
+        let committed = instance
+            .evaluate_closed(hourly(2, 2, 14.0, 14.5, 13.0, 13.5))
+            .expect("bar should evaluate");
+        assert_eq!(plot_value(&committed, "fresh"), &Value::Bool(true));
+        assert_eq!(float_plot(&committed, "count"), Some(1.0));
+        assert_eq!(float_plot(&committed, "high"), Some(15.0));
+        assert_eq!(float_plot(&committed, "live"), Some(13.5));
+    }
+
+    #[test]
+    fn htf_skips_a_partial_first_candle_and_gaps() {
+        let mut instance = htf_instance();
+        // History starts at 01:00, halfway into the 00:00 candle.
+        let mut last = None;
+        for (index, hour) in [1, 2, 3, 7].into_iter().enumerate() {
+            let output = instance
+                .evaluate_closed(hourly(index, hour, 1.0, 2.0, 0.5, hour as f64))
+                .expect("bar should evaluate");
+            if hour == 2 {
+                assert_eq!(float_plot(&output, "count"), Some(0.0));
+                assert_eq!(plot_value(&output, "fresh"), &Value::Bool(false));
+            }
+            last = Some(output);
+        }
+        // 04:00-06:00 had no bars; 07:00 closes 02:00-04:00 only.
+        let last = last.expect("bars were evaluated");
+        assert_eq!(plot_value(&last, "fresh"), &Value::Bool(true));
+        assert_eq!(float_plot(&last, "count"), Some(1.0));
+        assert_eq!(float_plot(&last, "close"), Some(3.0));
+    }
+
+    #[test]
+    fn htf_history_is_planned_from_whole_candles() {
+        let compiled = compile(HTF_SOURCE, "htf.ind").expect("htf source should compile");
+        assert!(compiled.requires_anchored_history());
+        // Three closed 2H candles before the one holding 05:30.
+        let reference = HTF_EPOCH + 5 * HTF_HOUR + HTF_HOUR / 2;
+        assert_eq!(
+            compiled.anchor_start(&IndicatorConfig::default(), reference),
+            Some(HTF_EPOCH - 2 * HTF_HOUR)
+        );
+    }
+
+    #[test]
+    fn htf_requires_ohlc_without_reading_chart_fields() {
+        let source = r#"
+            language(1)
+            indicator("HTF only", id = "test.htf-only")
+            format(precision = "base_ticker_min_tick")
+            plot(htf.new_bar("720"), id = "fresh")
+        "#;
+        let compiled = compile(source, "htf-only.ind").expect("source should compile");
+        assert!(compiled.requirements.ohlc);
+    }
+
+    #[test]
+    fn htf_unknown_timeframe_is_na() {
+        let source = r#"
+            language(1)
+            indicator("HTF bad", id = "test.htf-bad")
+            format(precision = "base_ticker_min_tick")
+            plot(htf.new_bar("2W"), id = "fresh")
+        "#;
+        let mut instance = compile(source, "htf-bad.ind")
+            .expect("source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let output = instance
+            .evaluate_closed(hourly(0, 0, 1.0, 1.0, 1.0, 1.0))
+            .expect("bar should evaluate");
+        assert_eq!(plot_value(&output, "fresh"), &Value::Na);
     }
 
     #[test]
