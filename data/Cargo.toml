@@ -1,7 +1,8 @@
 [package]
-name = "flowsurface-data"
-description = "Data aggregation, indexing, and configuration utilities for Flowsurface"
+name = "orbit-tape-data"
+description = "Data aggregation, indexing, and configuration utilities for Orbit Tape"
 version.workspace = true
+authors.workspace = true
 license = "GPL-3.0-or-later"
 edition.workspace = true
 repository.workspace = true
@@ -26,9 +27,4 @@ open = "5.3.5"
 log = { version = "0.4.29", default-features = false, features = ["std"] }
 thiserror = { version = "2.0.18", default-features = false, features = ["std"] }
 ron = "0.12.3"
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
-[target.'cfg(target_os = "windows")'.dependencies]
-keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
-[target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6.3", default-features = false, features = ["linux-native"] }

@@ -3,7 +3,7 @@ use std::{fs, io};
 
 use crate::data_path;
 
-const LOG_FILE: &str = "flowsurface-current.log";
+const LOG_FILE: &str = "orbit-tape-current.log";
 
 pub fn file() -> Result<fs::File, Error> {
     let path = path()?;

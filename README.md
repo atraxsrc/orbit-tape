@@ -1,202 +1,251 @@
-# Flowsurface
-
-[![Crates.io](https://img.shields.io/crates/v/flowsurface)](https://crates.io/crates/flowsurface)
-[![Lint](https://github.com/flowsurface-rs/flowsurface/actions/workflows/lint.yml/badge.svg)](https://github.com/flowsurface-rs/flowsurface/actions/workflows/lint.yml)
-[![Format](https://github.com/flowsurface-rs/flowsurface/actions/workflows/format.yml/badge.svg)](https://github.com/flowsurface-rs/flowsurface/actions/workflows/format.yml)
-[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.gg/RN2XAF7ZuR)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/flowsurface-rs/flowsurface/blob/main/LICENSE)
-[![Made with iced](https://iced.rs/badge.svg)](https://github.com/iced-rs/iced)
-
-An open-source native desktop charting application for crypto markets. Supports Binance, Bybit, Hyperliquid, OKX, and MEXC.
-
 <div align="center">
-  <img
-    src="assets/screenshot.png"
-    alt="Flowsurface screenshot"
-    style="max-width: 100%; height: auto;"
-  />
+  <img src="assets/app-icon/hicolor/256x256/apps/io.github.atraxsrc.OrbitTape.png" alt="Orbit Tape icon" width="128" />
+
+# Orbit Tape
+
+**Order flow on orbit - a native crypto charting desk for COSMIC**
+
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Rust 2024](https://img.shields.io/badge/Rust-2024-orange.svg?logo=rust)](https://doc.rust-lang.org/edition-guide/rust-2024/)
+[![Made with iced](https://iced.rs/badge.svg)](https://github.com/iced-rs/iced)
+[![Built for COSMIC](https://img.shields.io/badge/built%20for-COSMIC-48b9c7.svg)](https://system76.com/cosmic)
+[![Linux](https://img.shields.io/badge/platform-Linux-lightgrey.svg?logo=linux&logoColor=white)](#install)
+
 </div>
 
-## Key Features
+Orbit Tape is a native desktop charting app for crypto markets: order book
+heatmaps, footprint and candlestick charts, time and sales and a DOM ladder,
+streamed straight from the exchanges, with scriptable indicators and desktop
+alerts. It is for discretionary traders who read order flow and want a fast,
+local tool instead of a browser tab.
 
-- Multiple chart/pane types:
-    - **Time & Sales:** Scrollable list of live trades that can be merged across multiple tickers.
-    - **DOM (Depth of Market) / Ladder:** Displays current orderbook alongside recent trade volumes on grouped price levels.
-    - **Heatmap (Historical DOM):** Uses live trades and orderbook to display a time-series heatmap chart. Supports customizable price grouping and different timeframes.
-    - **Candlestick:** Footprints, profiles, scriptable indicators, custom tick-based intervals. See [Indicators](#indicators) and [Studies](#studies).
-- Real-time sound effects driven by trade streams
-- Multi window/monitor support on macOS and Linux.[\*](#platform-notes)
-- Persistent layouts, chart presets, themes with editable color palettes.
+It runs on **Linux only** and is made for the [COSMIC](https://system76.com/cosmic)
+desktop on Pop!_OS. Orbit Tape is a fork of
+[Flowsurface](https://github.com/flowsurface-rs/flowsurface) and builds on its
+work; see [Credits](#credits).
 
-## Fork changes
+<div align="center">
+  <!-- TODO: replace with a COSMIC screenshot after the COSMIC UI work. -->
+  <img src="assets/screenshot.png" alt="Orbit Tape screenshot" style="max-width: 100%; height: auto;" />
+</div>
 
-This fork of [Flowsurface](https://github.com/flowsurface-rs/flowsurface) by its upstream authors
-aims to look native on the [COSMIC](https://system76.com/cosmic) desktop. Changes so far:
+## Features
 
-- **Follow COSMIC theme** (Settings → Theme, on by default): uses the COSMIC desktop's
-  light/dark mode, background, text, accent, success/warning/destructive colors and corner
-  radii, and follows changes live. Picking a built-in theme turns it off. On other desktops,
-  or when the COSMIC config can't be read, the selected theme is used. Candle and indicator
-  colors follow the palette roles and can still be set per chart.
-- **Higher-timeframe data in indicators**: `.ind` scripts can read candles of a larger
-  timeframe (for example 12H on a 1H chart) with `htf.bars`, `htf.new_bar` and
-  `htf.forming`. Only closed candles count, so values don't repaint. See
-  [Higher timeframes](indicator-engine/LANGUAGE.md#higher-timeframes).
-- **Pine-style drawing in indicators**: text labels, dashed and dotted boxes and lines,
-  boxes reaching past the last bar, an on-chart info panel (`info_row`), string joining
-  and number formatting. See [LANGUAGE.md](indicator-engine/LANGUAGE.md).
-- **Optional Roman indicators** in [indicators/](indicators/README.md): ports of the Roman
-  Trade Setup (H12 to H1) and Enhanced Roman Order Block Pine scripts. Not bundled; copy them
-  into the indicators folder. Roman Setup matches the TradingView original bar for bar on
-  the recorded test candles.
-- **Indicator alerts**: boolean plots declared with `alert = true` send a desktop
-  notification and a short chime when they are true on a newly closed bar. Alerts only run
-  while the app is open, on charts that show the indicator. Settings → Alerts turns delivery
-  and each condition on or off; "Test alert" checks both. The Roman ports mark their
-  signals (HTF bias flip, HTF SFP, LTF MSS, counter-trend MSS, OB formed/mitigated) as alerts.
-- **`flowsurface-indicator run`**: evaluates a script on a candle CSV and exports every
-  output per bar, for checking a port against another platform.
+- **Pane types**
+    - **Time & Sales:** scrollable list of live trades, mergeable across tickers.
+    - **DOM / Ladder:** the current order book next to recent traded volume on
+      grouped price levels.
+    - **Heatmap (historical DOM):** live trades and order book as a time-series
+      heatmap, with adjustable price grouping and timeframes.
+    - **Candlestick:** footprints, volume and TPO profiles, big trades, custom
+      tick-based intervals and scriptable indicators. See [Studies](#studies).
+- **Scriptable indicators** in a Pine-like language, with higher-timeframe data,
+  Pine-style drawing and an indicator CLI. See [Custom indicators](#custom-indicators).
+- **Indicator alerts:** boolean plots marked `alert = true` send a desktop
+  notification and a chime when they are true on a newly closed bar
+  (Settings → Alerts).
+- **Trade sound effects** driven by the live trade stream.
+- **Multi-window:** pop panes out into their own windows.
+- **Pane linking:** panes in the same link group switch ticker together.
+- **Saved layouts, chart presets and themes** with editable color palettes.
+- **Exchanges:** Binance, Bybit, Hyperliquid, OKX and MEXC (spot and perpetuals
+  where the exchange offers them).
 
-## Market Data
+### Market data
 
-**Live:** Trades, orderbook, and kline updates stream from exchange WebSocket feeds.
+**Live:** trades, order book and kline updates stream from the exchanges'
+WebSocket feeds.
 
-**Historical trades:** Optional backfill for the visible range on time-based candlestick charts.
-Can be enabled in **Settings → Network**. Three modes are available:
+**Historical trades:** optional backfill for the visible range on time-based
+candlestick charts, set in **Settings → Network**:
 
-- **Off**: No historical backfill.
-- **Exchange**: Fetches directly from Binance's public REST API and bulk data
-  mirrors ([data.binance.vision](https://data.binance.vision/)). Daily archives use
-  bulk files and are cached on disk for reuse; intraday ranges are paginated and
-  rate-limited. **Binance only** (spot, linear, inverse).
-- **Server**: Fetches from a server that exposes a
-  `GET /trades.arrow` endpoint. The reference implementation, [`flowsurface-server`](https://github.com/flowsurface-rs/server), is a
-  self-contained collector that writes trades to DuckDB and serves them over this protocol.
-  See its [README](https://github.com/flowsurface-rs/server#get-tradesarrow) for the schema,
-  query parameters, and auth. Works with every exchange the app supports, provided the server collects that venue.
+- **Off:** no backfill.
+- **Exchange:** fetches from Binance's public REST API and bulk data mirrors
+  ([data.binance.vision](https://data.binance.vision/)). Daily archives are
+  cached on disk; intraday ranges are paginated and rate-limited. **Binance
+  only** (spot, linear, inverse).
+- **Server:** fetches from a server exposing `GET /trades.arrow`, such as the
+  upstream [`flowsurface-server`](https://github.com/flowsurface-rs/server)
+  collector. Works with every supported exchange the server collects.
 
-**Historical klines, open interest, ticker metadata/stats:** Always fetched from exchange
-REST APIs, regardless of the trade-fetch mode.
+**Historical klines, open interest and ticker metadata** always come from the
+exchanges' REST APIs.
 
-## Indicators
+### Studies
 
-Candlestick charts include [bundled indicators](data/indicators/README.md), more can be added manually or using the
-catalog browser.
+Footprints need **Trade data** enabled in the pane settings and enough zoom for
+their columns to show.
 
-**Catalog browser**: Open the chart pane's **Indicators** sidebar and click **+**. The browser fetches
-a manifest of contributed indicators from `https://api.flowsurface.com`. The manifest is
-built from the [catalog repository](https://github.com/flowsurface-rs/indicators/tree/main/sources) at a
-pinned commit; installing downloads the selected `.ind` source from the catalog server, verifies it
-against the manifest checksum, and compiles it locally before installation.
+- A pane uses one profile source, **candle-based** or **trade-based**. Studies
+  of the same source can coexist (one visible-range profile, one recurring
+  profile, one TPO); **Big Trades** is trade-only and independent.
+- **Candle-based** studies use lower-timeframe klines (`1m` up to `2h`, `3m` up
+  to `4h`, `5m` up to `12h`, `15m` above). They approximate: a candle's volume
+  is spread over its range and counts as buying when `close >= open`.
+- **Trade-based** studies use actual prints: more precise, but they need trade
+  data and more processing.
+- TPO anchors are UTC; the initial balance is the first hour of the profile.
+- Big Trades filters on quote-currency notional; rings group several trades.
 
-**Manual install**: Open **Settings → Open data folder** and copy `.ind` files into `indicators/`, then
-restart the app. The data directory is `$FLOWSURFACE_DATA_PATH` when set, otherwise your platform's data
-directory under `flowsurface/`. The installed-indicator directory can also be overridden with
-`FLOWSURFACE_INDICATORS_PATH`.
+## COSMIC status
 
-To write your own indicators, see the [language reference and examples](indicator-engine/LANGUAGE.md) and the
-[CLI workflow](indicator-engine/README.md#cli).
+What is COSMIC-specific today:
 
-## Studies
+- **Launcher and window integration:** the app ID `io.github.atraxsrc.OrbitTape`
+  is the Wayland app_id and matches the `.desktop` entry, so COSMIC shows the
+  right icon and groups the windows in the dock.
+- **Original icon** in the hicolor theme, sized from 16 to 512 px.
+- **Wayland-native** rendering (X11 remains as a fallback).
+- **COSMIC theme** (Settings → Theme, on by default): the app reads COSMIC's
+  theme files and follows its light/dark mode, accent, background, text,
+  success/warning/destructive colors and corner radii live.
+- **Frosted glass:** a see-through, compositor-blurred window that follows
+  COSMIC's frosted-window setting, or a hand-set opacity.
+- **Desktop notifications** through the freedesktop notification service that
+  COSMIC provides.
 
-Footprint requires **Trade data** to be enabled in the pane settings and enough zoom for their columns to be
-visible. Backfill is optional and is configured in **Settings → Network**. Some details that may not be clear in the UI:
+Planned:
 
-- A pane uses one profile source: **_candle-based_** or **_trade-based_**. Same-source studies can coexist (one visible-range profile, one recurring profile, one TPO); the `Big Trades` study is trade-only and independent.
-- **_Candle-based_** studies are sourced using lower timeframe `Kline` data: `1m` up to `2h`, `3m` up to `4h`, `5m` up to `12h`, and `15m` above that. They are approximations: a candle only gives a high/low range, so volume is spread across that range and TPO marks it. Without a buy/sell split, the candle's volume is treated as buy when `close >= open`, else sell.
-- **_Trade-based_** studies use actual prints, so they are more precise, but need trades data, optionally backfill and more processing. Trade versions exist for volume and TPO profiles.
-- `TPO` anchors are UTC; initial balance is the first hour from the profile start (for weekly/monthly, the first hour of that week/month).
-- The `Big Trades` study filters on quote-currency notional; rings group multiple trades.
+- A port of the UI to [libcosmic](https://github.com/pop-os/libcosmic), with a
+  native header bar and COSMIC widgets.
+- Settings integration with COSMIC Settings.
 
-## Installation
+## Install
 
-### Method 1: Prebuilt Binaries
+### .deb (recommended)
 
-Downloads are available on the [Releases page](https://github.com/flowsurface-rs/flowsurface/releases).
+Coming soon - see [Releases](https://github.com/atraxsrc/orbit-tape/releases).
+Once a release is published:
 
-- **macOS**: Open the universal DMG and drag Flowsurface into Applications. Supports Apple Silicon and Intel Macs running macOS 11 or newer.
-- **Windows**: Run the x64 MSIX to install for your current user, then launch Flowsurface from the Start menu. No administrator approval is required.
-- **Linux**: Extract the archive and run `./install.sh` without sudo, then launch Flowsurface from the application menu. Run `./install.sh` from a newer archive to upgrade, or `./uninstall.sh` to remove the app. Settings and credentials are preserved. For portable use, run `./bin/flowsurface` directly.
+1. Download `orbit-tape_<version>_amd64.deb` from the
+   [latest release](https://github.com/atraxsrc/orbit-tape/releases/latest).
+   Optionally check it against `SHA256SUMS` from the same release:
+   `sha256sum -c SHA256SUMS --ignore-missing`.
+2. Install it:
 
-<details><summary><strong>Having trouble running the file? (Permission/Security warnings)</strong></summary>
- 
-Windows executables and MSIX installers are code-signed; macOS apps have no Apple Developer ID signature or notarization. Security warnings may still appear.
+   ```sh
+   sudo apt install ./orbit-tape_*_amd64.deb
+   ```
 
-- **Windows**: If App Installer cannot verify the publisher or signing certificate, [report the installation error](https://github.com/flowsurface-rs/flowsurface/issues).
-- **macOS**: If you see "Developer cannot be verified", control-click (right-click) the app and select **Open**, or go to _System Settings > Privacy & Security_ to allow it.</details>
+3. Start **Orbit Tape** from the COSMIC launcher.
 
-### Method 2: Build from Source
+Updates are manual for now: download the new release and run the same
+command. Uninstall with `sudo apt remove orbit-tape`; your settings in
+`~/.local/share/orbit-tape` are kept.
 
-#### Requirements
+The package also installs `orbit-tape-indicator`, the indicator CLI.
 
-- [Rust toolchain](https://www.rust-lang.org/tools/install)
-- [Git version control system](https://git-scm.com/)
-- System dependencies:
-    - **Linux**:
-        - Debian/Ubuntu: `sudo apt install build-essential pkg-config libasound2-dev`
-        - Arch: `sudo pacman -S base-devel alsa-lib`
-        - Fedora: `sudo dnf install gcc make alsa-lib-devel`
-    - **macOS**: Install Xcode Command Line Tools: `xcode-select --install`
-    - **Windows**: No additional dependencies required
+### Build from source (Pop!_OS 24.04)
 
-#### Option A: `cargo install`
+```sh
+sudo apt install build-essential pkg-config libasound2-dev git curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust via rustup
 
-```bash
-# Install latest globally
-cargo install --git https://github.com/flowsurface-rs/flowsurface flowsurface
-
-# Run
-flowsurface
+git clone https://github.com/atraxsrc/orbit-tape
+cd orbit-tape
+cargo build --release --locked
+./target/release/orbit-tape
 ```
 
-#### Option B: Cloning the repo
+`rust-toolchain.toml` pins the Rust version; rustup installs it on the first
+build. To build the `.deb` yourself: `scripts/package-deb.sh` (installs
+`cargo-deb` if needed and writes `target/debian/orbit-tape_<version>-1_amd64.deb`).
 
-```bash
-# Clone the repository
-git clone https://github.com/flowsurface-rs/flowsurface
+## Custom indicators
 
-cd flowsurface
+Indicators are `.ind` text files. Put them in
+`~/.local/share/orbit-tape/indicators/`, then restart the app:
 
-# Build and run
-cargo build --release
-cargo run --release
+```sh
+orbit-tape-indicator new ~/.local/share/orbit-tape/indicators/community --id community.example --title "Example"
+orbit-tape-indicator check ~/.local/share/orbit-tape/indicators/community/example.ind
+orbit-tape-indicator test ~/.local/share/orbit-tape/indicators/community/example.ind
 ```
 
-### Platform Notes
+Then add it to a candlestick chart from the indicator sidebar (**+**).
 
-<details open>
-<summary><strong>Windows</strong></summary>
+- Step-by-step guide: [docs/custom-indicators.md](docs/custom-indicators.md)
+- Language reference: [indicator-engine/LANGUAGE.md](indicator-engine/LANGUAGE.md)
+- Commented examples: [examples/indicators/](examples/indicators/)
+- Optional Roman Setup and Order Block ports: [indicators/](indicators/README.md)
+- Shared indicators: the in-app catalog browser lists the upstream
+  [Flowsurface indicator catalog](https://github.com/flowsurface-rs/indicators).
 
-> ⚠️ Multi-window support is disabled on Windows due to a [redraw issue](https://github.com/rust-windowing/winit/issues/3648) affecting iced’s current winit backend.
+## Where files are stored
 
-</details>
+Everything lives in one folder, `~/.local/share/orbit-tape/`
+(`$XDG_DATA_HOME/orbit-tape`):
 
-## Community
+| What | Path |
+| --- | --- |
+| Settings, layouts, themes, presets | `~/.local/share/orbit-tape/saved-state.json` |
+| User indicators | `~/.local/share/orbit-tape/indicators/` |
+| Logs | `~/.local/share/orbit-tape/orbit-tape-current.log` |
+| Market data cache (Binance archives) | `~/.local/share/orbit-tape/market_data/` |
+| Proxy and server credentials | the system keyring (service `orbit-tape.proxy` / `orbit-tape.server`) |
 
-Discord: https://discord.gg/RN2XAF7ZuR
+`ORBIT_TAPE_DATA_PATH` moves the whole folder and `ORBIT_TAPE_INDICATORS_PATH`
+just the indicators. **Settings → Open data folder** opens it.
 
-## Acknowledgments
+**Coming from Flowsurface:** on the first start, if
+`~/.local/share/orbit-tape` does not exist yet and `~/.local/share/flowsurface`
+does, Orbit Tape copies the old folder (except the re-downloadable
+`market_data` cache and old logs). The Flowsurface folder is left untouched.
+Stored proxy and server credentials are read from the old keyring entries too.
 
-- Free code signing for Windows releases is provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/)
-- [Kraken Desktop](https://www.kraken.com/desktop) (formerly [Cryptowatch](https://blog.kraken.com/product/cryptowatch-to-sunset-kraken-pro-to-integrate-cryptowatch-features)), the main inspiration that sparked this project
-- [Halloy](https://github.com/squidowl/halloy), an excellent open-source IRC client, the main reference for the foundational code design
-- And of course, [iced](https://github.com/iced-rs/iced), the GUI library that makes this possible
+## Roadmap
+
+- libcosmic UI port with a native header bar
+- `.deb` releases on GitHub for every version
+- A Flatpak, possibly
+- More example indicators
+- Live reloading of user indicators without a restart
+- An in-app list of fired alerts
+
+## Contributing and building
+
+```sh
+cargo build                                  # debug build
+cargo fmt --all --check                      # formatting
+cargo clippy --workspace --all-targets       # lints
+cargo test --workspace                       # tests
+cargo run -p orbit-tape-indicator-engine --bin orbit-tape-indicator -- \
+    test data/indicators/sources --namespace core
+```
+
+- Formatting is `rustfmt` with the defaults; CI runs `cargo fmt --check` and
+  `cargo clippy -- -D warnings`.
+- Commits are small and focused, with a short `area: what changed` subject
+  (for example `deb: cargo-deb packaging`) and a body that explains why.
+- Changes follow the license of the component they touch (see [License](#license)).
+
+Code map: [docs/ARCHITECTURE-NOTES.md](docs/ARCHITECTURE-NOTES.md).
 
 ## Privacy
 
-Flowsurface has no telemetry or analytics. See [PRIVACY.md](PRIVACY.md) for the services it
-contacts and what stays local.
+Orbit Tape has no telemetry, analytics or accounts. It talks to the exchanges
+you use and, only when you open it, the upstream indicator catalog. See
+[PRIVACY.md](PRIVACY.md) for details.
+
+## Credits
+
+- [Flowsurface](https://github.com/flowsurface-rs/flowsurface) and its
+  contributors: Orbit Tape is built on their app, indicator engine and
+  exchange adapters.
+- [iced](https://github.com/iced-rs/iced), the GUI library underneath.
+- [Kraken Desktop](https://www.kraken.com/desktop) (formerly Cryptowatch), the
+  inspiration Flowsurface credits for the project.
+- [Halloy](https://github.com/squidowl/halloy), the IRC client Flowsurface
+  credits as the reference for its code design.
+- [System76](https://system76.com/) for COSMIC and Pop!_OS.
 
 ## License
 
-Flowsurface is released under [GPL-3.0-or-later](LICENSE).
-Some components use separate licenses:
+Orbit Tape is a fork of [Flowsurface](https://github.com/flowsurface-rs/flowsurface) and is released under [GPL-3.0-or-later](LICENSE). Some components use separate licenses:
 
-| Component                                                                               | License                                                                      |
-| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Application, data crate, and [bundled indicators](data/indicators/README.md)            | [GPL-3.0-or-later](LICENSE)                                                  |
-| Indicator engine and CLI                                                                | [Apache-2.0](indicator-engine/LICENSE)                                       |
+| Component | License |
+|---|---|
+| Application, data crate (`orbit-tape-data`), [bundled indicators](data/indicators/README.md), and [example indicators](examples/indicators/) | [GPL-3.0-or-later](LICENSE) |
+| Indicator engine and CLI (`orbit-tape-indicator-engine`, `orbit-tape-indicator`) | [Apache-2.0](indicator-engine/LICENSE) |
 | [Indicator catalog](https://github.com/flowsurface-rs/indicators) and its documentation | [Apache-2.0](https://github.com/flowsurface-rs/indicators/blob/main/LICENSE) |
-| Exchange adapters (`flowsurface-exchange`)                                              | [MIT](exchange/LICENSE)                                                      |
-
-Contributions follow the license of the component being changed; submit catalog indicators to the [indicators repository](https://github.com/flowsurface-rs/indicators/blob/main/CONTRIBUTING.md).
+| Exchange adapters (`orbit-tape-exchange`) | [MIT](exchange/LICENSE) |

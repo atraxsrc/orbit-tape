@@ -18,8 +18,6 @@ pub const AZERET_MONO: Font = Font {
     style: iced::font::Style::Normal,
 };
 
-pub const TITLE_PADDING_TOP: f32 = if cfg!(target_os = "macos") { 20.0 } else { 0.0 };
-
 /// Corner radii for widget borders.
 ///
 /// Window glass: like the radius, styles are plain functions of the theme, so
@@ -276,15 +274,6 @@ pub fn secondary_text(theme: &Theme) -> iced::widget::text::Style {
 
     iced::widget::text::Style {
         color: Some(palette.secondary.weak.color),
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub fn title_text(theme: &Theme) -> iced::widget::text::Style {
-    let palette = theme.extended_palette();
-
-    iced::widget::text::Style {
-        color: Some(palette.background.weakest.color),
     }
 }
 

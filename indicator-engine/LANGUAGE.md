@@ -1,8 +1,10 @@
 # Indicator language
 
 A `.ind` file defines an indicator's inputs, calculations, and presentation.
-See [installation](https://github.com/flowsurface-rs/indicators#install-and-run) and the [CLI](README.md#cli) for
-file naming, collections, and validation.
+See [custom indicators](../docs/custom-indicators.md) for where files go and
+how to load them in Orbit Tape, and the [CLI](README.md#cli) for file naming,
+collections, and validation. The [examples](../examples/indicators/) are short
+commented sources.
 
 ## Contents
 
@@ -188,7 +190,7 @@ Raw trade arrays are unavailable. Plot offsets change presentation only.
 
 Scripts cannot access files, networks, other symbols, strategies,
 or alerts. `varip`, maps, and mutable drawing/table handles are unsupported.
-Flowsurface replays affected indicators when historical data changes.
+Orbit Tape replays affected indicators when historical data changes.
 
 ## Inputs and source composition
 
@@ -666,7 +668,7 @@ copy-work limits.
 
 ## Resource limits
 
-Flowsurface and CLI `test` use these limits. Closed bars and open previews have
+Orbit Tape and CLI `test` use these limits. Closed bars and open previews have
 the same per-bar budget. Exceeding a limit fails evaluation.
 
 | Limit | Maximum |

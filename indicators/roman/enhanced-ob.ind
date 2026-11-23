@@ -12,7 +12,7 @@
 // Differences from the Pine version:
 //   - The settings guide table is left out.
 //   - Alerts are boolean outputs (bull_formed, bear_formed, mitigated) for
-//     Flowsurface alerts instead of alert() calls.
+//     Orbit Tape alerts instead of alert() calls.
 //   - "Higher Timeframe for Confirmation" takes the engine's timeframe names
 //     (240, 4H, D, W, M) and is not checked against the chart timeframe.
 

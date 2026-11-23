@@ -1,0 +1,59 @@
+name: Debian package
+
+# Builds the .deb on Ubuntu 24.04 (the base of Pop!_OS 24.04, so the package
+# needs no newer glibc than that) when a version tag is pushed, and attaches
+# it to the GitHub release together with a SHA256SUMS file.
+on:
+    push:
+        tags: ["v*"]
+
+permissions:
+    contents: write
+
+jobs:
+    deb:
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Read rust toolchain from rust-toolchain.toml
+              id: rust_toolchain
+              run: |
+                  channel="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)"[[:space:]]*$/\1/p' rust-toolchain.toml)"
+                  test -n "$channel"
+                  echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+            - uses: dtolnay/rust-toolchain@v1
+              with:
+                  toolchain: ${{ steps.rust_toolchain.outputs.channel }}
+
+            - name: Install build dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y build-essential pkg-config libasound2-dev
+
+            - name: Check that the tag matches the crate version
+              id: version
+              run: |
+                  version=$(sed -nE '/^\[workspace.package\]/,/^\[/ s/^version = "([^"]+)"/\1/p' Cargo.toml)
+                  test "${GITHUB_REF_NAME}" = "v${version}"
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+
+            - name: Build the .deb
+              run: bash scripts/package-deb.sh --output "target/debian/orbit-tape_${{ steps.version.outputs.version }}_amd64.deb"
+
+            - name: Checksums
+              working-directory: target/debian
+              run: |
+                  sha256sum "orbit-tape_${{ steps.version.outputs.version }}_amd64.deb" > SHA256SUMS
+                  cat SHA256SUMS
+
+            - name: Attach to the release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ github.ref_name }}
+                  name: Orbit Tape ${{ github.ref_name }}
+                  fail_on_unmatched_files: true
+                  files: |
+                      target/debian/orbit-tape_${{ steps.version.outputs.version }}_amd64.deb
+                      target/debian/SHA256SUMS

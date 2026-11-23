@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Volume delta: buy volume minus sell volume for each bar, as a histogram in
+// its own panel, green when buyers dominated and red when sellers did.
+//
+// Shows: trade-based inputs (chart.buy_qty / chart.sell_qty), handling bars
+// without trade data (na), a histogram, and coloring by a boolean output.
+
+language(1)
+indicator("Volume Delta", id = "example.volume-delta", max_bars_back = 1,
+    optional_trades = true,
+    description = "Per-bar buy minus sell volume.")
+display(layer_name = "Volume Delta")
+format(precision = "base_ticker_min_qty", axis_labels = "abbreviated", header_labels = "commas")
+
+// Buy/sell volume needs trade data. Without it the delta is `na` and nothing
+// is drawn for that bar.
+has_trades = chart.directional_volume_available
+delta = select(has_trades, chart.buy_qty - chart.sell_qty, na)
+
+// A boolean output used only to pick the bar color.
+buyers = delta >= 0
+plot(buyers, id = "buyers", title = "Buyers dominated", layer = false)
+
+plot(delta, id = "value", title = "Delta", precision = "instrument", style = "histogram",
+    style_by = "buyers", true_color_slot = "buy", false_color_slot = "sell", overlay = false)
+
+style("buy", title = "Buy delta", role = "success")
+style("sell", title = "Sell delta", role = "danger")

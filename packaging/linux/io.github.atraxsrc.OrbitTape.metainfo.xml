@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.atraxsrc.OrbitTape</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Orbit Tape</name>
+  <summary>Native crypto charting desk for the COSMIC desktop</summary>
+  <developer id="io.github.atraxsrc">
+    <name>atraxsrc</name>
+  </developer>
+  <description>
+    <p>
+      Orbit Tape is a COSMIC-focused fork of Flowsurface, a native desktop
+      charting app for crypto markets. It streams trades and order books
+      straight from the exchanges and draws them as heatmaps, footprint and
+      candlestick charts, time and sales, and a DOM ladder.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Order book heatmap, candlestick footprint and volume profile charts</li>
+      <li>Scriptable indicators with desktop alerts</li>
+      <li>Follows the COSMIC theme, including light and dark mode</li>
+      <li>Binance, Bybit, Hyperliquid, OKX and MEXC market data</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.atraxsrc.OrbitTape.desktop</launchable>
+  <provides>
+    <binary>orbit-tape</binary>
+    <binary>orbit-tape-indicator</binary>
+  </provides>
+  <url type="homepage">https://github.com/atraxsrc/orbit-tape</url>
+  <url type="bugtracker">https://github.com/atraxsrc/orbit-tape/issues</url>
+  <url type="vcs-browser">https://github.com/atraxsrc/orbit-tape</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Candlestick, heatmap and order flow panes</caption>
+      <image>https://raw.githubusercontent.com/atraxsrc/orbit-tape/main/assets/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Finance</category>
+    <category>Office</category>
+  </categories>
+  <keywords>
+    <keyword>crypto</keyword>
+    <keyword>orderbook</keyword>
+    <keyword>heatmap</keyword>
+    <keyword>footprint</keyword>
+    <keyword>trading</keyword>
+  </keywords>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.9.0" date="2026-11-24">
+      <description>
+        <p>First Orbit Tape release: Linux and COSMIC only, new name and icon,
+        indicator alerts, COSMIC theme and frosted glass support.</p>
+      </description>
+    </release>
+  </releases>
+</component>

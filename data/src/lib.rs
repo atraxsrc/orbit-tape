@@ -5,6 +5,7 @@ pub mod config;
 pub mod layout;
 pub mod log;
 pub mod metadata;
+pub mod migration;
 pub mod panel;
 pub mod stream;
 pub mod tickers_table;
@@ -179,21 +180,29 @@ pub fn open_url(url: &str) -> Result<(), InternalError> {
     }
 }
 
+/// Folder name under the XDG data directory.
+pub const APP_DIR_NAME: &str = "orbit-tape";
+
+/// Overrides the data directory (all settings, layouts, indicators, logs).
+pub const DATA_PATH_ENV: &str = "ORBIT_TAPE_DATA_PATH";
+
 pub fn data_path(path_name: Option<&str>) -> PathBuf {
-    if let Ok(path) = std::env::var("FLOWSURFACE_DATA_PATH") {
-        let root = PathBuf::from(path);
-        match path_name {
-            Some(name) => root.join(name),
-            None => root,
-        }
-    } else {
-        let data_dir = dirs_next::data_dir().unwrap_or_else(|| PathBuf::from("."));
-        if let Some(path_name) = path_name {
-            data_dir.join("flowsurface").join(path_name)
-        } else {
-            data_dir.join("flowsurface")
-        }
+    let root = data_root();
+    match path_name {
+        Some(name) => root.join(name),
+        None => root,
     }
+}
+
+fn data_root() -> PathBuf {
+    if let Some(path) = std::env::var_os(DATA_PATH_ENV)
+        .or_else(|| std::env::var_os(migration::LEGACY_DATA_PATH_ENV))
+    {
+        return PathBuf::from(path);
+    }
+    dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(APP_DIR_NAME)
 }
 
 fn cleanup_directory(data_path: &PathBuf) -> usize {

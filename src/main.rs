@@ -1,8 +1,9 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+/// Reverse-DNS app ID; also the Wayland app_id, the .desktop file name and the
+/// icon name, so COSMIC matches windows to the launcher entry.
+pub const APP_ID: &str = "io.github.atraxsrc.OrbitTape";
 
 mod alerts;
 mod audio;
-#[cfg(target_os = "linux")]
 mod blur;
 mod connector;
 mod deferred;
@@ -50,8 +51,29 @@ use std::sync::Arc;
 fn main() {
     logger::install_panic_hook();
 
+    // Before the logger, which creates the data directory.
+    let migration = data::migration::migrate_legacy_data_dir();
+
     if let Err(err) = logger::setup(cfg!(debug_assertions)) {
         logger::report_stderr(&format!("Failed to initialize logger: {err}"));
+    }
+
+    match migration {
+        data::migration::Outcome::NotNeeded => {}
+        data::migration::Outcome::Copied { from, to } => {
+            log::info!(
+                "Copied Flowsurface data from {} to {} (the old folder is unchanged)",
+                from.display(),
+                to.display()
+            );
+        }
+        data::migration::Outcome::Failed { from, to, error } => {
+            log::error!(
+                "Failed to copy Flowsurface data from {} to {}: {error}",
+                from.display(),
+                to.display()
+            );
+        }
     }
 
     if let Err(error) = data::initialize_indicator_catalog() {
@@ -64,9 +86,9 @@ fn main() {
     let boot = data::load_boot_settings();
 
     let daemon = iced::daemon(
-        move || Flowsurface::new(boot),
-        Flowsurface::update,
-        Flowsurface::view,
+        move || OrbitTape::new(boot),
+        OrbitTape::update,
+        OrbitTape::view,
     )
     .settings(iced::Settings {
         antialiasing: boot.antialiasing,
@@ -77,11 +99,11 @@ fn main() {
         default_text_size: style::text_size::BODY.into(),
         ..Default::default()
     })
-    .title(Flowsurface::title)
-    .theme(Flowsurface::theme)
-    .style(Flowsurface::style)
-    .scale_factor(Flowsurface::scale_factor)
-    .subscription(Flowsurface::subscription);
+    .title(OrbitTape::title)
+    .theme(OrbitTape::theme)
+    .style(OrbitTape::style)
+    .scale_factor(OrbitTape::scale_factor)
+    .subscription(OrbitTape::subscription);
 
     if let Err(err) = daemon.run() {
         let message = format!("Runtime error: {err}");
@@ -92,7 +114,7 @@ fn main() {
 
 const COSMIC_THEME_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
-struct Flowsurface {
+struct OrbitTape {
     main_window: window::Window,
     sidebar: screen::sidebar::Sidebar,
     layout_manager: LayoutManager,
@@ -138,7 +160,7 @@ enum Message {
     PollCosmicTheme,
 }
 
-impl Flowsurface {
+impl OrbitTape {
     fn new(boot: data::BootSettings) -> (Self, Task<Message>) {
         let saved_state = layout::load_saved_state();
 
@@ -759,27 +781,7 @@ impl Flowsurface {
                     event: msg,
                 });
 
-            let header_title = {
-                #[cfg(target_os = "macos")]
-                {
-                    iced::widget::center(
-                        text("FLOWSURFACE")
-                            .font(iced::Font {
-                                weight: iced::font::Weight::Bold,
-                                ..Default::default()
-                            })
-                            .size(crate::style::text_size::TITLE)
-                            .style(style::title_text),
-                    )
-                    .height(20)
-                    .align_y(Alignment::Center)
-                    .padding(padding::top(4))
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    column![]
-                }
-            };
+            let header_title = { column![] };
 
             let dashboard_row = match sidebar_pos {
                 sidebar::Position::Left => row![sidebar_view, dashboard_view],
@@ -810,7 +812,6 @@ impl Flowsurface {
                         event: msg,
                     }),
             )
-            .padding(padding::top(style::TITLE_PADDING_TOP))
             .into()
         };
 
@@ -845,9 +846,9 @@ impl Flowsurface {
 
     fn title(&self, _window: window::Id) -> String {
         if let Some(id) = self.layout_manager.active_layout_id() {
-            format!("Flowsurface [{}]", id.name)
+            format!("OrbitTape [{}]", id.name)
         } else {
-            "Flowsurface".to_string()
+            "Orbit Tape".to_string()
         }
     }
 
@@ -959,7 +960,6 @@ impl Flowsurface {
 
     /// Blurs what is behind the windows while their background is see-through.
     fn sync_blur(&self) {
-        #[cfg(target_os = "linux")]
         blur::set_all(self.theme.window_opacity() < 1.0);
     }
 
@@ -984,7 +984,6 @@ impl Flowsurface {
                         scale_factor,
                     }
                 });
-                #[cfg(target_os = "linux")]
                 let blur = {
                     let blurred = self.theme.window_opacity() < 1.0;
                     iced::window::run(window_id, move |window| {
@@ -992,13 +991,10 @@ impl Flowsurface {
                     })
                     .discard()
                 };
-                #[cfg(not(target_os = "linux"))]
-                let blur = Task::none();
                 Task::batch([scale_factor, blur])
             }
-            window::Event::Closed(_window_id) => {
-                #[cfg(target_os = "linux")]
-                blur::detach(_window_id);
+            window::Event::Closed(window_id) => {
+                blur::detach(window_id);
                 Task::none()
             }
             window::Event::Rescaled(window_id, scale_factor) => {

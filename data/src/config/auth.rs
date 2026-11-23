@@ -2,7 +2,44 @@ use exchange::proxy::{Proxy, ProxyAuth};
 
 // ── Proxy auth (keychain) ───────────────────────────────────────────────
 
-const PROXY_KEYCHAIN_SERVICE: &str = "flowsurface.proxy";
+const PROXY_KEYCHAIN_SERVICE: &str = "orbit-tape.proxy";
+/// Service name used before the rename from Flowsurface; read as a fallback.
+const LEGACY_PROXY_KEYCHAIN_SERVICE: &str = "flowsurface.proxy";
+
+/// Removes the entry an older Flowsurface install stored, so a credential the
+/// user deleted does not come back through the fallback in [`get_secret`].
+fn delete_legacy_secret(legacy_service: &str, key: &str) {
+    let result =
+        keyring::Entry::new(legacy_service, key).and_then(|entry| entry.delete_credential());
+    match result {
+        Ok(()) => log::info!("Deleted legacy keychain entry (service={legacy_service} key={key})"),
+        Err(keyring::Error::NoEntry) => {}
+        Err(err) => log::warn!(
+            "Failed to delete legacy keychain entry (service={legacy_service} key={key}): {err}"
+        ),
+    }
+}
+
+/// Reads a secret, falling back to the entry an older Flowsurface install
+/// stored. A legacy secret is copied to the new service and left in place.
+fn get_secret(service: &str, legacy_service: &str, key: &str) -> Result<String, keyring::Error> {
+    let entry = keyring::Entry::new(service, key)?;
+    match entry.get_password() {
+        Err(keyring::Error::NoEntry) => {
+            let secret = keyring::Entry::new(legacy_service, key)?.get_password()?;
+            match entry.set_password(&secret) {
+                Ok(()) => log::info!(
+                    "Copied keychain secret from service={legacy_service} to service={service} key={key}"
+                ),
+                Err(err) => log::warn!(
+                    "Failed to copy keychain secret from service={legacy_service} to service={service} key={key}: {err}"
+                ),
+            }
+            Ok(secret)
+        }
+        result => result,
+    }
+}
 
 fn proxy_entry_for(proxy: &Proxy) -> Result<keyring::Entry, keyring::Error> {
     let key = proxy.to_url_string_no_auth();
@@ -16,17 +53,7 @@ fn proxy_entry_for(proxy: &Proxy) -> Result<keyring::Entry, keyring::Error> {
 pub fn load_proxy_auth(proxy: &Proxy) -> Option<ProxyAuth> {
     let key = proxy.to_url_string_no_auth();
 
-    let entry = match proxy_entry_for(proxy) {
-        Ok(e) => e,
-        Err(err) => {
-            log::warn!(
-                "Keychain entry init failed for service={PROXY_KEYCHAIN_SERVICE} key={key}: {err}"
-            );
-            return None;
-        }
-    };
-
-    let secret = match entry.get_password() {
+    let secret = match get_secret(PROXY_KEYCHAIN_SERVICE, LEGACY_PROXY_KEYCHAIN_SERVICE, &key) {
         Ok(s) => s,
         Err(err) => {
             log::info!(
@@ -99,6 +126,7 @@ pub fn save_proxy_auth(proxy: &Proxy) {
 /// Silently succeeds if no credential exists.
 pub fn delete_proxy_auth(proxy: &Proxy) {
     let key = proxy.to_url_string_no_auth();
+    delete_legacy_secret(LEGACY_PROXY_KEYCHAIN_SERVICE, &key);
     let entry = match proxy_entry_for(proxy) {
         Ok(e) => e,
         Err(err) => {
@@ -121,7 +149,9 @@ pub fn delete_proxy_auth(proxy: &Proxy) {
 
 // ── Server auth (keychain) ──────────────────────────────────────────────
 
-const SERVER_KEYCHAIN_SERVICE: &str = "flowsurface.server";
+const SERVER_KEYCHAIN_SERVICE: &str = "orbit-tape.server";
+/// Service name used before the rename from Flowsurface; read as a fallback.
+const LEGACY_SERVER_KEYCHAIN_SERVICE: &str = "flowsurface.server";
 
 fn server_entry_for(url: &str) -> Result<keyring::Entry, keyring::Error> {
     keyring::Entry::new(SERVER_KEYCHAIN_SERVICE, url)
@@ -132,17 +162,7 @@ fn server_entry_for(url: &str) -> Result<keyring::Entry, keyring::Error> {
 /// Returns `None` if no token is stored, the keychain is unavailable,
 /// or the stored value is not valid UTF-8.
 pub fn load_server_token(url: &str) -> Option<String> {
-    let entry = match server_entry_for(url) {
-        Ok(e) => e,
-        Err(err) => {
-            log::warn!(
-                "Keychain entry init failed for service={SERVER_KEYCHAIN_SERVICE} key={url}: {err}"
-            );
-            return None;
-        }
-    };
-
-    match entry.get_password() {
+    match get_secret(SERVER_KEYCHAIN_SERVICE, LEGACY_SERVER_KEYCHAIN_SERVICE, url) {
         Ok(token) => {
             log::info!(
                 "Loaded server auth token from keychain (service={SERVER_KEYCHAIN_SERVICE} key={url})"
@@ -192,6 +212,7 @@ pub fn save_server_token(url: &str, token: &str) {
 ///
 /// Silently succeeds if no credential exists.
 pub fn delete_server_token(url: &str) {
+    delete_legacy_secret(LEGACY_SERVER_KEYCHAIN_SERVICE, url);
     let entry = match server_entry_for(url) {
         Ok(e) => e,
         Err(err) => {

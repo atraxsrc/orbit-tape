@@ -101,13 +101,11 @@ impl Dashboard {
 
         let mut popout = HashMap::new();
 
-        if window::MULTI_WINDOW_SUPPORTED {
-            for (pane, specs) in popout_windows {
-                popout.insert(
-                    window::Id::unique(),
-                    (pane_grid::State::with_configuration(pane), specs),
-                );
-            }
+        for (pane, specs) in popout_windows {
+            popout.insert(
+                window::Id::unique(),
+                (pane_grid::State::with_configuration(pane), specs),
+            );
         }
 
         Self {
@@ -120,8 +118,6 @@ impl Dashboard {
     }
 
     pub fn load_layout(&mut self, main_window: window::Id) -> Task<Message> {
-        debug_assert!(window::MULTI_WINDOW_SUPPORTED || self.popout.is_empty());
-
         let mut open_popouts_tasks: Vec<Task<Message>> = vec![];
         let mut new_popout = Vec::new();
         let mut keys_to_remove = Vec::new();
@@ -454,8 +450,7 @@ impl Dashboard {
     }
 
     fn popout_pane(&mut self, main_window: &Window) -> Task<Message> {
-        if window::MULTI_WINDOW_SUPPORTED
-            && let Some((_, id)) = self.focus.take()
+        if let Some((_, id)) = self.focus.take()
             && let Some((pane, _)) = self.panes.close(id)
         {
             let (window, task) = window::open(window::Settings {

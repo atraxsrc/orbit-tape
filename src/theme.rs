@@ -116,15 +116,10 @@ impl ThemeState {
             .filter(|_| follows_cosmic_glass(self.glass))
     }
 
-    /// Window background opacity in use, `1.0` = opaque. Only Linux gets a
-    /// see-through window (see `window::settings`).
+    /// Window background opacity in use, `1.0` = opaque.
     pub fn window_opacity(&self) -> f32 {
-        if cfg!(target_os = "linux") {
-            self.glass
-                .effective_opacity(self.cosmic_glass().map(CosmicGlass::window_opacity))
-        } else {
-            1.0
-        }
+        self.glass
+            .effective_opacity(self.cosmic_glass().map(CosmicGlass::window_opacity))
     }
 
     fn apply_glass(&self) {
@@ -288,15 +283,11 @@ mod tests {
         });
         // A COSMIC reading is ignored while the glass is set by hand.
         assert!(state.cosmic_glass().is_none());
-        if cfg!(target_os = "linux") {
-            assert_eq!(state.window_opacity(), 0.6);
-        }
+        assert_eq!(state.window_opacity(), 0.6);
 
         state.glass.follow_cosmic = true;
         assert!(state.polls_cosmic());
-        if cfg!(target_os = "linux") {
-            assert_eq!(state.window_opacity(), 0.8);
-        }
+        assert_eq!(state.window_opacity(), 0.8);
 
         state.glass.enabled = false;
         assert!(!state.polls_cosmic());

@@ -30,7 +30,8 @@ impl IndicatorCatalogPaths {
 }
 
 fn default_installed_directory() -> PathBuf {
-    std::env::var_os("FLOWSURFACE_INDICATORS_PATH")
+    std::env::var_os("ORBIT_TAPE_INDICATORS_PATH")
+        .or_else(|| std::env::var_os("FLOWSURFACE_INDICATORS_PATH"))
         .map(PathBuf::from)
         .unwrap_or_else(|| data_path(Some("indicators")))
 }
@@ -288,7 +289,7 @@ mod tests {
     #[test]
     fn origins_and_full_ids_control_collection_loading() {
         let root =
-            std::env::temp_dir().join(format!("flowsurface-host-loading-{}", std::process::id()));
+            std::env::temp_dir().join(format!("orbit-tape-host-loading-{}", std::process::id()));
         let bundled = root.join("bundled");
         let installed = root.join("installed");
         std::fs::create_dir_all(&bundled).unwrap();
@@ -323,10 +324,51 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// The example indicators in the repository load the way a user's
+    /// indicators folder does, and the crossover's alert plots survive.
+    #[test]
+    fn example_indicators_load_as_installed_sources() {
+        let examples =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/indicators");
+        let paths = IndicatorCatalogPaths {
+            bundled_directory: None,
+            installed_directory: examples,
+            additional_files: Vec::new(),
+        };
+        let sources = load_catalog_sources(&paths).unwrap();
+        assert!(sources.diagnostics.is_empty(), "{:?}", sources.diagnostics);
+        let mut ids = sources
+            .installed
+            .iter()
+            .map(|registration| registration.id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(
+            ids,
+            [
+                "example.ema-crossover",
+                "example.volume-delta",
+                "example.vwap-bands"
+            ]
+        );
+        let crossover = sources
+            .installed
+            .iter()
+            .find(|registration| registration.id.as_str() == "example.ema-crossover")
+            .unwrap();
+        let alerts = crossover
+            .definition
+            .outputs
+            .iter()
+            .filter(|output| output.alert)
+            .count();
+        assert_eq!(alerts, 2);
+    }
+
     #[test]
     fn embedded_bundle_initializes_without_a_source_directory() {
         let root =
-            std::env::temp_dir().join(format!("flowsurface-host-embedded-{}", std::process::id()));
+            std::env::temp_dir().join(format!("orbit-tape-host-embedded-{}", std::process::id()));
         let paths = IndicatorCatalogPaths {
             bundled_directory: None,
             installed_directory: root.clone(),

@@ -1,7 +1,7 @@
 # Optional indicators
 
 Scripts in this folder are not bundled into the app. Each one is a `.ind`
-source file in Flowsurface's indicator language
+source file in Orbit Tape's indicator language
 ([indicator-engine/LANGUAGE.md](../indicator-engine/LANGUAGE.md)).
 
 | Script | ID | Ported from |
@@ -12,7 +12,7 @@ source file in Flowsurface's indicator language
 ## Tests
 
 `roman/tests/` holds 3000 Binance BTCUSDT perpetual 1H candles. `cargo test -p
-flowsurface-indicator-engine --test roman_ports` checks:
+orbit-tape-indicator-engine --test roman_ports` checks:
 
 - Roman Setup against values exported from the original Pine script on TradingView
   (bias, 50% fib, all four zone slots with breaker state, HTF MSS, SFP and LTF MSS events)
@@ -25,36 +25,36 @@ flowsurface-indicator-engine --test roman_ports` checks:
 ## Install
 
 Copy a script into the app's indicators folder, keeping its namespace folder,
-then restart Flowsurface:
+then restart Orbit Tape:
 
 ```sh
-mkdir -p ~/.local/share/flowsurface/indicators/roman
-cp indicators/roman/enhanced-ob.ind ~/.local/share/flowsurface/indicators/roman/
+mkdir -p ~/.local/share/orbit-tape/indicators/roman
+cp indicators/roman/enhanced-ob.ind ~/.local/share/orbit-tape/indicators/roman/
 ```
 
-`FLOWSURFACE_INDICATORS_PATH` points the app at another folder. While working
+`ORBIT_TAPE_INDICATORS_PATH` points the app at another folder. While working
 on a script, load it directly instead:
 
 ```sh
-./target/release/flowsurface --indicator-path indicators/roman/enhanced-ob.ind
+./target/release/orbit-tape --indicator-path indicators/roman/enhanced-ob.ind
 ```
 
 ## Alerts
 
 Both scripts mark their signal plots with `alert = true`: HTF bias flips, HTF
 SFPs, LTF MSS and counter-trend MSS (Roman Setup), and OB formed / mitigated
-(Enhanced OB). With a chart showing the indicator, Flowsurface sends a desktop
+(Enhanced OB). With a chart showing the indicator, Orbit Tape sends a desktop
 notification and a chime when one is true on a newly closed bar. Turn single
 conditions off under Settings > Alerts. After updating a script, copy it again
 (or load it with `--indicator-path`) and restart.
 
 ## Check a script against candles
 
-`flowsurface-indicator run` evaluates a script on a candle CSV and writes every
+`orbit-tape-indicator run` evaluates a script on a candle CSV and writes every
 plot's value per bar, so the output can be compared with another platform:
 
 ```sh
-cargo run --release -p flowsurface-indicator-engine --bin flowsurface-indicator -- \
+cargo run --release -p orbit-tape-indicator-engine --bin orbit-tape-indicator -- \
   run indicators/roman/enhanced-ob.ind --bars candles.csv --out values.csv \
   --regions regions.csv --min-tick 0.1 --input mitigationType=Close
 ```

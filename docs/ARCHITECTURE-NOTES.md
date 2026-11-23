@@ -1,16 +1,16 @@
 # Architecture notes (fork)
 
-A short map of the parts of Flowsurface that matter for the fork's theming,
+A short map of the parts of the codebase (inherited from Flowsurface) that matter for the fork's theming,
 chart and indicator work. Based on upstream 0.9.0 (commit `bc545fc`).
 
 ## Workspace
 
 | Crate | Path | Role |
 | --- | --- | --- |
-| `flowsurface` | `src/` | iced app: windows, dashboard, panes, widgets, modals |
-| `flowsurface-data` | `data/` | Persisted state, layouts, theme palette, chart models, indicator host |
-| `flowsurface-exchange` | `exchange/` | Exchange adapters (REST + WebSocket), market types |
-| `flowsurface-indicator-engine` | `indicator-engine/` | Compiler and runtime for `.ind` indicator scripts (Apache-2.0) |
+| `orbit-tape` | `src/` | iced app: windows, dashboard, panes, widgets, modals |
+| `orbit-tape-data` | `data/` | Persisted state, layouts, theme palette, chart models, indicator host |
+| `orbit-tape-exchange` | `exchange/` | Exchange adapters (REST + WebSocket), market types |
+| `orbit-tape-indicator-engine` | `indicator-engine/` | Compiler and runtime for `.ind` indicator scripts (Apache-2.0) |
 
 - iced **0.14.0** from crates.io (features: `wgpu`, `canvas`, `advanced`, `x11`,
   `wayland`, ...). Not a fork, so libcosmic (which ships its own iced fork) cannot
@@ -19,7 +19,7 @@ chart and indicator work. Based on upstream 0.9.0 (commit `bc545fc`).
 
 ## App shell
 
-- `src/main.rs`: `iced::daemon` with `Flowsurface` as the state. `update`,
+- `src/main.rs`: `iced::daemon` with `OrbitTape` as the state. `update`,
   `view(window)`, `theme(window)`, `subscription`. Multi-window.
 - `subscription()` batches: window events, sidebar, exchange streams
   (`Dashboard::market_subscriptions`), a per-frame `Tick`, and hotkeys. A COSMIC
@@ -31,11 +31,11 @@ chart and indicator work. Based on upstream 0.9.0 (commit `bc545fc`).
 
 - `data/src/config/theme.rs`: `data::Theme(iced_core::Theme)` with custom serde
   (built-ins by name, custom themes as a palette). `default_theme()` is the
-  "Flowsurface" custom palette. Accent colors for series are derived from the
+  "Orbit Tape" custom palette. Accent colors for series are derived from the
   palette (`generated_theme_accents`, OKLCH hue placement away from signal hues).
 - `src/theme.rs`: `ThemeState` holds the current theme and derived accents with a
   generation counter, so charts know when to recolor.
-- `Flowsurface::replace_theme` swaps the theme and calls
+- `OrbitTape::replace_theme` swaps the theme and calls
   `Dashboard::theme_updated`, which pushes it to every pane
   (`content.update_theme`). This is the hook for live COSMIC updates.
 - `src/style.rs`: every widget style is a function of `&Theme` and reads the
@@ -55,7 +55,7 @@ libcosmic if the `cosmic-theme` crate drags in its iced fork.
 
 - `data/src/config/state.rs`: `State` (serde, `#[serde(default)]`) written to
   `saved-state.json` in the data dir (`data::data_path`, override with
-  `FLOWSURFACE_DATA_PATH`). Holds layouts, selected/custom theme, timezone,
+  `ORBIT_TAPE_DATA_PATH`). Holds layouts, selected/custom theme, timezone,
   sidebar, scale factor, audio, network, flattened `BootSettings`.
 - New settings (for example "Follow COSMIC theme") go into `State` with a serde
   default, so old files still load.
@@ -101,7 +101,7 @@ starting over.
   history changes.
 - Picker and settings dialog already exist (Indicators sidebar, `+` opens the
   catalog browser). Instances persist per pane in the layout.
-- CLI: `flowsurface-indicator check|test` validates `.ind` sources.
+- CLI: `orbit-tape-indicator check|test` validates `.ind` sources.
 
 ## Exchange streams
 
@@ -121,7 +121,7 @@ starting over.
   (engine) and `OutputChannelSpec::alert` (host). Each kline pane owns an
   `AlertWatch` (`data/src/chart/kline/alerts.rs`) that remembers the newest closed
   bar it checked per indicator instance; the first look only sets that baseline,
-  so history never fires. `Flowsurface::poll_alerts` collects hits from every
+  so history never fires. `OrbitTape::poll_alerts` collects hits from every
   pane twice a second and `src/alerts.rs` drops duplicates and muted conditions,
   then sends a freedesktop notification (`notify-rust`, on a background thread)
   and a synthesized chime. Settings live in `data::config::alerts::Alerts`

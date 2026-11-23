@@ -74,7 +74,7 @@ impl AlertCenter {
     pub fn test(&mut self, settings: &Alerts) -> Option<String> {
         if settings.notification {
             notify(
-                "Flowsurface test alert".to_owned(),
+                "Orbit Tape test alert".to_owned(),
                 "Alerts will look like this.".to_owned(),
             );
         }
@@ -156,7 +156,7 @@ fn notify(summary: String, body: String) {
         .name("alert-notification".to_owned())
         .spawn(move || {
             let result = notify_rust::Notification::new()
-                .appname("Flowsurface")
+                .appname("Orbit Tape")
                 .summary(&summary)
                 .body(&body)
                 .icon("appointment-soon")

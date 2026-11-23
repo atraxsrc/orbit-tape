@@ -8,7 +8,7 @@
 //! the pivot tie rule. Enhanced OB is checked against an independent
 //! re-implementation of its Pine logic.
 
-use flowsurface_indicator_engine::{
+use orbit_tape_indicator_engine::{
     ChartFrame, FrameOutput, IndicatorConfig, IndicatorFrame, InputValue, InstrumentContext,
     TimeOrTick, Value, compile,
 };

@@ -16,7 +16,6 @@ jobs:
             - uses: actions/checkout@v4
 
             - name: Install Linux system dependencies
-              if: runner.os == 'Linux'
               run: |
                   sudo apt-get update
                   sudo apt-get install -y build-essential pkg-config libasound2-dev
@@ -54,19 +53,19 @@ jobs:
 
             - name: Test indicator engine
               if: github.event_name == 'workflow_dispatch'
-              run: cargo test -p flowsurface-indicator-engine --locked
+              run: cargo test -p orbit-tape-indicator-engine --locked
 
             - name: Test application
               if: github.event_name == 'workflow_dispatch'
-              run: cargo test -p flowsurface --bin flowsurface --locked
+              run: cargo test -p orbit-tape --bin orbit-tape --locked
 
             - name: Validate repository indicator sources
               if: github.event_name == 'workflow_dispatch'
-              run: cargo test -p flowsurface-data --lib --locked
+              run: cargo test -p orbit-tape-data --lib --locked
 
             - name: Smoke-test bundled indicator sources
               if: github.event_name == 'workflow_dispatch'
-              run: cargo run --locked -p flowsurface-indicator-engine --bin flowsurface-indicator -- test data/indicators/sources --namespace core
+              run: cargo run --locked -p orbit-tape-indicator-engine --bin orbit-tape-indicator -- test data/indicators/sources --namespace core
 
             - name: Verify workspace packages
               if: github.event_name == 'workflow_dispatch'

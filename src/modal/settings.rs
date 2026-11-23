@@ -200,11 +200,7 @@ impl Settings {
             col.spacing(4)
         };
 
-        let glass_section: Element<'_, Message> = if cfg!(target_os = "linux") {
-            glass_view(theme)
-        } else {
-            column![].into()
-        };
+        let glass_section = glass_view(theme);
 
         let toggle_theme_editor = button(text("Theme editor")).on_press(Message::Sidebar(
             sidebar::Message::ToggleSidebarMenu(Some(Menu::ThemeEditor)),
@@ -443,8 +439,30 @@ impl Settings {
             }
         };
 
+        let attribution = {
+            let upstream = button(
+                text(format!("Based on {}", version::UPSTREAM_NAME))
+                    .size(crate::style::text_size::SMALL),
+            )
+            .padding(0)
+            .style(style::button::text_link_secondary)
+            .on_press(Message::OpenUrl(Cow::Borrowed(version::UPSTREAM_URL)));
+            column![
+                text("Orbit Tape").size(crate::style::text_size::EMPHASIS),
+                upstream,
+                text("GPL-3.0-or-later")
+                    .size(crate::style::text_size::SMALL)
+                    .style(style::secondary_text),
+            ]
+            .spacing(2)
+            .align_x(Alignment::End)
+        };
+
         let footer = column![
             container(version_info)
+                .width(iced::Length::Fill)
+                .align_x(Alignment::End),
+            container(attribution)
                 .width(iced::Length::Fill)
                 .align_x(Alignment::End),
         ]
