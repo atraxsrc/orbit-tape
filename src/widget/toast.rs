@@ -534,7 +534,7 @@ fn styled(pair: theme::palette::Pair) -> container::Style {
         border: Border {
             width: 1.0,
             color: pair.color,
-            radius: 2.0.into(),
+            radius: crate::style::radius::of(2.0),
         },
         ..Default::default()
     }

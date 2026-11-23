@@ -47,6 +47,7 @@ impl ThemeState {
         let cosmic_stamp = ThemeStamp::read();
         let cosmic = source.follows_cosmic().then(load_cosmic).flatten();
         let effective = effective_theme(&selected, source, cosmic.as_ref());
+        apply_radii(source, cosmic.as_ref());
 
         Self {
             accents: ThemeAccents::from_theme(&effective, 0),
@@ -93,6 +94,7 @@ impl ThemeState {
     }
 
     fn recompute(&mut self) -> bool {
+        apply_radii(self.source, self.cosmic.as_ref());
         let effective = effective_theme(&self.selected, self.source, self.cosmic.as_ref());
         if effective == self.effective {
             return false;
@@ -138,6 +140,14 @@ fn effective_theme(
         (ThemeSource::Cosmic, Some(cosmic)) => cosmic.to_iced_theme(),
         _ => selected.0.clone(),
     }
+}
+
+/// Sets the widget corner radii to COSMIC's when it is followed.
+fn apply_radii(source: ThemeSource, cosmic: Option<&CosmicTheme>) {
+    let radii = cosmic
+        .filter(|_| source.follows_cosmic())
+        .map(|theme| (theme.radius_xs, theme.radius_s));
+    crate::style::radius::set_cosmic(radii);
 }
 
 fn load_cosmic() -> Option<CosmicTheme> {

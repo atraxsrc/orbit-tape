@@ -177,7 +177,7 @@ impl ThemeEditor {
                         palette.danger.base.color
                     },
                     width: 1.0,
-                    radius: 2.0.into(),
+                    radius: crate::style::radius::of(2.0),
                 },
                 ..default(theme, status)
             }
