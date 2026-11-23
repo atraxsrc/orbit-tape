@@ -52,6 +52,9 @@ pub struct State {
     pub network: Network,
     pub size_in_quote_ccy: exchange::SizeUnit,
     pub cache_market_metadata: bool,
+    /// Address of the indicator catalog's `catalog.json`; empty means the
+    /// `ORBIT_TAPE_CATALOG_URL` variable or the built-in placeholder.
+    pub indicator_catalog_url: String,
     #[serde(flatten)]
     pub boot: BootSettings,
 }
@@ -89,6 +92,7 @@ impl State {
             network,
             size_in_quote_ccy: volume_size_unit,
             cache_market_metadata,
+            indicator_catalog_url: String::new(),
             boot,
         }
     }

@@ -57,11 +57,12 @@ impl SharedChartResources {
         &mut self,
         message: CatalogMessage,
         catalog_http: &reqwest::Client,
+        catalog_url: &str,
     ) -> Task<CatalogMessage> {
         let fetch = |started: bool| {
             if started {
                 Task::perform(
-                    catalog::fetch(catalog_http.clone()),
+                    catalog::fetch(catalog_url.to_owned(), catalog_http.clone()),
                     CatalogMessage::Fetched,
                 )
             } else {
@@ -132,6 +133,7 @@ pub struct SavedState {
     pub volume_size_unit: exchange::SizeUnit,
     pub network: data::Network,
     pub cache_market_metadata: bool,
+    pub indicator_catalog_url: String,
 }
 
 impl SavedState {
@@ -165,6 +167,7 @@ impl Default for SavedState {
             volume_size_unit: exchange::SizeUnit::default(),
             network: data::Network::default(),
             cache_market_metadata: false,
+            indicator_catalog_url: String::new(),
         }
     }
 }
@@ -420,6 +423,7 @@ pub fn load_saved_state() -> SavedState {
                 volume_size_unit: state.size_in_quote_ccy,
                 network,
                 cache_market_metadata: state.cache_market_metadata,
+                indicator_catalog_url: state.indicator_catalog_url,
             }
         }
         Err(e) => {

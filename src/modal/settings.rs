@@ -32,6 +32,7 @@ pub enum Message {
     OpenUrl(Cow<'static, str>),
     Sidebar(sidebar::Message),
     Alert(AlertChange),
+    CatalogUrlChanged(String),
 }
 
 /// An edit to the alert settings.
@@ -88,6 +89,9 @@ pub struct Settings {
     pub volume_size_unit: Deferred<exchange::SizeUnit>,
     pub boot: Deferred<data::BootSettings>,
     pub alerts: Alerts,
+    /// Saved catalog address; empty means the default (see
+    /// `manifest::resolve_catalog_url`).
+    pub indicator_catalog_url: String,
 }
 
 impl Settings {
@@ -97,6 +101,7 @@ impl Settings {
         volume_size_unit: exchange::SizeUnit,
         boot: data::BootSettings,
         alerts: Alerts,
+        indicator_catalog_url: String,
     ) -> Self {
         Self {
             timezone,
@@ -104,6 +109,7 @@ impl Settings {
             volume_size_unit: Deferred::new(volume_size_unit),
             boot: Deferred::new(boot),
             alerts,
+            indicator_catalog_url,
         }
     }
 
@@ -141,6 +147,7 @@ impl Settings {
             Message::OpenDataFolder => return Some(Action::OpenDataFolder),
             Message::OpenUrl(url) => return Some(Action::OpenUrl(url)),
             Message::Sidebar(message) => return Some(Action::Sidebar(message)),
+            Message::CatalogUrlChanged(url) => self.indicator_catalog_url = url,
             Message::Alert(change) => match change {
                 AlertChange::Enabled(on) => self.alerts.enabled = on,
                 AlertChange::Notification(on) => self.alerts.notification = on,
@@ -475,6 +482,7 @@ impl Settings {
             column![text("Market data").size(crate::style::text_size::SECTION), column![size_in_quote_ccy_checkbox, cache_metadata_checkbox].spacing(4)].spacing(12),
             column![text("Theme").size(crate::style::text_size::SECTION), follow_cosmic, theme_picklist, glass_section,].spacing(12),
             column![text("Alerts").size(crate::style::text_size::SECTION), alerts_view(&self.alerts),].spacing(12),
+            column![text("Indicator catalog").size(crate::style::text_size::SECTION), catalog_url_view(&self.indicator_catalog_url),].spacing(12),
             column![text("Interface scale").size(crate::style::text_size::SECTION), scale_factor,].spacing(12),
             column![text("Rendering").size(crate::style::text_size::SECTION), antialiasing_checkbox,].spacing(12),
             column![
@@ -568,6 +576,23 @@ fn glass_view(theme: &ThemeState) -> Element<'_, Message> {
 
 /// Alert delivery toggles and the list of alert conditions the loaded
 /// indicators declare.
+/// The catalog.json address the indicator browser loads.
+fn catalog_url_view(url: &str) -> Element<'_, Message> {
+    let input = iced::widget::text_input(
+        data::chart::kline::indicators::manifest::DEFAULT_CATALOG_URL,
+        url,
+    )
+    .on_input(Message::CatalogUrlChanged)
+    .size(crate::style::text_size::BODY);
+    column![
+        input,
+        text("HTTPS address of a catalog.json made with orbit-tape-indicator catalog. Press Refresh in the browser after changing it.")
+            .size(crate::style::text_size::SMALL),
+    ]
+    .spacing(4)
+    .into()
+}
+
 fn alerts_view(alerts: &Alerts) -> Element<'_, Message> {
     let enabled = tooltip(
         checkbox(alerts.enabled)

@@ -197,6 +197,7 @@ impl OrbitTape {
             saved_state.volume_size_unit,
             boot,
             saved_state.alerts,
+            saved_state.indicator_catalog_url,
         );
         let network = Deferred::new(saved_state.network);
 
@@ -1022,7 +1023,13 @@ impl OrbitTape {
 
     fn update_shared_chart_resources(&mut self, message: manifest::Message) -> Task<Message> {
         self.layout_manager
-            .update_chart_resources(message, &self.data_sources.catalog_http)
+            .update_chart_resources(
+                message,
+                &self.data_sources.catalog_http,
+                &data::chart::kline::indicators::manifest::resolve_catalog_url(
+                    &self.settings.indicator_catalog_url,
+                ),
+            )
             .map(Message::SharedChartResources)
     }
 
@@ -1435,6 +1442,11 @@ impl OrbitTape {
             self.sidebar.cache_enabled(),
             *self.settings.boot.wanted(),
         );
+
+        let state = data::State {
+            indicator_catalog_url: self.settings.indicator_catalog_url.trim().to_owned(),
+            ..state
+        };
 
         match serde_json::to_string(&state) {
             Ok(layout_str) => {

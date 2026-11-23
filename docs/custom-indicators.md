@@ -116,14 +116,19 @@ indicators folder. Before publishing:
 
 ```sh
 orbit-tape-indicator test mytools --namespace mytools
-orbit-tape-indicator catalog mytools --output catalog.json --namespace mytools
+orbit-tape-indicator catalog mytools --output mytools/catalog.json --namespace mytools
 ```
 
-`catalog.json` lists every indicator with its checksum, for catalog sites. The
-in-app catalog browser shows the upstream
-[Flowsurface indicator catalog](https://github.com/flowsurface-rs/indicators);
-see its contributing guide to submit indicators there. Pick a license for your
-files; the examples and built-in indicators are GPL-3.0-or-later.
+`catalog.json` lists every indicator with its path (relative to the catalog
+file), size and SHA-256 checksum. To serve it to the in-app catalog browser,
+commit the folder with its `catalog.json` to a GitHub repository and set
+**Settings > Indicator catalog** to the file's raw address, for example
+`https://raw.githubusercontent.com/<user>/<repo>/main/mytools/catalog.json`
+(or set `ORBIT_TAPE_CATALOG_URL`). The browser downloads each source from
+next to the catalog file and refuses it if the size or checksum differs, so
+regenerate `catalog.json` after every edit. Any HTTPS static host works.
+Pick a license for your files; the examples and built-in indicators are
+GPL-3.0-or-later.
 
 ## Troubleshooting
 

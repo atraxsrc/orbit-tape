@@ -180,8 +180,9 @@ Then add it to a candlestick chart from the indicator sidebar (**+**).
 - Language reference: [indicator-engine/LANGUAGE.md](indicator-engine/LANGUAGE.md)
 - Commented examples: [examples/indicators/](examples/indicators/)
 - Optional Roman Setup and Order Block ports: [indicators/](indicators/README.md)
-- Shared indicators: the in-app catalog browser lists the upstream
-  [Flowsurface indicator catalog](https://github.com/flowsurface-rs/indicators).
+- Shared indicators: the in-app catalog browser loads a `catalog.json` from an
+  HTTPS address you set under Settings > Indicator catalog (for example a raw
+  GitHub URL), see [Sharing a collection](docs/custom-indicators.md#sharing-a-collection).
 
 ## Where files are stored
 
@@ -257,5 +258,4 @@ Orbit Tape is a fork of [Flowsurface](https://github.com/flowsurface-rs/flowsurf
 |---|---|
 | Application, data crate (`orbit-tape-data`), [bundled indicators](data/indicators/README.md), and [example indicators](examples/indicators/) | [GPL-3.0-or-later](LICENSE) |
 | Indicator engine and CLI (`orbit-tape-indicator-engine`, `orbit-tape-indicator`) | [Apache-2.0](indicator-engine/LICENSE) |
-| [Indicator catalog](https://github.com/flowsurface-rs/indicators) and its documentation | [Apache-2.0](https://github.com/flowsurface-rs/indicators/blob/main/LICENSE) |
 | Exchange adapters (`orbit-tape-exchange`) | [MIT](exchange/LICENSE) |
