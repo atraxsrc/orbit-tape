@@ -28,6 +28,17 @@ An open-source native desktop charting application for crypto markets. Supports 
 - Multi window/monitor support on macOS and Linux.[\*](#platform-notes)
 - Persistent layouts, chart presets, themes with editable color palettes.
 
+## Fork changes
+
+This fork of [Flowsurface](https://github.com/flowsurface-rs/flowsurface) by its upstream authors
+aims to look native on the [COSMIC](https://system76.com/cosmic) desktop. Changes so far:
+
+- **Follow COSMIC theme** (Settings → Theme, on by default): uses the COSMIC desktop's
+  light/dark mode, background, text, accent, success/warning/destructive colors and corner
+  radii, and follows changes live. Picking a built-in theme turns it off. On other desktops,
+  or when the COSMIC config can't be read, the selected theme is used. Candle and indicator
+  colors follow the palette roles and can still be set per chart.
+
 ## Market Data
 
 **Live:** Trades, orderbook, and kline updates stream from exchange WebSocket feeds.
