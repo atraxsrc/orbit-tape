@@ -318,8 +318,14 @@ impl KlineChart {
                         .drawings
                         .add_price_alert(anchor, &chart_settings.drawing),
                     context_menu::Message::ArmAlert(id) => self.drawings.set_alert(id, true),
-                    context_menu::Message::RemoveAlert(id) => self.drawings.set_alert(id, false),
+                    // Removing an alert from the menu removes its line too; the
+                    // line toolbar's Alert checkbox keeps the line.
+                    context_menu::Message::RemoveAlert(id) => self.drawings.update(
+                        drawing::Event::Tools(DrawingMessage::DeleteDrawing(id)),
+                        &mut chart_settings.drawing,
+                    ),
                 };
+                log::info!("chart menu: {message:?} -> {update:?}");
                 self.apply_drawing_update(update);
             }
             Message::Chart(event) => {

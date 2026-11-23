@@ -2331,3 +2331,51 @@ impl DrawingTools {
         }
     }
 }
+
+#[cfg(test)]
+mod price_alert_tests {
+    use super::*;
+    use data::chart::kline::YUnit;
+
+    fn anchor() -> DrawingAnchor {
+        DrawingAnchor {
+            panel_id: PanelId::Main,
+            x: DrawingX::Time(exchange::UnixMs::new(60_000)),
+            y_unit: YUnit(1000),
+        }
+    }
+
+    #[test]
+    fn remove_alert_clears_it() {
+        let mut state = DrawingState::default();
+        let settings = DrawingSettings::default();
+        assert!(matches!(
+            state.add_price_alert(anchor(), &settings),
+            DrawingUpdate::AtomicEdit
+        ));
+        let id = state.tools.active_drawings()[0].id;
+        assert!(
+            state.tools.active_drawings()[0]
+                .armed_alert_level()
+                .is_some()
+        );
+        let update = state.set_alert(id, false);
+        assert!(matches!(update, DrawingUpdate::AtomicEdit), "{update:?}");
+        assert_eq!(state.tools.active_drawings()[0].alert, None);
+        assert_eq!(state.tools.time_drawings()[0].alert, None);
+    }
+
+    #[test]
+    fn deleting_alert_line_removes_it() {
+        let mut state = DrawingState::default();
+        let mut settings = DrawingSettings::default();
+        state.add_price_alert(anchor(), &settings);
+        let id = state.tools.active_drawings()[0].id;
+        let update = state.update(
+            Event::Tools(DrawingMessage::DeleteDrawing(id)),
+            &mut settings,
+        );
+        assert!(matches!(update, DrawingUpdate::AtomicEdit), "{update:?}");
+        assert!(state.tools.time_drawings().is_empty());
+    }
+}
