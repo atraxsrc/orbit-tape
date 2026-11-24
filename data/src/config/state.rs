@@ -43,6 +43,9 @@ pub struct State {
     pub custom_theme: Option<Theme>,
     pub theme_source: ThemeSource,
     pub glass: Glass,
+    /// Accent colors set by hand in the theme editor, as `#rrggbb` hex. An
+    /// empty slot keeps the COSMIC palette's or the generated color.
+    pub accent_colors: [Option<String>; super::theme::ACCENT_COUNT],
     pub main_window: Option<WindowSpec>,
     pub timezone: UserTimezone,
     pub sidebar: Sidebar,
@@ -83,6 +86,7 @@ impl State {
             custom_theme: custom_theme.map(|t| Theme(t.0)),
             theme_source,
             glass,
+            accent_colors: Default::default(),
             main_window,
             timezone,
             sidebar,

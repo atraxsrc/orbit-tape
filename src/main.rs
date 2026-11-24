@@ -221,7 +221,8 @@ impl OrbitTape {
                 saved_state.theme,
                 saved_state.theme_source,
                 saved_state.glass,
-            ),
+            )
+            .with_accent_overrides(saved_state.accent_colors),
             notifications: Notifications::new(),
             alert_center: alerts::AlertCenter::default(),
             alert_history: data::config::alert_history::AlertHistory::load(),
@@ -599,7 +600,7 @@ impl OrbitTape {
             Message::IndicatorsReloaded(result) => self.indicators_reloaded(result),
             Message::AlertHistory(message) => return self.update_alert_history(message),
             Message::ThemeEditor(msg) => {
-                let action = self.theme_editor.update(msg, self.theme.current());
+                let action = self.theme_editor.update(msg, &self.theme);
 
                 match action {
                     Some(modal::theme_editor::Action::Exit) => {
@@ -607,6 +608,10 @@ impl OrbitTape {
                     }
                     Some(modal::theme_editor::Action::UpdateTheme(theme)) => {
                         self.select_theme(theme);
+                    }
+                    Some(modal::theme_editor::Action::SetAccent(index, color)) => {
+                        let changed = self.theme.set_accent(index, color);
+                        self.theme_changed(changed);
                     }
                     None => {}
                 }
@@ -619,6 +624,10 @@ impl OrbitTape {
                     Some(Action::ThemeSelected(theme)) => {
                         self.theme_editor.reset_input();
                         self.select_theme(theme);
+                    }
+                    Some(Action::EditAccent(index)) => {
+                        self.theme_editor.focus_accent(index);
+                        self.sidebar.set_menu(Some(sidebar::Menu::ThemeEditor));
                     }
                     Some(Action::SetThemeSource(source)) => {
                         let changed = self.theme.set_source(source);
@@ -1364,7 +1373,7 @@ impl OrbitTape {
                 dashboard_modal(
                     base,
                     self.theme_editor
-                        .view(self.theme.current())
+                        .view(&self.theme)
                         .map(Message::ThemeEditor),
                     Message::Sidebar(screen::sidebar::Message::ToggleSidebarMenu(None)),
                     padding,
@@ -1452,6 +1461,10 @@ impl OrbitTape {
 
         let state = data::State {
             indicator_catalog_url: self.settings.indicator_catalog_url.trim().to_owned(),
+            accent_colors: self
+                .theme
+                .accent_overrides()
+                .map(|color| color.map(data::config::theme::color_to_hex)),
             ..state
         };
 

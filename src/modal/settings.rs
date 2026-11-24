@@ -21,6 +21,8 @@ use iced::{
 pub enum Message {
     ThemeSelected(iced::Theme),
     SetFollowCosmic(bool),
+    /// Opens the theme editor on one accent color.
+    EditAccent(usize),
     Glass(GlassChange),
     TimezoneChanged(data::UserTimezone),
     SetMetadataCaching(bool),
@@ -54,6 +56,7 @@ pub enum Action {
     Persist,
     ThemeSelected(iced::Theme),
     SetThemeSource(ThemeSource),
+    EditAccent(usize),
     Glass(GlassChange),
     SetMetadataCaching(bool),
     RefreshMetadata,
@@ -132,6 +135,7 @@ impl Settings {
                 self.scale_factor = value;
             }
             Message::ThemeSelected(theme) => return Some(Action::ThemeSelected(theme)),
+            Message::EditAccent(index) => return Some(Action::EditAccent(index)),
             Message::SetFollowCosmic(follow) => {
                 return Some(Action::SetThemeSource(if follow {
                     ThemeSource::Cosmic
@@ -208,6 +212,22 @@ impl Settings {
         };
 
         let glass_section = glass_view(theme);
+
+        let accent_section = column![
+            text("Accent colors").size(crate::style::text_size::SMALL),
+            tooltip(
+                crate::modal::theme_editor::accent_squares(
+                    theme,
+                    crate::modal::theme_editor::Component::Background,
+                    Message::EditAccent,
+                ),
+                Some(
+                    "Colors for indicators and drawings.\n- Click a square to set any color, by picker or hex.\n- Colors set by hand stay when the theme or COSMIC palette changes.",
+                ),
+                Position::Top,
+            ),
+        ]
+        .spacing(4);
 
         let toggle_theme_editor = button(text("Theme editor")).on_press(Message::Sidebar(
             sidebar::Message::ToggleSidebarMenu(Some(Menu::ThemeEditor)),
@@ -480,7 +500,7 @@ impl Settings {
             column![text("Sidebar position").size(crate::style::text_size::SECTION), sidebar_pos_picklist,].spacing(12),
             column![text("Time zone").size(crate::style::text_size::SECTION), timezone_picklist,].spacing(12),
             column![text("Market data").size(crate::style::text_size::SECTION), column![size_in_quote_ccy_checkbox, cache_metadata_checkbox].spacing(4)].spacing(12),
-            column![text("Theme").size(crate::style::text_size::SECTION), follow_cosmic, theme_picklist, glass_section,].spacing(12),
+            column![text("Theme").size(crate::style::text_size::SECTION), follow_cosmic, theme_picklist, accent_section, glass_section,].spacing(12),
             column![text("Alerts").size(crate::style::text_size::SECTION), alerts_view(&self.alerts),].spacing(12),
             column![text("Indicator catalog").size(crate::style::text_size::SECTION), catalog_url_view(&self.indicator_catalog_url),].spacing(12),
             column![text("Interface scale").size(crate::style::text_size::SECTION), scale_factor,].spacing(12),

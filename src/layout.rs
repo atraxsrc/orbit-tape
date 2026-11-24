@@ -128,6 +128,8 @@ pub struct SavedState {
     pub custom_theme: Option<data::Theme>,
     pub theme_source: data::config::cosmic::ThemeSource,
     pub glass: data::config::glass::Glass,
+    /// Hand-set accent colors; `None` keeps the palette's.
+    pub accent_colors: crate::theme::AccentOverrides,
     pub audio_cfg: data::AudioStream,
     pub alerts: data::config::alerts::Alerts,
     pub volume_size_unit: exchange::SizeUnit,
@@ -162,6 +164,7 @@ impl Default for SavedState {
             custom_theme: None,
             theme_source: data::config::cosmic::ThemeSource::default(),
             glass: data::config::glass::Glass::default(),
+            accent_colors: Default::default(),
             audio_cfg: data::AudioStream::default(),
             alerts: data::config::alerts::Alerts::default(),
             volume_size_unit: exchange::SizeUnit::default(),
@@ -413,6 +416,9 @@ pub fn load_saved_state() -> SavedState {
                 custom_theme: state.custom_theme,
                 theme_source: state.theme_source,
                 glass: state.glass,
+                accent_colors: state
+                    .accent_colors
+                    .map(|hex| hex.as_deref().and_then(data::config::theme::hex_to_color)),
                 layout_manager,
                 main_window: state.main_window,
                 timezone: state.timezone,

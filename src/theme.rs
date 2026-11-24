@@ -9,18 +9,26 @@ pub struct ThemeAccents {
     generation: u64,
 }
 
+/// Accent colors set by hand; `None` keeps the palette's color.
+pub type AccentOverrides = [Option<Color>; ACCENT_COUNT];
+
 impl ThemeAccents {
-    /// The COSMIC palette's accents when given, else colors generated from
-    /// the theme.
+    /// The hand-set accents where given; the rest from the COSMIC palette
+    /// when given, else generated from the theme.
     fn new(
         theme: &Theme,
         cosmic: Option<[Color; data::config::cosmic::PALETTE_ACCENT_COUNT]>,
+        overrides: &AccentOverrides,
         generation: u64,
     ) -> Self {
-        Self {
-            colors: cosmic.unwrap_or_else(|| generated_theme_accents(theme.extended_palette())),
-            generation,
+        let mut colors =
+            cosmic.unwrap_or_else(|| generated_theme_accents(theme.extended_palette()));
+        for (color, set) in colors.iter_mut().zip(overrides) {
+            if let Some(set) = set {
+                *color = *set;
+            }
         }
+        Self { colors, generation }
     }
 
     pub fn as_array(&self) -> &[Color; ACCENT_COUNT] {
@@ -47,6 +55,7 @@ pub struct ThemeState {
     /// The theme actually in use.
     effective: Theme,
     accents: ThemeAccents,
+    accent_overrides: AccentOverrides,
     glass: Glass,
     /// COSMIC's frosted glass setting, read while the glass follows it.
     cosmic_glass: Option<CosmicGlass>,
@@ -68,7 +77,13 @@ impl ThemeState {
         );
 
         let state = Self {
-            accents: ThemeAccents::new(&effective, cosmic_accents(source, cosmic.as_ref()), 0),
+            accents: ThemeAccents::new(
+                &effective,
+                cosmic_accents(source, cosmic.as_ref()),
+                &[None; ACCENT_COUNT],
+                0,
+            ),
+            accent_overrides: [None; ACCENT_COUNT],
             selected,
             source,
             cosmic,
@@ -81,6 +96,27 @@ impl ThemeState {
         };
         state.apply_glass();
         state
+    }
+
+    /// Starts with these hand-set accent colors.
+    pub fn with_accent_overrides(mut self, overrides: AccentOverrides) -> Self {
+        self.accent_overrides = overrides;
+        self.recompute();
+        self
+    }
+
+    /// Sets one accent color by hand, or with `None` gives it back to the
+    /// palette. Returns whether the colors in use changed.
+    pub fn set_accent(&mut self, index: usize, color: Option<Color>) -> bool {
+        let Some(slot) = self.accent_overrides.get_mut(index) else {
+            return false;
+        };
+        *slot = color;
+        self.recompute()
+    }
+
+    pub fn accent_overrides(&self) -> AccentOverrides {
+        self.accent_overrides
     }
 
     /// Selects a built-in or custom theme. Returns whether the effective theme
@@ -166,6 +202,7 @@ impl ThemeState {
         let accents = ThemeAccents::new(
             &effective,
             cosmic_accents(self.source, self.cosmic.as_ref()),
+            &self.accent_overrides,
             generation,
         );
         if effective == self.effective && accents.colors == self.accents.colors {
@@ -374,6 +411,47 @@ mod tests {
         });
         assert!(state.recompute());
         assert_eq!(state.accents().as_array()[0], Color::WHITE);
+    }
+
+    #[test]
+    fn hand_set_accents_override_the_palette() {
+        let palette: [Color; ACCENT_COUNT] =
+            std::array::from_fn(|i| Color::from_rgb(i as f32 / 10.0, 0.5, 0.5));
+        let mut state = ThemeState::new(
+            data::Theme(Theme::Nord),
+            ThemeSource::Selected,
+            manual_glass(),
+        );
+        state.cosmic = Some(CosmicTheme {
+            accents: Some(palette),
+            ..cosmic()
+        });
+        state.source = ThemeSource::Cosmic;
+        state.recompute();
+        let before = state.accents().generation();
+
+        assert!(state.set_accent(2, Some(Color::WHITE)));
+        assert_eq!(state.accents().as_array()[2], Color::WHITE);
+        assert_eq!(state.accents().as_array()[1], palette[1]);
+        assert_ne!(state.accents().generation(), before);
+        // Setting the same color again changes nothing.
+        assert!(!state.set_accent(2, Some(Color::WHITE)));
+
+        // A palette edit leaves the hand-set color alone.
+        let mut changed = palette;
+        changed[2] = Color::BLACK;
+        changed[3] = Color::BLACK;
+        state.cosmic = Some(CosmicTheme {
+            accents: Some(changed),
+            ..cosmic()
+        });
+        assert!(state.recompute());
+        assert_eq!(state.accents().as_array()[2], Color::WHITE);
+        assert_eq!(state.accents().as_array()[3], Color::BLACK);
+
+        assert!(state.set_accent(2, None));
+        assert_eq!(state.accents().as_array()[2], Color::BLACK);
+        assert!(!state.set_accent(ACCENT_COUNT, Some(Color::WHITE)));
     }
 
     #[test]
