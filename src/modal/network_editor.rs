@@ -17,6 +17,7 @@ pub enum Action {
         mode: fetcher::TradeFetchMode,
         url: Option<String>,
         auth_token: Option<String>,
+        accept_invalid_certs: bool,
     },
     Exit,
 }
@@ -57,6 +58,7 @@ impl NetworkEditor {
                 &wanted.trade_fetch_mode,
                 wanted.server_url.as_deref(),
                 wanted.server_auth_token.as_deref(),
+                wanted.server_accept_invalid_certs,
             ),
             confirm: ConfirmState::Idle,
             error: None,
@@ -97,6 +99,7 @@ impl NetworkEditor {
                 &wanted.trade_fetch_mode,
                 wanted.server_url.as_deref(),
                 wanted.server_auth_token.as_deref(),
+                wanted.server_accept_invalid_certs,
             )
             .map(Message::Fetch);
 
@@ -439,6 +442,7 @@ struct FetchForm {
     draft_active: bool,
     draft_tag: FetchModeTag,
     hide_token: bool,
+    accept_invalid_certs: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -450,6 +454,7 @@ pub enum FetchModeTag {
 #[derive(Debug, Clone)]
 pub enum FetchMsg {
     ToggleShowToken(bool),
+    ToggleAcceptInvalidCerts(bool),
     ServerUrlChanged(String),
     ServerAuthTokenChanged(String),
     ToggleFetchTrades(bool),
@@ -466,6 +471,7 @@ impl FetchForm {
         effective_mode: &fetcher::TradeFetchMode,
         effective_url: Option<&str>,
         effective_auth_token: Option<&str>,
+        effective_accept_invalid_certs: bool,
     ) -> Self {
         Self {
             server_url_input: effective_url.unwrap_or("").to_string(),
@@ -477,6 +483,7 @@ impl FetchForm {
                 _ => FetchModeTag::Exchange,
             },
             hide_token: true,
+            accept_invalid_certs: effective_accept_invalid_certs,
         }
     }
 
@@ -513,9 +520,15 @@ impl FetchForm {
         effective_mode: &fetcher::TradeFetchMode,
         effective_url: Option<&str>,
         effective_auth: Option<&str>,
+        effective_accept_invalid_certs: bool,
     ) -> bool {
         let draft_mode = self.build_mode();
         if draft_mode != *effective_mode {
+            return true;
+        }
+        if draft_mode == fetcher::TradeFetchMode::Server
+            && self.accept_invalid_certs != effective_accept_invalid_certs
+        {
             return true;
         }
         if (draft_mode == fetcher::TradeFetchMode::Server
@@ -533,6 +546,7 @@ impl FetchForm {
         effective_mode: &'a fetcher::TradeFetchMode,
         effective_url: Option<&'a str>,
         effective_auth: Option<&'a str>,
+        effective_accept_invalid_certs: bool,
     ) -> Element<'a, FetchMsg> {
         let selected_tag = if self.draft_active {
             Some(self.draft_tag)
@@ -608,11 +622,26 @@ impl FetchForm {
                     .spacing(4)
                     .align_y(iced::Alignment::Center);
 
-                    Some(
-                        column![server_input, auth_token_input]
-                            .align_x(iced::Alignment::End)
-                            .spacing(6),
-                    )
+                    let tls_checkbox = row![
+                        iced::widget::space::horizontal(),
+                        checkbox(self.accept_invalid_certs)
+                            .label("Accept invalid TLS certificates")
+                            .on_toggle(FetchMsg::ToggleAcceptInvalidCerts),
+                    ]
+                    .align_y(iced::Alignment::Center);
+
+                    let mut config = column![server_input, auth_token_input, tls_checkbox]
+                        .align_x(iced::Alignment::End)
+                        .spacing(6);
+                    if self.accept_invalid_certs {
+                        config = config.push(banner(
+                            "Certificate checks are off for this server: anyone on the \
+                             network path can read or change its data and see the auth \
+                             token. Use only for a self-signed server on a network you trust.",
+                            BannerKind::Warning,
+                        ));
+                    }
+                    Some(config)
                 } else {
                     None
                 };
@@ -630,7 +659,12 @@ impl FetchForm {
         }
 
         // Pending = draft differs from the effective (applied) config
-        let pending = self.server_config_pending(effective_mode, effective_url, effective_auth);
+        let pending = self.server_config_pending(
+            effective_mode,
+            effective_url,
+            effective_auth,
+            effective_accept_invalid_certs,
+        );
         let draft_changed = pending;
         let has_server_config = effective_auth.is_some()
             || (*effective_mode == fetcher::TradeFetchMode::Server && effective_url.is_some());
@@ -683,6 +717,10 @@ impl FetchForm {
                 *confirm = ConfirmState::Idle;
                 *error = None;
             }
+            FetchMsg::ToggleAcceptInvalidCerts(v) => {
+                self.accept_invalid_certs = v;
+                *error = None;
+            }
             FetchMsg::ServerUrlChanged(v) => {
                 self.server_url_input = v;
                 *error = None;
@@ -728,6 +766,7 @@ impl FetchForm {
                     mode,
                     url,
                     auth_token,
+                    accept_invalid_certs: self.accept_invalid_certs,
                 });
             }
             FetchMsg::Cancel => {
@@ -744,10 +783,12 @@ impl FetchForm {
                 self.server_auth_token_input.clear();
                 self.draft_active = false;
                 self.expanded_server = false;
+                self.accept_invalid_certs = false;
                 return Some(Action::ApplyServerConfig {
                     mode: fetcher::TradeFetchMode::Off,
                     url: None,
                     auth_token: None,
+                    accept_invalid_certs: false,
                 });
             }
         }

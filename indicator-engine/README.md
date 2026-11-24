@@ -4,7 +4,7 @@ The Rust library and `orbit-tape-indicator` CLI compile and run `.ind` chart
 indicators. See [LANGUAGE.md](LANGUAGE.md) for authoring,
 [docs/custom-indicators.md](../docs/custom-indicators.md) for the full workflow
 (where files go, checking, loading in the app), and the
-[indicator catalog](https://github.com/flowsurface-rs/indicators#install-and-run) for shared indicators.
+[community indicator catalog](https://github.com/atraxsrc/orbit-tape-indicators) for shared indicators.
 
 ## CLI
 

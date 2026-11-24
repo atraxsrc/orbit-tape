@@ -5,34 +5,49 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// The placeholder catalog address. While it is in place, the browser asks
-/// for a real one (Settings > Indicator catalog, or `ORBIT_TAPE_CATALOG_URL`).
+/// The community catalog the indicator browser loads unless the user sets
+/// another one (Settings > Indicator catalog, or `ORBIT_TAPE_CATALOG_URL`).
 pub const DEFAULT_CATALOG_URL: &str =
-    "https://raw.githubusercontent.com/YOUR-GITHUB-USER/YOUR-REPO/main/catalog.json";
+    "https://raw.githubusercontent.com/atraxsrc/orbit-tape-indicators/main/catalog.json";
+
+/// Saved addresses from older versions that should fall back to the default:
+/// the upstream Flowsurface service and the old placeholder.
+fn is_legacy_catalog_url(url: &str) -> bool {
+    url.contains("YOUR-GITHUB-USER/YOUR-REPO")
+        || url::Url::parse(url).is_ok_and(|parsed| {
+            parsed
+                .host_str()
+                .is_some_and(|host| host == "flowsurface.com" || host.ends_with(".flowsurface.com"))
+        })
+}
+
+/// Clean a saved catalog setting: trimmed, and empty (the default) when it
+/// holds an address from an older version.
+pub fn normalize_catalog_setting(setting: &str) -> String {
+    let setting = setting.trim();
+    if is_legacy_catalog_url(setting) {
+        String::new()
+    } else {
+        setting.to_owned()
+    }
+}
 
 /// Pick the catalog address: the saved setting, then the
 /// `ORBIT_TAPE_CATALOG_URL` environment variable, then the default.
 pub fn resolve_catalog_url(setting: &str) -> String {
-    let setting = setting.trim();
+    let setting = normalize_catalog_setting(setting);
     if !setting.is_empty() {
-        return setting.to_owned();
+        return setting;
     }
     std::env::var("ORBIT_TAPE_CATALOG_URL")
         .ok()
-        .map(|value| value.trim().to_owned())
+        .map(|value| normalize_catalog_setting(&value))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| DEFAULT_CATALOG_URL.to_owned())
 }
 
-/// Check a catalog address before fetching it: HTTPS only, and not the
-/// placeholder.
+/// Check a catalog address before fetching it: HTTPS only.
 pub fn validate_catalog_url(url: &str) -> Result<url::Url, String> {
-    if url == DEFAULT_CATALOG_URL {
-        return Err(
-            "No indicator catalog is set. Add its catalog.json address under Settings > Indicator catalog."
-                .to_owned(),
-        );
-    }
     let parsed = url::Url::parse(url).map_err(|error| format!("Invalid catalog URL: {error}"))?;
     if parsed.scheme() != "https" || parsed.host_str().is_none() {
         return Err("The catalog URL must start with https://".to_owned());
@@ -406,14 +421,35 @@ mod tests {
     }
 
     #[test]
-    fn rejects_placeholder_and_plain_http() {
-        assert!(validate_catalog_url(DEFAULT_CATALOG_URL).is_err());
+    fn accepts_the_default_and_rejects_plain_http() {
+        assert!(validate_catalog_url(DEFAULT_CATALOG_URL).is_ok());
         assert!(validate_catalog_url("http://example.com/catalog.json").is_err());
         assert!(validate_catalog_url("https://example.com/catalog.json").is_ok());
         assert_eq!(
             resolve_catalog_url("  https://example.com/c.json "),
             "https://example.com/c.json"
         );
+    }
+
+    #[test]
+    fn legacy_saved_addresses_fall_back_to_the_default() {
+        for legacy in [
+            "https://api.flowsurface.com/v1/catalog",
+            " https://flowsurface.com/catalog.json ",
+            "https://raw.githubusercontent.com/YOUR-GITHUB-USER/YOUR-REPO/main/catalog.json",
+        ] {
+            assert_eq!(normalize_catalog_setting(legacy), "", "{legacy}");
+            assert!(
+                resolve_catalog_url(legacy) == DEFAULT_CATALOG_URL
+                    || std::env::var("ORBIT_TAPE_CATALOG_URL").is_ok(),
+                "{legacy}"
+            );
+        }
+        assert_eq!(
+            normalize_catalog_setting("https://notflowsurface.com/c.json"),
+            "https://notflowsurface.com/c.json"
+        );
+        assert_eq!(normalize_catalog_setting(""), "");
     }
 
     #[test]

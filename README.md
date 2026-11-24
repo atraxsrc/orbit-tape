@@ -184,9 +184,10 @@ Then add it to a candlestick chart from the indicator sidebar (**+**).
 - Language reference: [indicator-engine/LANGUAGE.md](indicator-engine/LANGUAGE.md)
 - Commented examples: [examples/indicators/](examples/indicators/)
 - Optional Roman Setup and Order Block ports: [indicators/](indicators/README.md)
-- Shared indicators: the in-app catalog browser loads a `catalog.json` from an
-  HTTPS address you set under Settings > Indicator catalog (for example a raw
-  GitHub URL), see [Sharing a collection](docs/custom-indicators.md#sharing-a-collection).
+- Shared indicators: the in-app catalog browser loads the community catalog
+  [orbit-tape-indicators](https://github.com/atraxsrc/orbit-tape-indicators)
+  when you open it. Settings > Indicator catalog points it at another
+  `catalog.json`, see [Sharing a collection](docs/custom-indicators.md#sharing-a-collection).
 
 ## Headless scan
 
@@ -200,7 +201,7 @@ Roman Setup (`roman-setup.ind`, from the indicators folder or the copy the
 
 The coins come from `~/.local/share/orbit-tape/scan-symbols.txt`, one per
 line (`#` starts a comment), plus an `exchange = okx` or `exchange = binance`
-line (OKX when there is none). The first run creates it with 66 coins; edit
+line (OKX when there is none). The first run creates it with 20 large-cap coins; edit
 it to change the list or the exchange, delete it to get the default back. Write coins as `PEPE`;
 `PEPEUSDT`, `1000PEPEUSDT` and `PEPE-USDT-SWAP` work too, and Binance's 1000x
 contracts are found automatically. OKX is slower to fetch (about 3 s per coin
@@ -215,8 +216,8 @@ orbit-tape scan --indicator ~/.local/share/orbit-tape/indicators/my.ind --timefr
 ```
 
 ```
-Scanning 66 pairs on OKX, this takes a few minutes for a long list...
-Roman Trade Setup (H12 to H1) on 66 OKX perps, 1h chart, 2000 bars, last 1 closed bar(s)
+Scanning 20 pairs on OKX, this takes a few minutes for a long list...
+Roman Trade Setup (H12 to H1) on 20 OKX perps, 1h chart, 2000 bars, last 1 closed bar(s)
 SYMBOL         LAST CLOSED BAR     CLOSE  SIGNALS
 BTC-USDT-SWAP  Tue 24 Nov 11:00  61303.9  -
 ADA-USDT-SWAP  Tue 24 Nov 11:00   0.1487  HTF Bearish SFP
@@ -292,7 +293,7 @@ Code map: [docs/ARCHITECTURE-NOTES.md](docs/ARCHITECTURE-NOTES.md).
 ## Privacy
 
 Orbit Tape has no telemetry, analytics or accounts. It talks to the exchanges
-you use and, only when you open it, the upstream indicator catalog. See
+you use and, only when you open it, the community indicator catalog on GitHub. See
 [PRIVACY.md](PRIVACY.md) for details.
 
 ## Credits

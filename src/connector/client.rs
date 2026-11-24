@@ -23,8 +23,12 @@ impl DataSources {
         let proxy = network.proxy.as_ref();
 
         let exchange_http = http_client("exchange", proxy, |builder| builder);
+        let accept_invalid = network.server_accept_invalid_certs;
+        if accept_invalid {
+            log::warn!("market-data server: TLS certificate checks are off (user setting)");
+        }
         let server_http = http_client("server", proxy, |builder| {
-            builder.danger_accept_invalid_certs(true)
+            builder.danger_accept_invalid_certs(accept_invalid)
         });
         let catalog_http = http_client("indicator catalog", proxy, |builder| {
             builder
