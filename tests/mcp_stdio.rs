@@ -86,6 +86,7 @@ fn mcp_server_lists_its_tools_over_stdio() {
             "key_levels",
             "list_alerts",
             "list_indicators",
+            "market_snapshot",
             "pause_alerts",
             "resume_alerts",
             "run_indicator",

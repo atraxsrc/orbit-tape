@@ -1357,9 +1357,46 @@ mod tests {
     const FIXTURE: &str = "indicators/market/tests/binance-btcusdt-perp-1h-20250601-20260115.csv";
 
     /// BTC 1h candles from a CSV; every other coin or timeframe is unlisted.
-    struct FixtureCandles;
+    pub(super) struct FixtureCandles;
 
-    fn fixture_info() -> TickerInfo {
+    /// Longer candles from the 1h fixture; only complete ones, like the
+    /// exchanges' closed candles.
+    fn aggregate(hours: &[Kline], timeframe: Timeframe) -> Vec<Kline> {
+        let per_bar = (timeframe.to_milliseconds() / Timeframe::H1.to_milliseconds()) as usize;
+        let mut groups: Vec<(u64, Vec<&Kline>)> = Vec::new();
+        for kline in hours {
+            let open = kline.time.floor_to(timeframe).as_u64();
+            match groups.last_mut() {
+                Some((time, group)) if *time == open => group.push(kline),
+                _ => groups.push((open, vec![kline])),
+            }
+        }
+        groups
+            .into_iter()
+            .filter(|(_, group)| group.len() == per_bar)
+            .map(|(time, group)| {
+                Kline::new(
+                    time,
+                    group[0].open.to_f64(),
+                    group
+                        .iter()
+                        .map(|k| k.high.to_f64())
+                        .fold(f64::MIN, f64::max),
+                    group
+                        .iter()
+                        .map(|k| k.low.to_f64())
+                        .fold(f64::MAX, f64::min),
+                    group[group.len() - 1].close.to_f64(),
+                    exchange::Volume::TotalOnly(exchange::unit::Qty::from_f64(
+                        group.iter().map(|k| k.volume.total().to_f64()).sum(),
+                    )),
+                    fixture_info().min_ticksize,
+                )
+            })
+            .collect()
+    }
+
+    pub(super) fn fixture_info() -> TickerInfo {
         TickerInfo::new(
             Ticker::new("BTCUSDT", Exchange::BinanceLinear),
             0.1,
@@ -1399,7 +1436,7 @@ mod tests {
             bars: usize,
         ) -> BoxFuture<'_, Result<Series, String>> {
             Box::pin(async move {
-                if coin != "BTC" || timeframe != Timeframe::H1 {
+                if coin != "BTC" {
                     return Err(format!("no {} USDT perpetual for {coin}", exchange.name()));
                 }
                 let ticker_info = TickerInfo::new(
@@ -1429,6 +1466,9 @@ mod tests {
                         )
                     })
                     .collect::<Vec<_>>();
+                if timeframe != Timeframe::H1 {
+                    klines = aggregate(&klines, timeframe);
+                }
                 let first = klines.len().saturating_sub(bars);
                 klines.drain(..first);
                 Ok(Series {
@@ -1463,15 +1503,15 @@ mod tests {
         }
     }
 
-    fn repo(path: &str) -> PathBuf {
+    pub(super) fn repo(path: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
     }
 
-    fn server_with(candles: Arc<dyn CandleSource>, paths: Paths) -> OrbitTapeMcp {
+    pub(super) fn server_with(candles: Arc<dyn CandleSource>, paths: Paths) -> OrbitTapeMcp {
         OrbitTapeMcp::new(paths, candles)
     }
 
-    fn paths() -> Paths {
+    pub(super) fn paths() -> Paths {
         Paths {
             indicator_folders: vec![repo("indicators")],
             symbols_file: repo("target/no-such-scan-symbols.txt"),
@@ -1482,11 +1522,11 @@ mod tests {
         }
     }
 
-    fn server() -> OrbitTapeMcp {
+    pub(super) fn server() -> OrbitTapeMcp {
         server_with(Arc::new(FixtureCandles), paths())
     }
 
-    fn block_on<T>(future: impl Future<Output = T>) -> T {
+    pub(super) fn block_on<T>(future: impl Future<Output = T>) -> T {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1494,7 +1534,7 @@ mod tests {
             .block_on(future)
     }
 
-    fn parse(result: Result<String, String>) -> Json {
+    pub(super) fn parse(result: Result<String, String>) -> Json {
         serde_json::from_str(&result.expect("tool succeeds")).unwrap()
     }
 
