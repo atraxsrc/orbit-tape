@@ -1040,7 +1040,7 @@ fn format_indicator_color(value: u64) -> String {
 }
 
 /// Fits `#AARRGGBB`, so every theme color box in a group ends at the same x.
-const RESOLVED_HEX_WIDTH: f32 = 88.0;
+const RESOLVED_HEX_WIDTH: f32 = 64.0;
 
 /// The hex a resolved color draws with: `#RRGGBB` when opaque, else `#AARRGGBB`.
 fn format_resolved_hex(color: iced::Color) -> String {
@@ -1104,8 +1104,7 @@ fn indicator_color_control<'a>(
             text(format_resolved_hex(resolved))
                 .size(crate::style::text_size::SMALL)
                 .style(style::text_color::muted)
-                .width(Length::Fixed(RESOLVED_HEX_WIDTH))
-                .align_x(iced::alignment::Horizontal::Right),
+                .width(Length::Fixed(RESOLVED_HEX_WIDTH)),
         );
     }
     let mut content = column![field].spacing(8);
