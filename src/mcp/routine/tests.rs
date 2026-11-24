@@ -169,3 +169,34 @@ fn roman_setups_apply_the_rules_to_the_universe() {
         assert!(out[group].is_array());
     }
 }
+
+#[test]
+fn spot_status_from_the_plan_and_spot_candles() {
+    let status = |date: &str| {
+        parse(block_on(server().spot_status(Parameters(SpotParams {
+            date: Some(date.to_owned()),
+        }))))
+    };
+    // The fixture's BTC closes at 95567.3; the example plan's levels are far
+    // below it.
+    let out = status("2027-07-20");
+    assert_eq!(out["pair"], "BTC-USDT");
+    assert_eq!(out["close"], 95567.3);
+    assert_eq!(out["date"], "2027-07-20");
+    assert_eq!(out["spot_zone"], false);
+    assert_eq!(out["next_level_below"]["price"], 56000.0);
+    assert_eq!(out["vs_reference_pct"], 91.13);
+    assert!(out["rsi_1d"].is_number());
+    assert_eq!(out["sma200_1w"], Json::Null);
+    assert!(out["notes"][0].as_str().unwrap().contains("weekly bars"));
+    assert_eq!(out["monthly"]["done"], 1);
+    // A planned Monday is a SPOT ZONE.
+    let out = status("2027-08-02");
+    assert_eq!(out["spot_zone"], true);
+    assert_eq!(out["zone_reasons"][0], "monthly buy today: 800");
+    let error = block_on(server().spot_status(Parameters(SpotParams {
+        date: Some("tomorrow".into()),
+    })))
+    .unwrap_err();
+    assert!(error.contains("not a date"), "{error}");
+}

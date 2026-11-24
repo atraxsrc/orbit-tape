@@ -175,6 +175,53 @@ impl Market {
     }
 }
 
+/// OKX spot pairs (e.g. `BTC-USDT`): the symbol list (loaded once) and the
+/// adapter that fetches candles.
+pub struct SpotMarket {
+    handles: AdapterHandles,
+    metadata: HashMap<Ticker, Option<TickerInfo>>,
+}
+
+impl SpotMarket {
+    pub async fn connect_okx() -> Result<Self, String> {
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|error| format!("could not build the HTTP client: {error}"))?;
+        let handles = AdapterHandles::spawn_venues(&client, [Venue::Okex], None);
+        let metadata = handles
+            .fetch_ticker_metadata(Venue::Okex, &[MarketKind::Spot])
+            .await
+            .map_err(|error| format!("could not load OKX spot symbols: {error}"))?;
+        Ok(Self { handles, metadata })
+    }
+
+    /// The last `bars` closed candles of a pair such as `BTC-USDT`.
+    pub async fn closed_candles(
+        &self,
+        pair: &str,
+        timeframe: Timeframe,
+        bars: usize,
+    ) -> Result<Series, String> {
+        let pair = pair.trim().to_uppercase();
+        let ticker_info = self
+            .metadata
+            .get(&Ticker::new(&pair, Exchange::OkexSpot))
+            .copied()
+            .flatten()
+            .ok_or_else(|| format!("no OKX spot pair {pair}"))?;
+        let forming = UnixMs::now().floor_to(timeframe).as_u64();
+        let from = forming.saturating_sub(timeframe.to_milliseconds() * bars as u64);
+        let klines = fetch_klines(&self.handles, ticker_info, timeframe, from, forming).await?;
+        Ok(Series {
+            instrument: pair,
+            ticker_info,
+            klines,
+        })
+    }
+}
+
 /// Closed candles with open times in `[from, to)`, oldest first; at least one.
 async fn fetch_klines(
     handles: &AdapterHandles,

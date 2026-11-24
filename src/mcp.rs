@@ -120,6 +120,14 @@ pub trait CandleSource: Send + Sync + 'static {
         timeframe: Timeframe,
         bars: usize,
     ) -> BoxFuture<'_, Result<Series, String>>;
+
+    /// Closed candles of an OKX spot pair such as `BTC-USDT`.
+    fn spot_candles(
+        &self,
+        pair: String,
+        timeframe: Timeframe,
+        bars: usize,
+    ) -> BoxFuture<'_, Result<Series, String>>;
 }
 
 /// Exchange candles; each exchange's symbol list is loaded once.
@@ -131,6 +139,7 @@ pub trait CandleSource: Send + Sync + 'static {
 #[derive(Default)]
 pub struct LiveCandles {
     markets: Mutex<HashMap<PerpExchange, Arc<Market>>>,
+    spot: tokio::sync::OnceCell<Arc<headless::SpotMarket>>,
     slots: Mutex<HashMap<PerpExchange, Arc<tokio::sync::Semaphore>>>,
     cache: Mutex<HashMap<(PerpExchange, String, Timeframe), Cached>>,
 }
@@ -248,6 +257,25 @@ impl CandleSource for LiveCandles {
                 },
             );
             Ok(series)
+        })
+    }
+
+    fn spot_candles(
+        &self,
+        pair: String,
+        timeframe: Timeframe,
+        bars: usize,
+    ) -> BoxFuture<'_, Result<Series, String>> {
+        Box::pin(async move {
+            let spot = self
+                .spot
+                .get_or_try_init(|| async {
+                    headless::SpotMarket::connect_okx().await.map(Arc::new)
+                })
+                .await?;
+            let slots = self.slots(PerpExchange::Okx);
+            let _slot = slots.acquire().await.map_err(|error| error.to_string())?;
+            spot.closed_candles(&pair, timeframe, bars).await
         })
     }
 }
@@ -1406,6 +1434,25 @@ mod tests {
     }
 
     impl CandleSource for FixtureCandles {
+        /// BTC-USDT spot is the BTC fixture under the spot pair's name.
+        fn spot_candles(
+            &self,
+            pair: String,
+            timeframe: Timeframe,
+            bars: usize,
+        ) -> BoxFuture<'_, Result<Series, String>> {
+            Box::pin(async move {
+                if pair != "BTC-USDT" {
+                    return Err(format!("no OKX spot pair {pair}"));
+                }
+                let mut series = self
+                    .closed_candles(PerpExchange::Okx, "BTC".to_owned(), timeframe, bars)
+                    .await?;
+                series.instrument = pair;
+                Ok(series)
+            })
+        }
+
         fn resolve(
             &self,
             exchange: PerpExchange,
@@ -1484,6 +1531,15 @@ mod tests {
     struct DownCandles;
 
     impl CandleSource for DownCandles {
+        fn spot_candles(
+            &self,
+            _: String,
+            _: Timeframe,
+            _: usize,
+        ) -> BoxFuture<'_, Result<Series, String>> {
+            Box::pin(async { Err("candles: connection refused".to_owned()) })
+        }
+
         fn resolve(
             &self,
             _: PerpExchange,

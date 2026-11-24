@@ -92,6 +92,7 @@ fn mcp_server_lists_its_tools_over_stdio() {
             "roman_setups",
             "run_indicator",
             "scan",
+            "spot_status",
             "test_indicator",
             "update_alert",
         ]

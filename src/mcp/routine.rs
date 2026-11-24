@@ -3,6 +3,7 @@
 
 mod math;
 pub(crate) mod setups;
+pub(crate) mod spot;
 
 use super::{
     DEFAULT_RUN_BARS, OrbitTapeMcp, Precision, Series, coin, exchange_id, indicator_config, number,
@@ -31,6 +32,12 @@ const H4_BARS: usize = 300;
 const WEEKLY_BARS: usize = 260;
 const HOURS_PER_DAY: usize = 24;
 const HOURS_PER_WEEK: usize = 168;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SpotParams {
+    /// The day to check, YYYY-MM-DD. Default: today (local time).
+    pub date: Option<String>,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetupsParams {
@@ -203,6 +210,35 @@ fn rounded(value: &mut Json, precision: Precision) {
             }
         }
         Json::Array(items) => items.iter_mut().for_each(|item| rounded(item, precision)),
+        _ => {}
+    }
+}
+
+/// Rounds the spot status: prices to the tick, percentages and RSI to 2
+/// decimals.
+fn spot_rounded(value: &mut Json, precision: Precision) {
+    match value {
+        Json::Object(map) => {
+            for (key, value) in map.iter_mut() {
+                if let Some(number) = value.as_f64() {
+                    let rounded = match key.as_str() {
+                        "close" | "price" | "reference_price" | "sma200_1w" => {
+                            precision.price(number)
+                        }
+                        key if key.ends_with("_pct") || key.starts_with("rsi_") => {
+                            round_decimals(number, 2)
+                        }
+                        _ => continue,
+                    };
+                    *value = json!(rounded);
+                } else {
+                    spot_rounded(value, precision);
+                }
+            }
+        }
+        Json::Array(items) => items
+            .iter_mut()
+            .for_each(|item| spot_rounded(item, precision)),
         _ => {}
     }
 }
@@ -433,6 +469,64 @@ impl OrbitTapeMcp {
             },
             "coins": rows,
         }))
+    }
+
+    #[tool(
+        description = "The plan's spot accumulation status on OKX spot (e.g. BTC-USDT), from closed candles: price, vs the plan's reference price (%), the next heads-up or unused buy level below price and its distance, RSI(14) 1D and 1W, vs SMA200 1W (%), monthly buys done (skipped dates do not count) and the next date, lump-sum parts with which are used and the amount left, and after the last monthly date the first-Monday buys that spread the unused parts. spot_zone is true on a monthly-buy day or when price is within the plan's zone % of (or below) an unused buy level; zone_reasons says why and what the plan says to do. Plan output, not advice."
+    )]
+    pub async fn spot_status(
+        &self,
+        Parameters(params): Parameters<SpotParams>,
+    ) -> Result<String, String> {
+        let plan = self.plan()?;
+        let spot_plan = plan.spot.as_ref().ok_or("the plan has no [spot] section")?;
+        let today = match params.date.as_deref() {
+            Some(text) => chrono::NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d")
+                .map_err(|_| format!("'{text}' is not a date like 2027-01-04"))?,
+            None => chrono::Local::now().date_naive(),
+        };
+        let pair = spot_plan.symbol.clone();
+        let candles = &self.candles;
+        let (hours, days, weeks) = iced::futures::join!(
+            candles.spot_candles(pair.clone(), Timeframe::H1, 2),
+            candles.spot_candles(pair.clone(), Timeframe::D1, DAILY_BARS),
+            candles.spot_candles(pair.clone(), Timeframe::W1, WEEKLY_BARS),
+        );
+        let hours = hours?;
+        let close = hours
+            .klines
+            .last()
+            .map(|kline| kline.close.to_f64())
+            .ok_or("no candles")?;
+        let day_closes = days.as_ref().map(closes).unwrap_or_default();
+        let week_closes = weeks.as_ref().map(closes).unwrap_or_default();
+        let mut notes = Vec::new();
+        if let Err(error) = &days {
+            notes.push(format!("rsi_1d: {error}"));
+        }
+        match &weeks {
+            Err(error) => notes.push(format!("rsi_1w, sma200_1w: {error}")),
+            Ok(_) if week_closes.len() < SMA_LENGTH => {
+                notes.push(format!("sma200_1w: only {} weekly bars", week_closes.len()));
+            }
+            Ok(_) => {}
+        }
+        let status = spot::status(
+            spot_plan,
+            spot::Market {
+                close,
+                rsi_1d: math::rsi(&day_closes, RSI_LENGTH),
+                rsi_1w: math::rsi(&week_closes, RSI_LENGTH),
+                sma200_1w: math::sma(&week_closes, SMA_LENGTH),
+            },
+            today,
+        );
+        let mut out = serde_json::to_value(&status).map_err(|error| error.to_string())?;
+        spot_rounded(&mut out, Precision::of(&hours.ticker_info));
+        out["date"] = json!(today.to_string());
+        out["as_of_bar_utc"] = json!(hours.klines.last().map(|k| utc(k.time.as_u64() as i64)));
+        out["notes"] = json!(notes);
+        to_text(&out)
     }
 
     #[tool(
