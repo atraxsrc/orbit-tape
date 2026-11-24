@@ -9,6 +9,8 @@ mod scene;
 mod types;
 mod warmup;
 
+pub mod tooling;
+
 pub use diagnostics::{Diagnostic, Severity, Span};
 pub use frame::{
     BaseSeriesSource, ChartFrame, FrameField, FrameOutput, HorizontalLevelOutput, IndicatorFrame,
