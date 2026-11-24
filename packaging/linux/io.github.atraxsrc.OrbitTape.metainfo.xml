@@ -57,6 +57,13 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.11.0" date="2026-11-24">
+      <description>
+        <p>Key Levels, Bull Market Support Band and SMA x4 indicators; accent
+        and indicator colors set with a picker or hex; a headless indicator
+        scan with an optional timer; live reload of indicator files.</p>
+      </description>
+    </release>
     <release version="0.10.0" date="2026-11-24">
       <description>
         <p>Drawing, indicator and series colors follow the COSMIC theme

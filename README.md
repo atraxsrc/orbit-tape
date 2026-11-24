@@ -109,7 +109,8 @@ What is COSMIC-specific today:
   theme files and follows its light/dark mode, accent, background, text,
   success/warning/destructive colors and corner radii live. The 8 color
   swatches for drawings, indicators and series come from the COSMIC palette
-  (accent_blue, indigo, purple, pink, red, orange, yellow, green).
+  (accent_blue, indigo, purple, pink, red, orange, yellow, green); click one
+  in Settings → Theme to set any color by picker or hex instead.
 - **Frosted glass:** a see-through, compositor-blurred window that follows
   COSMIC's frosted-window setting, or a hand-set opacity.
 - **Desktop notifications** through the freedesktop notification service that

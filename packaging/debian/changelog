@@ -1,3 +1,20 @@
+orbit-tape (0.11.0-1) unstable; urgency=medium
+
+  * Indicators: Key Levels (daily/weekly/monthly/quarterly/yearly opens,
+    previous ranges and mids, Monday range, sessions), Bull Market Support
+    Band and SMA x4 in indicators/market/.
+  * Accent colors and indicator color inputs are squares: click one for a
+    color picker or type any hex. Hand-set accents stay when the COSMIC
+    palette changes.
+  * Indicators with many plots keep working on long histories, and an
+    unavailable overlay shows why in the legend.
+  * orbit-tape scan: headless Roman Setup scan of perps (OKX by default)
+    with a desktop notification and an optional systemd user timer.
+  * Live reload of user indicator files, fired-alert history, configurable
+    indicator catalog address, Wayland only.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Tue, 24 Nov 2026 18:30:00 +1100
+
 orbit-tape (0.10.0-1) unstable; urgency=medium
 
   * Drawing, indicator and series colors follow the COSMIC theme palette
