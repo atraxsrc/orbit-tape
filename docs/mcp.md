@@ -70,10 +70,10 @@ a desktop theme role such as `theme.danger` (`theme.text@f0` with alpha).
 
 | Tool | What it does | Main parameters |
 | --- | --- | --- |
-| `scan` | Runs an indicator over many coins and lists the alerts that fired on the last closed bar(s). Default: Roman Trade Setup on 1h over your `scan-symbols.txt`. | `indicator`, `timeframe`, `exchange`, `symbols` (at most 100), `lookback` (1 to 50), `inputs` |
+| `scan` | Runs an indicator over many coins and lists the alerts that fired on the last closed bar(s), each as `condition` and `bar_utc`. Default: Roman Trade Setup on 1h over your `scan-symbols.txt`. | `indicator`, `timeframe`, `exchange`, `symbols` (at most 100), `lookback` (1 to 50), `inputs` |
 | `get_candles` | Closed OHLCV candles, oldest first. | `symbol`, `timeframe`, `exchange`, `limit` (default 100, at most 500) |
 | `run_indicator` | Runs one indicator on one coin: every plot value (hidden ones too, columns named by plot title, `plot_ids` maps titles to IDs, `last_values` holds the newest closed bar), markers the script showed, fired alerts and the info panel for the last N bars. `history_note` says when the exchange had fewer bars than asked for. | `indicator`, `symbol`, `timeframe`, `exchange`, `inputs`, `last` (default 20, at most 200), `bars` (default 2000, at most 20000) |
-| `key_levels` | Current Key Levels sorted by price, each marked above or below the last close. By default the levels `key-levels.ind` shows with its own settings (4H off; daily open; Monday range and mid; weekly and monthly open, high, low and mid; quarterly open and mid; yearly open and mid). Runs on 1h candles back to the start of the year or the previous quarter. | `symbol`, `exchange`, `levels` (groups `4h daily monday weekly monthly quarterly yearly`, or level IDs such as `w_open`, `d_prev_high`) |
+| `key_levels` | Current Key Levels sorted by price, each marked above or below the last close. By default the levels `key-levels.ind` shows with its own settings (4H off; daily open; Monday range and mid; weekly and monthly open, high, low and mid; quarterly open and mid; yearly open and mid). Runs on 1h candles back to the start of the year or the previous quarter; levels without a value (e.g. a coin listed this year) are listed under `missing` with the reason, and `history_note` says when the exchange had less history. | `symbol`, `exchange`, `levels` (groups `4h daily monday weekly monthly quarterly yearly`, or level IDs such as `w_open`, `d_prev_high`) |
 | `check_indicator` | Same as `orbit-tape-indicator check`. | `path` (a `.ind` file or folder), `namespace` |
 | `test_indicator` | Same as `orbit-tape-indicator test`: check, then run on synthetic bars. | `path`, `namespace` |
 | `list_indicators` | Your installed indicators: name, ID, path relative to its indicators folder (`roman/roman-setup.ind`) with `source` `user` or `bundled`, inputs with defaults and options, and alert conditions. | none |
@@ -103,10 +103,12 @@ Errors (unknown symbols, timeframes, indicators or inputs, and network
 failures) come back as tool errors with a short message; the server keeps
 running.
 
-**Speed.** Candles are fetched one coin at a time to stay inside the
-exchanges' rate limits. OKX is slower than Binance (about 3 s per coin against
-1.5 s), so a 20-coin `scan` on OKX takes about a minute. `key_levels` fetches
-up to a year of 1h candles.
+**Speed.** Candles are fetched for several coins at once (6 on OKX, 8 on
+Binance), paced by each exchange's rate limit; OKX allows fewer requests, so
+a 66-coin `scan` on OKX takes about a minute, on Binance less. Fetched
+candles are reused until the next bar closes, so a second tool on the same
+coins and timeframe answers at once. `key_levels` fetches up to a year of 1h
+candles.
 
 ## Alerts
 

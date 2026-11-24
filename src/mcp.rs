@@ -51,6 +51,8 @@ const MAX_SCAN_SYMBOLS: usize = 100;
 const MAX_LOOKBACK: usize = 50;
 const MAX_ALERTS: usize = 200;
 const DEFAULT_RUN_BARS: usize = 2000;
+/// Coins a scan fetches at once (each exchange caps its own share).
+const SCAN_PARALLEL: usize = 8;
 const KEY_LEVELS: &str = "key-levels.ind";
 /// Decimals for quote (USDT) volume.
 const VOLUME_DECIMALS: u32 = 2;
@@ -121,9 +123,46 @@ pub trait CandleSource: Send + Sync + 'static {
 }
 
 /// Exchange candles; each exchange's symbol list is loaded once.
+///
+/// Requests run in parallel up to a per-exchange limit (the adapters' rate
+/// limiters still pace them), and closed candles are kept until the next bar
+/// closes, so tools called one after another (market_snapshot, then
+/// roman_setups) fetch each series once.
 #[derive(Default)]
 pub struct LiveCandles {
     markets: Mutex<HashMap<PerpExchange, Arc<Market>>>,
+    slots: Mutex<HashMap<PerpExchange, Arc<tokio::sync::Semaphore>>>,
+    cache: Mutex<HashMap<(PerpExchange, String, Timeframe), Cached>>,
+}
+
+/// A fetched series: the bar that was forming then, and how many bars were
+/// asked for (the exchange may have had fewer).
+struct Cached {
+    forming: u64,
+    requested: usize,
+    series: Series,
+}
+
+/// Requests in flight per exchange.
+fn parallel_requests(exchange: PerpExchange) -> usize {
+    match exchange {
+        // 20 requests per 2 s; 6 at once keeps the limiter busy without
+        // queueing a whole scan behind it.
+        PerpExchange::Okx => 6,
+        PerpExchange::Binance => 8,
+    }
+}
+
+/// The newest `bars` candles of `cached`, if it was fetched during the bar
+/// forming at `forming` and asked for at least that many.
+fn from_cache(cached: &Cached, forming: u64, bars: usize) -> Option<Series> {
+    if cached.forming != forming || cached.requested < bars {
+        return None;
+    }
+    let mut series = cached.series.clone();
+    let extra = series.klines.len().saturating_sub(bars);
+    series.klines.drain(..extra);
+    Some(series)
 }
 
 impl LiveCandles {
@@ -138,6 +177,23 @@ impl LiveCandles {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<PerpExchange, Arc<Market>>> {
         self.markets
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn slots(&self, exchange: PerpExchange) -> Arc<tokio::sync::Semaphore> {
+        self.slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(exchange)
+            .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(parallel_requests(exchange))))
+            .clone()
+    }
+
+    fn cache(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<(PerpExchange, String, Timeframe), Cached>> {
+        self.cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -165,8 +221,33 @@ impl CandleSource for LiveCandles {
         bars: usize,
     ) -> BoxFuture<'_, Result<Series, String>> {
         Box::pin(async move {
+            let forming = exchange::UnixMs::now().floor_to(timeframe).as_u64();
+            let key = (exchange, coin.clone(), timeframe);
+            if let Some(series) = self
+                .cache()
+                .get(&key)
+                .and_then(|cached| from_cache(cached, forming, bars))
+            {
+                return Ok(series);
+            }
             let market = self.market(exchange).await?;
-            market.closed_candles(&coin, timeframe, bars).await
+            let slots = self.slots(exchange);
+            let _slot = slots.acquire().await.map_err(|error| error.to_string())?;
+            let series = market.closed_candles(&coin, timeframe, bars).await?;
+            let mut cache = self.cache();
+            // Series of bars that closed since are stale.
+            cache.retain(|(_, _, timeframe), cached| {
+                cached.forming == exchange::UnixMs::now().floor_to(*timeframe).as_u64()
+            });
+            cache.insert(
+                key,
+                Cached {
+                    forming,
+                    requested: bars,
+                    series: series.clone(),
+                },
+            );
+            Ok(series)
         })
     }
 }
@@ -309,6 +390,7 @@ impl OrbitTapeMcp {
         description = "Scan USDT perpetuals with an indicator and list the alert signals that fired on the last closed bar(s). Default: Roman Trade Setup on the 1h chart over the user's scan list. Takes a few seconds per coin."
     )]
     pub async fn scan(&self, Parameters(params): Parameters<ScanParams>) -> Result<String, String> {
+        use iced::futures::StreamExt;
         let (path, indicator) = self.indicator(params.indicator.as_deref())?;
         let alert_plots = alert_plots(&indicator);
         if alert_plots.is_empty() {
@@ -345,14 +427,17 @@ impl OrbitTapeMcp {
         };
         let bars = DEFAULT_RUN_BARS.max(lookback + 1);
 
+        // In parallel (the candle source limits requests per exchange), in
+        // list order.
+        let fetched: Vec<Result<Series, String>> = iced::futures::stream::iter(coins.clone())
+            .map(|coin| self.candles.closed_candles(exchange, coin, timeframe, bars))
+            .buffered(SCAN_PARALLEL)
+            .collect()
+            .await;
         let mut rows = Vec::new();
         let mut signal_count = 0;
         let mut failed = 0;
-        for coin in &coins {
-            let fetched = self
-                .candles
-                .closed_candles(exchange, coin.clone(), timeframe, bars)
-                .await;
+        for (coin, fetched) in coins.iter().zip(fetched) {
             let result = fetched.and_then(|series| {
                 evaluate_alerts(
                     &indicator,
@@ -377,11 +462,10 @@ impl OrbitTapeMcp {
                         "close": precision.price(last.close.to_f64()),
                         "signals": signals
                             .iter()
-                            .map(|signal| if lookback > 1 {
-                                format!("{} ({})", signal.title, utc(signal.bar_time))
-                            } else {
-                                signal.title.clone()
-                            })
+                            .map(|signal| json!({
+                                "condition": signal.title,
+                                "bar_utc": utc(signal.bar_time),
+                            }))
                             .collect::<Vec<_>>(),
                     }));
                 }
@@ -489,7 +573,7 @@ impl OrbitTapeMcp {
     }
 
     #[tool(
-        description = "Current Key Levels of a USDT perpetual, sorted by price, with the last close and whether each level is above or below it. By default the levels the Key Levels indicator shows with its own settings; pass levels to ask for others (4H, daily, Monday, weekly, monthly, quarterly, yearly opens, previous highs, lows and mids)."
+        description = "Current Key Levels of a USDT perpetual, sorted by price, with the last close and whether each level is above or below it. History back to the start of the year and the previous quarter is loaded; levels without a value are listed under missing with the reason (e.g. a coin listed this year). By default the levels the Key Levels indicator shows with its own settings; pass levels to ask for others (4H, daily, Monday, weekly, monthly, quarterly, yearly opens, previous highs, lows and mids)."
     )]
     pub async fn key_levels(
         &self,
@@ -503,15 +587,12 @@ impl OrbitTapeMcp {
         let wanted = key_level_selection(&indicator, params.levels.as_deref())?;
         let exchange = self.exchange(params.exchange.as_deref())?;
         let base = symbol_coin(&params.symbol)?;
+        let requested = key_levels_bars(chrono::Utc::now());
         let series = self
             .candles
-            .closed_candles(
-                exchange,
-                base.clone(),
-                Timeframe::H1,
-                key_levels_bars(chrono::Utc::now()),
-            )
+            .closed_candles(exchange, base.clone(), Timeframe::H1, requested)
             .await?;
+        let history = history_note(requested, &series);
         let precision = Precision::of(&series.ticker_info);
         let mut last_output = None;
         headless::run_closed(
@@ -527,22 +608,39 @@ impl OrbitTapeMcp {
             .last()
             .map(|kline| precision.price(kline.close.to_f64()))
             .unwrap_or_default();
-        let mut levels = indicator
+        // Levels without a value are listed with the reason, never dropped.
+        let mut levels = Vec::new();
+        let mut missing = Vec::new();
+        for plot in indicator
             .descriptor
             .plots
             .iter()
             .filter(|plot| wanted.contains(&plot.id))
-            .filter_map(|plot| {
-                let value = output
-                    .plots
-                    .iter()
-                    .find(|out| out.id == plot.id)
-                    .and_then(|out| number(&out.value))?;
-                Some((plot.label.clone(), plot.id.clone(), precision.price(value)))
-            })
-            .collect::<Vec<_>>();
+        {
+            let value = output
+                .plots
+                .iter()
+                .find(|out| out.id == plot.id)
+                .and_then(|out| number(&out.value));
+            match value {
+                Some(value) => {
+                    levels.push((plot.label.clone(), plot.id.clone(), precision.price(value)));
+                }
+                None => missing.push(json!({
+                    "label": plot.label,
+                    "id": plot.id,
+                    "reason": match &history {
+                        Some(note) => format!("not enough history: {note}"),
+                        None => "no value for this period yet".to_owned(),
+                    },
+                })),
+            }
+        }
         if levels.is_empty() {
-            return Err("Key Levels returned no levels for this history".to_owned());
+            return Err(format!(
+                "Key Levels returned no levels for this history{}",
+                history.map(|note| format!(" ({note})")).unwrap_or_default()
+            ));
         }
         levels.sort_by(|a, b| b.2.total_cmp(&a.2));
         to_text(&json!({
@@ -551,6 +649,9 @@ impl OrbitTapeMcp {
             "exchange": exchange_id(exchange),
             "selection": if params.levels.is_some() { "requested" } else { "indicator defaults" },
             "as_of_bar_utc": utc(output.time),
+            "bars_run": series.klines.len(),
+            "history_note": history,
+            "missing": missing,
             "close": close,
             "levels": levels
                 .iter()
@@ -1412,7 +1513,7 @@ mod tests {
             timeframe: None,
             exchange: Some("binance".into()),
             symbols: Some(vec!["BTCUSDT".into(), "DOGE".into(), "btc".into()]),
-            lookback: Some(24),
+            lookback: Some(50),
             inputs: Some(BTreeMap::from([("ctMode".into(), "true".into())])),
         }))));
         assert_eq!(out["indicator"], "Roman Trade Setup (H12 to H1)");
@@ -1424,7 +1525,12 @@ mod tests {
         assert_eq!(rows[0]["symbol"], "BTCUSDT");
         assert_eq!(rows[0]["last_closed_bar"], "2026-01-15 23:00");
         assert_eq!(rows[0]["close"], 95567.3);
-        assert!(rows[0]["signals"].is_array());
+        let signals = rows[0]["signals"].as_array().unwrap();
+        assert!(!signals.is_empty(), "50 bars of BTC have a Roman signal");
+        for signal in signals {
+            assert!(signal["condition"].is_string(), "{signal}");
+            assert!(signal["bar_utc"].as_str().unwrap().starts_with("2026-01-1"));
+        }
         assert_eq!(rows[1]["base"], "DOGE");
         assert!(
             rows[1]["error"]
@@ -1660,6 +1766,19 @@ mod tests {
         assert_eq!(out["as_of_bar_utc"], "2026-01-15 23:00");
         assert_eq!(out["base"], "BTC");
         assert_eq!(out["selection"], "indicator defaults");
+        // The fixture is shorter than a year: said, and every missing level
+        // says why.
+        let note = out["history_note"].as_str().expect("a history note");
+        assert!(note.starts_with("asked for "), "{note}");
+        for missing in out["missing"].as_array().unwrap() {
+            assert!(
+                missing["reason"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("not enough history"),
+                "{missing}"
+            );
+        }
         let levels = out["levels"].as_array().unwrap();
         let ids = levels
             .iter()
@@ -2145,5 +2264,44 @@ mod tests {
         );
         let error = block_on(missing.get_plan()).unwrap_err();
         assert!(error.contains("plan.example.toml"), "{error}");
+    }
+
+    #[test]
+    fn cached_candles_last_until_the_next_bar() {
+        let klines = |n: u64| {
+            (0..n)
+                .map(|i| {
+                    Kline::new(
+                        i * 3_600_000,
+                        1.0,
+                        1.0,
+                        1.0,
+                        1.0,
+                        exchange::Volume::TotalOnly(0.0.into()),
+                        fixture_info().min_ticksize,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let cached = Cached {
+            forming: 100,
+            requested: 50,
+            series: Series {
+                instrument: "BTCUSDT".to_owned(),
+                ticker_info: fixture_info(),
+                klines: klines(50),
+            },
+        };
+        let hit = from_cache(&cached, 100, 20).expect("same bar, fewer bars");
+        assert_eq!(hit.klines.len(), 20);
+        assert_eq!(hit.klines[0].time.as_u64(), 30 * 3_600_000);
+        assert!(from_cache(&cached, 100, 51).is_none(), "asked for more");
+        assert!(from_cache(&cached, 200, 20).is_none(), "a bar closed since");
+        // The exchange had fewer than asked for: still a hit.
+        let short = Cached {
+            requested: 2000,
+            ..cached
+        };
+        assert_eq!(from_cache(&short, 100, 1500).unwrap().klines.len(), 50);
     }
 }

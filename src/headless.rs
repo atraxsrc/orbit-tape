@@ -103,6 +103,7 @@ pub fn parse_timeframe(text: &str) -> Result<Timeframe, String> {
 }
 
 /// One instrument's closed candles, oldest first.
+#[derive(Clone)]
 pub struct Series {
     /// The exchange's name for it, e.g. `BTCUSDT` or `BTC-USDT-SWAP`.
     pub instrument: String,
