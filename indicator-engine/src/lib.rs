@@ -3657,6 +3657,44 @@ mod tests {
     }
 
     #[test]
+    fn stored_strings_count_toward_the_heap_limit_together() {
+        // Strings read out of an array are only counted once kept in a local;
+        // then they add up with everything else that is kept.
+        let source = |second: &str| {
+            format!(
+                r#"
+            language(1)
+            indicator("Strings", id = "community.strings")
+            format(precision = "base_ticker_min_tick")
+            parts = array.push(array.push(array.new(), "123"), "45")
+            first = array.get(parts, 0) + array.get(parts, 1)
+            {second}
+            plot(1, id = "value")
+        "#
+            )
+        };
+        let evaluate = |second: &str| {
+            compile(&source(second), "strings.ind")
+                .expect("source should compile")
+                .instantiate_with_limits(
+                    IndicatorConfig::default(),
+                    RuntimeLimits {
+                        max_heap_bytes: 1700,
+                        ..RuntimeLimits::default()
+                    },
+                )
+                .expect("inputs should bind")
+                .evaluate_closed(frame(0, 1, 10.0))
+        };
+        assert!(evaluate("").is_ok(), "one kept string fits");
+        assert_eq!(
+            evaluate("second = array.get(parts, 1) + array.get(parts, 0)")
+                .expect_err("two kept strings should add up"),
+            RuntimeError::ResourceLimitExceeded("heap bytes")
+        );
+    }
+
+    #[test]
     fn ta_window_limits_are_checked_without_counting_ta_state_as_collections() {
         let source = r#"
             language(1)
