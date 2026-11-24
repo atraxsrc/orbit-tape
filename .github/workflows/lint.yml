@@ -8,6 +8,15 @@ on:
     workflow_dispatch:
 
 jobs:
+    private-files:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: No local-only files tracked
+              run: sh scripts/check-private-files.sh
+
     clippy:
         if: ${{ github.actor != 'dependabot[bot]' && github.actor != 'dependabot-preview[bot]' }}
         runs-on: ubuntu-latest
