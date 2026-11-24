@@ -651,7 +651,8 @@ impl OrbitTapeMcp {
                     "timeframe": alert.basis.to_string(),
                     "source": alert.source,
                     "condition": alert.condition,
-                    "price": alert.price,
+                    "missed_while_closed": alert.missed,
+                    "price": alert.price.parse::<f64>().ok(),
                 })
             })
             .collect::<Vec<_>>();
@@ -1734,6 +1735,8 @@ mod tests {
                 condition: (*condition).into(),
                 price: "95567.3".into(),
                 bar_time: (index > 0).then_some(1_768_514_400_000 + index as u64 * 3_600_000),
+                condition_key: Some("roman.roman-setup/signal".into()),
+                missed: index == 2,
             });
         }
         std::fs::write(&file, serde_json::to_string(&history).unwrap()).unwrap();
@@ -1752,6 +1755,8 @@ mod tests {
         assert_eq!(alerts[0]["exchange"], "binance");
         assert_eq!(alerts[0]["market"], "perp");
         assert_eq!(alerts[0]["timeframe"], "1h");
+        assert_eq!(alerts[0]["price"], 95567.3);
+        assert_eq!(alerts[0]["missed_while_closed"], true);
         let older = parse(block_on(
             server_with(Arc::new(FixtureCandles), {
                 let mut paths = paths();

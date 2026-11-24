@@ -74,7 +74,7 @@ a desktop theme role such as `theme.danger` (`theme.text@f0` with alpha).
 | `check_indicator` | Same as `orbit-tape-indicator check`. | `path` (a `.ind` file or folder), `namespace` |
 | `test_indicator` | Same as `orbit-tape-indicator test`: check, then run on synthetic bars. | `path`, `namespace` |
 | `list_indicators` | Your installed indicators: name, ID, path relative to its indicators folder (`roman/roman-setup.ind`) with `source` `user` or `bundled`, inputs with defaults and options, and alert conditions. | none |
-| `alert_history` | The newest alerts the app fired, from its saved history: fire time, the bar it fired on (`bar_utc`, null for alerts saved by older versions), exchange, market, timeframe, condition and price. | `last` (default 20, at most 200) |
+| `alert_history` | The newest alerts the app fired, from its saved history: fire time, the bar it fired on (`bar_utc`, null for alerts saved by older versions), exchange, market, timeframe, condition, price (a number) and `missed_while_closed`. | `last` (default 20, at most 200) |
 
 Indicators are found by `.ind` path, ID (`roman.roman-setup`), short name
 (`roman-setup`) or title, in `~/.local/share/orbit-tape/indicators/`, then

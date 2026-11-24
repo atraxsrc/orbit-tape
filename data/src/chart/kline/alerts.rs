@@ -6,6 +6,12 @@
 //! after a chart loads only records that bar, so history never fires. Later
 //! polls report alert plots that are `true` on bars that closed since then.
 //!
+//! A chart restored at launch can ask for a catch-up instead
+//! ([`AlertWatch::catch_up_on_first_look`]): its first look also reports the
+//! bars that closed at most one bar ago, so a signal on a bar that closed
+//! while the app was off is not lost. The alert center labels those and
+//! drops the ones it delivered before the restart.
+//!
 //! It also owns one [`PriceLevelWatch`], which compares the live bar with the
 //! one seen on the previous poll and reports armed alert lines the price
 //! crossed in between.
@@ -66,6 +72,10 @@ pub fn condition_key(indicator: &IndicatorId, plot_id: &str) -> String {
 pub struct AlertWatch {
     scope: Option<(TickerInfo, Basis)>,
     checked: FxHashMap<IndicatorInstanceId, UnixMs>,
+    /// The first look of each indicator reports recent bars too. Cleared
+    /// once every indicator has looked, or when the chart's ticker or
+    /// timeframe changes.
+    catch_up: bool,
 }
 
 impl AlertWatch {
@@ -73,6 +83,13 @@ impl AlertWatch {
     pub fn reset(&mut self) {
         self.scope = None;
         self.checked.clear();
+        self.catch_up = false;
+    }
+
+    /// For a chart restored at launch: its first look reports bars that
+    /// closed at most one bar ago instead of only setting the baseline.
+    pub fn catch_up_on_first_look(&mut self) {
+        self.catch_up = true;
     }
 
     /// Reports alert plots of `active` indicators that turned true on bars
@@ -93,8 +110,12 @@ impl AlertWatch {
         };
         let scope = (data.base_ticker(), series.basis());
         if self.scope != Some(scope) {
+            // The first scope keeps a catch-up; a ticker or timeframe change
+            // does not.
+            let catch_up = self.catch_up && self.scope.is_none();
             self.reset();
             self.scope = Some(scope);
+            self.catch_up = catch_up;
         }
         self.checked.retain(|id, _| active.contains(id));
 
@@ -114,8 +135,10 @@ impl AlertWatch {
         };
         let host = data.indicator_host();
         let mut hits = Vec::new();
+        let mut waiting = false;
         for id in active {
             if !ready(*id) {
+                waiting = true;
                 continue;
             }
             let Some(instance) = instances.get(*id) else {
@@ -136,9 +159,13 @@ impl AlertWatch {
                 plots.len(),
                 |plot, index| host.output_value_for(*id, &plots[plot].id, index),
                 bar_ms.map(|bar_ms| (now, bar_ms)),
+                self.catch_up,
             );
-            if let Some(time) = found.checked {
-                self.checked.insert(*id, time);
+            match found.checked {
+                Some(time) => {
+                    self.checked.insert(*id, time);
+                }
+                None => waiting = true,
             }
             for (plot, bar) in found.hits {
                 hits.push(AlertHit {
@@ -154,6 +181,9 @@ impl AlertWatch {
                     close: bar.close,
                 });
             }
+        }
+        if !waiting {
+            self.catch_up = false;
         }
         hits
     }
@@ -311,13 +341,15 @@ struct ScanResult {
 /// instance. `value(plot, index)` reads an alert plot; `None` means the
 /// indicator has not produced it yet. `recency` is `(now, bar length)` for
 /// time-based charts: bars that closed more than one bar length ago are
-/// recorded but not reported.
+/// recorded but not reported. With `catch_up`, a first look reports those
+/// recent bars instead of only setting the baseline (time-based charts only).
 fn scan(
     checked: Option<UnixMs>,
     closed: &[ClosedBar],
     plot_count: usize,
     value: impl Fn(usize, usize) -> Option<OutputValue>,
     recency: Option<(UnixMs, u64)>,
+    catch_up: bool,
 ) -> ScanResult {
     let Some(newest) = closed.last().copied() else {
         return ScanResult {
@@ -332,15 +364,23 @@ fn scan(
             hits: Vec::new(),
         };
     }
-    let Some(checked) = checked.filter(|checked| *checked <= newest.time) else {
+    let checked = match checked.filter(|checked| *checked <= newest.time) {
+        Some(checked) => Some(checked),
+        // First look with a catch-up: every recent bar counts.
+        None if catch_up && checked.is_none() && recency.is_some() => None,
         // First look, or the history was replaced: set the baseline.
-        return ScanResult {
-            checked: Some(newest.time),
-            hits: Vec::new(),
-        };
+        None => {
+            return ScanResult {
+                checked: Some(newest.time),
+                hits: Vec::new(),
+            };
+        }
     };
     let mut hits = Vec::new();
-    for bar in closed.iter().filter(|bar| bar.time > checked) {
+    for bar in closed
+        .iter()
+        .filter(|bar| checked.is_none_or(|checked| bar.time > checked))
+    {
         if let Some((now, bar_ms)) = recency {
             let closed_at = bar.time.as_u64().saturating_add(bar_ms);
             if now.as_u64().saturating_sub(closed_at) > bar_ms {
@@ -449,7 +489,7 @@ mod tests {
     #[test]
     fn first_poll_only_sets_baseline() {
         let closed = bars(&[HOUR, 2 * HOUR, 3 * HOUR]);
-        let result = scan(None, &closed, 2, values(&[0, 1, 2]), None);
+        let result = scan(None, &closed, 2, values(&[0, 1, 2]), None, false);
         assert_eq!(result.checked, Some(UnixMs(3 * HOUR)));
         assert!(result.hits.is_empty());
     }
@@ -457,11 +497,18 @@ mod tests {
     #[test]
     fn new_closed_bar_fires_once() {
         let closed = bars(&[HOUR, 2 * HOUR, 3 * HOUR]);
-        let result = scan(Some(UnixMs(2 * HOUR)), &closed, 2, values(&[2]), None);
+        let result = scan(
+            Some(UnixMs(2 * HOUR)),
+            &closed,
+            2,
+            values(&[2]),
+            None,
+            false,
+        );
         assert_eq!(result.checked, Some(UnixMs(3 * HOUR)));
         assert_eq!(result.hits, vec![(0, closed[2])]);
 
-        let again = scan(result.checked, &closed, 2, values(&[2]), None);
+        let again = scan(result.checked, &closed, 2, values(&[2]), None, false);
         assert!(again.hits.is_empty());
     }
 
@@ -469,7 +516,14 @@ mod tests {
     fn false_and_old_bars_do_not_fire() {
         let closed = bars(&[HOUR, 2 * HOUR, 3 * HOUR]);
         // Bar 1 is true but was already checked; bar 2 is false.
-        let result = scan(Some(UnixMs(2 * HOUR)), &closed, 2, values(&[1]), None);
+        let result = scan(
+            Some(UnixMs(2 * HOUR)),
+            &closed,
+            2,
+            values(&[1]),
+            None,
+            false,
+        );
         assert!(result.hits.is_empty());
         assert_eq!(result.checked, Some(UnixMs(3 * HOUR)));
     }
@@ -477,18 +531,25 @@ mod tests {
     #[test]
     fn waits_until_indicator_has_values() {
         let closed = bars(&[HOUR, 2 * HOUR]);
-        let result = scan(Some(UnixMs(HOUR)), &closed, 1, |_, _| None, None);
+        let result = scan(Some(UnixMs(HOUR)), &closed, 1, |_, _| None, None, false);
         assert_eq!(result.checked, Some(UnixMs(HOUR)));
         assert!(result.hits.is_empty());
 
-        let later = scan(result.checked, &closed, 1, values(&[1]), None);
+        let later = scan(result.checked, &closed, 1, values(&[1]), None, false);
         assert_eq!(later.hits, vec![(0, closed[1])]);
     }
 
     #[test]
     fn replaced_history_resets_baseline() {
         let closed = bars(&[HOUR, 2 * HOUR]);
-        let result = scan(Some(UnixMs(9 * HOUR)), &closed, 1, values(&[1]), None);
+        let result = scan(
+            Some(UnixMs(9 * HOUR)),
+            &closed,
+            1,
+            values(&[1]),
+            None,
+            false,
+        );
         assert_eq!(result.checked, Some(UnixMs(2 * HOUR)));
         assert!(result.hits.is_empty());
     }
@@ -504,6 +565,7 @@ mod tests {
             1,
             values(&[1, 2]),
             Some((UnixMs(5 * HOUR), HOUR)),
+            false,
         );
         assert_eq!(fresh.hits, vec![(0, closed[2])]);
         let stale = scan(
@@ -512,8 +574,42 @@ mod tests {
             1,
             values(&[1, 2]),
             Some((UnixMs(5 * HOUR + 1), HOUR)),
+            false,
         );
         assert!(stale.hits.is_empty());
         assert_eq!(stale.checked, Some(UnixMs(3 * HOUR)));
+    }
+
+    #[test]
+    fn catch_up_reports_recent_bars_on_the_first_look() {
+        let closed = bars(&[HOUR, 2 * HOUR, 3 * HOUR]);
+        // At 4h 30m bar 2 (closed at 4h) is recent, bar 1 (closed at 3h) is
+        // more than one bar old.
+        let recency = Some((UnixMs(4 * HOUR + HOUR / 2), HOUR));
+        let result = scan(None, &closed, 1, values(&[1, 2]), recency, true);
+        assert_eq!(result.hits, vec![(0, closed[2])]);
+        assert_eq!(result.checked, Some(UnixMs(3 * HOUR)));
+
+        // Without a catch-up, or on a tick chart, the first look stays quiet.
+        assert!(
+            scan(None, &closed, 1, values(&[2]), recency, false)
+                .hits
+                .is_empty()
+        );
+        assert!(
+            scan(None, &closed, 1, values(&[2]), None, true)
+                .hits
+                .is_empty()
+        );
+        // Replaced history is not a first look.
+        let replaced = scan(
+            Some(UnixMs(9 * HOUR)),
+            &closed,
+            1,
+            values(&[2]),
+            recency,
+            true,
+        );
+        assert!(replaced.hits.is_empty());
     }
 }

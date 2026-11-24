@@ -46,7 +46,10 @@ work; see [Credits](#credits).
   Pine-style drawing and an indicator CLI. See [Custom indicators](#custom-indicators).
 - **Indicator alerts:** boolean plots marked `alert = true` send a desktop
   notification and a chime when they are true on a newly closed bar
-  (Settings → Alerts).
+  (Settings → Alerts). At launch, charts from the saved layout also report
+  a bar that closed while the app was off, if it closed at most one bar ago,
+  labelled "missed while closed"; an alert delivered before a restart is
+  not delivered again.
 - **Price alerts:** right-click the price chart and pick "Add alert at <price>".
   The alert line fires once when the live price crosses it, then stays on the
   chart as "Alert fired" until you right-click it and re-arm it. Right-click

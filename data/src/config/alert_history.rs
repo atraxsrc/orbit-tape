@@ -33,6 +33,14 @@ pub struct FiredAlert {
     /// entries saved by older versions.
     #[serde(default)]
     pub bar_time: Option<u64>,
+    /// The condition's key (`indicator-id/plot-id`, `price-level/<id>`), so
+    /// a restart does not deliver the same bar again. Missing in entries
+    /// saved by older versions.
+    #[serde(default)]
+    pub condition_key: Option<String>,
+    /// The bar closed while the app was not running; delivered at launch.
+    #[serde(default)]
+    pub missed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -151,6 +159,8 @@ mod tests {
             condition: "Crossed 100000".to_owned(),
             price: "100001.0".to_owned(),
             bar_time: Some(n),
+            condition_key: Some("x.test/signal".to_owned()),
+            missed: false,
         }
     }
 
@@ -184,8 +194,12 @@ mod tests {
     #[test]
     fn entries_from_older_versions_have_no_bar_time() {
         let mut saved = serde_json::to_value(alert(1)).unwrap();
-        saved.as_object_mut().unwrap().remove("bar_time");
+        for field in ["bar_time", "condition_key", "missed"] {
+            saved.as_object_mut().unwrap().remove(field);
+        }
         let entry: FiredAlert = serde_json::from_value(saved).unwrap();
         assert_eq!(entry.bar_time, None);
+        assert_eq!(entry.condition_key, None);
+        assert!(!entry.missed);
     }
 }

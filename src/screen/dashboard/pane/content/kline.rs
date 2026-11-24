@@ -881,6 +881,12 @@ impl KlineChart {
         self.indicators.selected_indicators()
     }
 
+    /// Restored at launch: the first alert check also reports bars that
+    /// closed at most one bar ago.
+    pub fn catch_up_alerts(&mut self) {
+        self.alert_watch.catch_up_on_first_look();
+    }
+
     /// Alert conditions that turned true on bars closed since the last call.
     pub fn take_alerts(&mut self, now: UnixMs) -> Vec<AlertHit> {
         let mut hits = self.take_indicator_alerts(now);

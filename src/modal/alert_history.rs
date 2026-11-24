@@ -74,9 +74,18 @@ fn entry(index: usize, alert: &FiredAlert, unread: bool) -> Element<'_, Message>
     .align_y(Alignment::Center);
 
     let bottom = row![
-        text(format!("{}: {}", alert.source, alert.condition))
-            .size(style::text_size::SMALL)
-            .width(Length::Fill),
+        text(if alert.missed {
+            format!(
+                "{}: {} ({})",
+                alert.source,
+                alert.condition,
+                crate::alerts::MISSED_LABEL
+            )
+        } else {
+            format!("{}: {}", alert.source, alert.condition)
+        })
+        .size(style::text_size::SMALL)
+        .width(Length::Fill),
         text(&alert.price).size(style::text_size::SMALL),
     ]
     .spacing(6)

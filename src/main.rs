@@ -214,6 +214,7 @@ impl OrbitTape {
         );
         let network = Deferred::new(saved_state.network);
 
+        let alert_history = data::config::alert_history::AlertHistory::load();
         let mut state = Self {
             main_window: window::Window::new(main_window_id),
             layout_manager: saved_state.layout_manager,
@@ -230,8 +231,8 @@ impl OrbitTape {
             )
             .with_accent_overrides(saved_state.accent_colors),
             notifications: Notifications::new(),
-            alert_center: alerts::AlertCenter::default(),
-            alert_history: data::config::alert_history::AlertHistory::load(),
+            alert_center: alerts::AlertCenter::new(&alert_history, exchange::UnixMs::now()),
+            alert_history,
             last_alert_poll: std::time::Instant::now(),
             network_editor: NetworkEditor::new(&network),
             network,
