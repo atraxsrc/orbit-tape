@@ -84,6 +84,17 @@ impl Content {
             || KlineChart::new(basis, tickers),
             |layout| KlineChart::new_with_config(basis, tickers, layout),
         );
+        // A chart restored from the saved layout (at launch) reports alerts
+        // for bars that closed while the app was off.
+        if matches!(
+            current_content,
+            Content::Kline {
+                chart: None,
+                layout: Some(_),
+            }
+        ) {
+            chart.catch_up_alerts();
+        }
         if let Some(multiplier) = settings.tick_multiply {
             let _ = chart.apply_command(ChartCommand::SetTickMultiplier { multiplier });
         }

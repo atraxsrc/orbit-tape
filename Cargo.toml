@@ -50,7 +50,6 @@ assets = [
     ["LICENSE", "usr/share/doc/orbit-tape/LICENSE", "644"],
     ["indicator-engine/LICENSE", "usr/share/doc/orbit-tape/LICENSE-Apache-2.0-indicator-engine", "644"],
     ["exchange/LICENSE", "usr/share/doc/orbit-tape/LICENSE-MIT-exchange", "644"],
-    ["indicators/LICENSE-MIT", "usr/share/doc/orbit-tape/LICENSE-MIT-roman-indicators", "644"],
     ["indicators/roman/*.ind", "usr/share/doc/orbit-tape/indicators/roman/", "644"],
     ["examples/indicators/*.ind", "usr/share/doc/orbit-tape/examples/indicators/", "644"],
     ["docs/custom-indicators.md", "usr/share/doc/orbit-tape/custom-indicators.md", "644"],
@@ -124,6 +123,10 @@ rodio = { version = "0.22.2", default-features = false, features = [ "playback",
 notify-rust = { version = "4.11", default-features = false, features = ["z"] }
 # Live reload of user indicator files (inotify), see src/indicator_watch.rs.
 notify = { version = "8.2", default-features = false }
+# `orbit-tape mcp`: Model Context Protocol server over stdio (Apache-2.0),
+# see src/mcp.rs.
+rmcp = { version = "3.11", default-features = false, features = ["server", "macros", "transport-io"] }
+schemars = "1"
 
 bytemuck = "1.25.0"
 iced_wgpu = "0.14.0"

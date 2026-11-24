@@ -41,7 +41,9 @@ pub struct NetworkEditor {
     proxy: ProxyForm,
     fetch: FetchForm,
     confirm: ConfirmState,
-    error: Option<String>,
+    /// Why the last Apply in each section was refused, shown under it.
+    proxy_error: Option<String>,
+    fetch_error: Option<String>,
 }
 
 impl NetworkEditor {
@@ -61,7 +63,19 @@ impl NetworkEditor {
                 wanted.server_accept_invalid_certs,
             ),
             confirm: ConfirmState::Idle,
-            error: None,
+            proxy_error: None,
+            fetch_error: None,
+        }
+    }
+
+    /// Called when Settings > Network is opened again. A refused Apply keeps
+    /// its draft and error, so closing and reopening does not silently drop
+    /// it; otherwise the form shows the saved config.
+    pub fn reopen(&mut self, network: &Deferred<data::Network>) {
+        if self.proxy_error.is_some() || self.fetch_error.is_some() {
+            self.confirm = ConfirmState::Idle;
+        } else {
+            *self = Self::new(network);
         }
     }
 
@@ -71,8 +85,12 @@ impl NetworkEditor {
                 self.confirm = ConfirmState::Idle;
                 Some(Action::Exit)
             }
-            Message::Proxy(msg) => self.proxy.update(msg, &mut self.confirm, &mut self.error),
-            Message::Fetch(msg) => self.fetch.update(msg, &mut self.confirm, &mut self.error),
+            Message::Proxy(msg) => self
+                .proxy
+                .update(msg, &mut self.confirm, &mut self.proxy_error),
+            Message::Fetch(msg) => self
+                .fetch
+                .update(msg, &mut self.confirm, &mut self.fetch_error),
         }
     }
 
@@ -103,17 +121,20 @@ impl NetworkEditor {
             )
             .map(Message::Fetch);
 
-        let mut content = column![modal_header, fetch_settings, proxy_settings].spacing(12);
+        let mut content = column![modal_header, fetch_settings].spacing(12);
+        if let Some(err) = &self.fetch_error {
+            content = content.push(banner(err, BannerKind::Error));
+        }
+        content = content.push(proxy_settings);
+        if let Some(err) = &self.proxy_error {
+            content = content.push(banner(err, BannerKind::Error));
+        }
 
         if network.restart_required() {
             content = content.push(banner(
                 "Restart required.\nChanges will take effect after restart.",
                 BannerKind::Warning,
             ));
-        }
-
-        if let Some(err) = &self.error {
-            content = content.push(banner(err, BannerKind::Error));
         }
 
         container(content)
@@ -747,14 +768,19 @@ impl FetchForm {
                 if self.draft_tag == FetchModeTag::Server && self.draft_active {
                     let url = self.trimmed_url();
                     if url.is_none() || url.as_deref().is_none_or(|u| u.trim().is_empty()) {
-                        *error =
-                            Some("Server URL is required when mode is set to Server.".to_string());
+                        *error = Some(
+                            "Not applied: Server mode needs a server URL (under the gear)."
+                                .to_string(),
+                        );
+                        self.expanded_server = true;
                         return None;
                     }
                     if let Some(ref u) = url
                         && url::Url::parse(u).is_err()
                     {
-                        *error = Some("Server URL is not a valid URL.".to_string());
+                        *error =
+                            Some("Not applied: the server URL is not a valid URL.".to_string());
+                        self.expanded_server = true;
                         return None;
                     }
                 }
@@ -887,4 +913,121 @@ fn create_icon_button<'a, M: Clone + 'a>(
     }
 
     btn
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `main.rs` does with an Apply action, minus the keyring.
+    fn apply(network: &mut Deferred<data::Network>, action: Option<Action>) {
+        let wanted = network.wanted().clone();
+        let next = match action.expect("Apply was accepted") {
+            Action::ApplyProxy(proxy) => data::Network { proxy, ..wanted },
+            Action::ApplyServerConfig {
+                mode,
+                url,
+                auth_token,
+                accept_invalid_certs,
+            } => data::Network {
+                server_url: url,
+                server_auth_token: auth_token,
+                trade_fetch_mode: mode,
+                server_accept_invalid_certs: accept_invalid_certs,
+                ..wanted
+            },
+            Action::Exit => panic!("unexpected Exit"),
+        };
+        network.set_wanted(next);
+    }
+
+    /// Save to JSON and load it back, as a restart does.
+    fn restart(network: &Deferred<data::Network>) -> Deferred<data::Network> {
+        let state = data::State {
+            network: network.wanted().for_persistence(),
+            ..data::State::default()
+        };
+        let saved = serde_json::to_string(&state).unwrap();
+        let loaded: data::State = serde_json::from_str(&saved).unwrap();
+        Deferred::new(loaded.network)
+    }
+
+    fn fetch(editor: &mut NetworkEditor, message: FetchMsg) -> Option<Action> {
+        editor.update(Message::Fetch(message))
+    }
+
+    #[test]
+    fn server_mode_without_url_is_refused_and_kept_on_reopen() {
+        let network = Deferred::new(data::Network::default());
+        let mut editor = NetworkEditor::new(&network);
+        fetch(&mut editor, FetchMsg::ToggleFetchTrades(true));
+        fetch(&mut editor, FetchMsg::SelectFetchMode(FetchModeTag::Server));
+        fetch(&mut editor, FetchMsg::ToggleAcceptInvalidCerts(true));
+
+        assert!(fetch(&mut editor, FetchMsg::RequestApplyFetch).is_none());
+        let error = editor.fetch_error.clone().unwrap();
+        assert!(error.starts_with("Not applied"), "{error}");
+        assert!(editor.fetch.expanded_server);
+        assert!(editor.proxy_error.is_none());
+
+        // Closing and reopening Settings keeps the draft and the error.
+        editor.reopen(&network);
+        assert_eq!(editor.fetch.draft_tag, FetchModeTag::Server);
+        assert!(editor.fetch.accept_invalid_certs);
+        assert_eq!(editor.fetch_error.as_deref(), Some(error.as_str()));
+
+        // With a URL it applies, and the next reopen shows the saved config.
+        fetch(
+            &mut editor,
+            FetchMsg::ServerUrlChanged("https://data.example/".into()),
+        );
+        assert!(editor.fetch_error.is_none());
+        let mut network = network;
+        apply(
+            &mut network,
+            fetch(&mut editor, FetchMsg::RequestApplyFetch),
+        );
+        editor.reopen(&network);
+        assert_eq!(editor.fetch.server_url_input, "https://data.example");
+        assert!(editor.fetch.accept_invalid_certs);
+    }
+
+    #[test]
+    fn applied_network_settings_survive_reopen_and_restart() {
+        let mut network = Deferred::new(data::Network::default());
+        let mut editor = NetworkEditor::new(&network);
+
+        fetch(&mut editor, FetchMsg::ToggleFetchTrades(true));
+        fetch(
+            &mut editor,
+            FetchMsg::SelectFetchMode(FetchModeTag::Exchange),
+        );
+        apply(
+            &mut network,
+            fetch(&mut editor, FetchMsg::RequestApplyFetch),
+        );
+
+        editor.update(Message::Proxy(ProxyMsg::HostChanged("127.0.0.1".into())));
+        editor.update(Message::Proxy(ProxyMsg::PortChanged("1080".into())));
+        apply(
+            &mut network,
+            editor.update(Message::Proxy(ProxyMsg::RequestApply)),
+        );
+
+        for network in [&network, &restart(&network)] {
+            assert_eq!(
+                network.wanted().trade_fetch_mode,
+                fetcher::TradeFetchMode::Exchange
+            );
+            let proxy = network.wanted().proxy.as_ref().unwrap();
+            assert_eq!((proxy.host(), proxy.port()), ("127.0.0.1", 1080));
+
+            let mut reopened = NetworkEditor::new(&Deferred::new(data::Network::default()));
+            reopened.reopen(network);
+            assert!(reopened.fetch.draft_active);
+            assert_eq!(reopened.fetch.draft_tag, FetchModeTag::Exchange);
+            assert_eq!(reopened.proxy.host, "127.0.0.1");
+            assert_eq!(reopened.proxy.port, "1080");
+        }
+    }
 }

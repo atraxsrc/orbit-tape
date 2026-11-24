@@ -22,7 +22,14 @@ License: MIT
 
 Files: indicators/*
 Copyright: 2026 Atrax
-License: MIT
+License: GPL-3.0-or-later
+
+Files: indicators/market/bull-market-support-band.ind
+Copyright: zkdev
+           2026 Atrax
+License: MPL-2.0
+ On Debian systems, the complete text of the Mozilla Public License 2.0 can
+ be found in /usr/share/common-licenses/MPL-2.0.
 
 License: GPL-3.0-or-later
  This program is free software: you can redistribute it and/or modify it

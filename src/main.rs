@@ -7,9 +7,11 @@ mod audio;
 mod blur;
 mod connector;
 mod deferred;
+mod headless;
 mod indicator_watch;
 mod layout;
 mod logger;
+mod mcp;
 mod modal;
 mod notify;
 mod scan;
@@ -51,10 +53,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 fn main() {
-    // Headless subcommand: no window, no logger, no data migration.
+    // Headless subcommands: no window, no logger, no data migration.
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    if arguments.first().is_some_and(|argument| argument == "scan") {
-        std::process::exit(scan::run(&arguments[1..]));
+    match arguments.first().map(String::as_str) {
+        Some("scan") => std::process::exit(scan::run(&arguments[1..])),
+        Some("mcp") => std::process::exit(mcp::run(&arguments[1..])),
+        _ => {}
     }
 
     logger::install_panic_hook();
@@ -210,6 +214,7 @@ impl OrbitTape {
         );
         let network = Deferred::new(saved_state.network);
 
+        let alert_history = data::config::alert_history::AlertHistory::load();
         let mut state = Self {
             main_window: window::Window::new(main_window_id),
             layout_manager: saved_state.layout_manager,
@@ -226,8 +231,8 @@ impl OrbitTape {
             )
             .with_accent_overrides(saved_state.accent_colors),
             notifications: Notifications::new(),
-            alert_center: alerts::AlertCenter::default(),
-            alert_history: data::config::alert_history::AlertHistory::load(),
+            alert_center: alerts::AlertCenter::new(&alert_history, exchange::UnixMs::now()),
+            alert_history,
             last_alert_poll: std::time::Instant::now(),
             network_editor: NetworkEditor::new(&network),
             network,
@@ -720,7 +725,7 @@ impl OrbitTape {
 
                 match action {
                     Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Network))) => {
-                        self.network_editor = NetworkEditor::new(&self.network);
+                        self.network_editor.reopen(&self.network);
                     }
                     Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Alerts)))
                         if self.alert_history.mark_read() =>

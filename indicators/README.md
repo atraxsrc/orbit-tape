@@ -12,9 +12,9 @@ source file in Orbit Tape's indicator language
 | [market/bull-market-support-band.ind](market/bull-market-support-band.ind) | `market.bull-market-support-band` | zkdev's "Bull Market Support Band" (Pine v5, MPL-2.0): 20W SMA, 21W EMA |
 | [market/sma.ind](market/sma.ind) | `market.sma` | Original (GPL-3.0-or-later): four SMAs, 20/50/100/200 by default |
 
-The `roman` scripts are MIT (see [LICENSE-MIT](LICENSE-MIT)). Each `market`
-script states its license in its header: the Bull Market Support Band port
-keeps the original's MPL-2.0 terms and credit.
+Each script states its license in an SPDX header. The `roman` scripts and
+the original `market` scripts are GPL-3.0-or-later; the Bull Market Support
+Band port keeps the original's MPL-2.0 terms and credit.
 
 ## Tests
 
@@ -83,5 +83,5 @@ optionally `volume`, with time in Unix seconds or milliseconds.
 
 ## License
 
-The Roman scripts are MIT licensed ([LICENSE-MIT](LICENSE-MIT)). The rest of
-the repository is GPL-3.0.
+The Roman scripts and the original market scripts are GPL-3.0-or-later, like
+the rest of the repository. The Bull Market Support Band port is MPL-2.0.
