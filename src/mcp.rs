@@ -11,8 +11,11 @@ use crate::headless::{
     self, MAX_BARS, Market, PerpExchange, Series, alert_plots, coin, evaluate_alerts,
     indicator_config, parse_timeframe,
 };
-use exchange::Timeframe;
-use indicator_engine::{CompiledIndicator, InputValue, Value, tooling};
+use exchange::adapter::{MarketKind, Venue};
+use exchange::{TickerInfo, Timeframe};
+use indicator_engine::{
+    Color, CompiledIndicator, InputValue, OutputPrecision, PlotDescriptor, Value, tooling,
+};
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -44,6 +47,10 @@ const MAX_LOOKBACK: usize = 50;
 const MAX_ALERTS: usize = 200;
 const DEFAULT_RUN_BARS: usize = 2000;
 const KEY_LEVELS: &str = "key-levels.ind";
+/// Decimals for quote (USDT) volume.
+const VOLUME_DECIMALS: u32 = 2;
+/// Significant digits for plot values with no precision of their own.
+const PLOT_DIGITS: i32 = 10;
 
 /// Runs the server until the client disconnects; returns the exit code.
 pub fn run(arguments: &[String]) -> i32 {
@@ -58,6 +65,9 @@ pub fn run(arguments: &[String]) -> i32 {
         eprintln!("orbit-tape mcp: unknown argument '{argument}' (see --help)");
         return 1;
     }
+    // Candle volume in the quote currency (USDT), the app's default size unit,
+    // so volume-based indicators match the charts.
+    exchange::unit::qty::set_preferred_currency(exchange::SizeUnit::Quote);
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -140,8 +150,11 @@ impl CandleSource for LiveCandles {
 #[derive(Debug, Clone)]
 pub struct Paths {
     /// Searched in order for indicators by name.
+    /// The first is the user's own folder, the rest ship with the app.
     pub indicator_folders: Vec<PathBuf>,
-    pub symbols_file: Option<PathBuf>,
+    /// `scan-symbols.txt`: the scan list and the default exchange. Read only;
+    /// a missing file means the built-in list on OKX.
+    pub symbols_file: PathBuf,
     pub alert_history: PathBuf,
 }
 
@@ -149,7 +162,7 @@ impl Paths {
     fn installed() -> Self {
         Self {
             indicator_folders: headless::indicator_search_folders(),
-            symbols_file: None,
+            symbols_file: data::data_path(Some(crate::scan::SYMBOLS_FILE)),
             alert_history: data::data_path(Some(data::config::alert_history::ALERT_HISTORY_PATH)),
         }
     }
@@ -171,8 +184,8 @@ pub struct ScanParams {
     pub indicator: Option<String>,
     /// Chart timeframe: 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h.
     pub timeframe: Option<String>,
-    /// binance or okx. Default: the exchange in the user's scan-symbols.txt,
-    /// else okx.
+    /// binance or okx. Default: the exchange line of the user's
+    /// scan-symbols.txt, else okx.
     pub exchange: Option<String>,
     /// Coins such as BTC, ETH (BTCUSDT and BTC-USDT-SWAP work too). Default:
     /// the user's scan-symbols.txt list. At most 100.
@@ -189,7 +202,8 @@ pub struct CandlesParams {
     pub symbol: String,
     /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h.
     pub timeframe: Option<String>,
-    /// binance or okx. Default binance.
+    /// binance or okx. Default: the exchange line of the user's
+    /// scan-symbols.txt, else okx.
     pub exchange: Option<String>,
     /// Number of closed candles, newest last. Default 100, at most 500.
     pub limit: Option<usize>,
@@ -203,7 +217,8 @@ pub struct RunParams {
     pub symbol: String,
     /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h.
     pub timeframe: Option<String>,
-    /// binance or okx. Default binance.
+    /// binance or okx. Default: the exchange line of the user's
+    /// scan-symbols.txt, else okx.
     pub exchange: Option<String>,
     /// Indicator inputs by id or label, values as text.
     pub inputs: Option<BTreeMap<String, String>>,
@@ -217,8 +232,15 @@ pub struct RunParams {
 pub struct KeyLevelsParams {
     /// Coin or instrument, e.g. BTC.
     pub symbol: String,
-    /// binance or okx. Default binance.
+    /// binance or okx. Default: the exchange line of the user's
+    /// scan-symbols.txt, else okx.
     pub exchange: Option<String>,
+    /// Levels to return, by group (4h, daily, monday, weekly, monthly,
+    /// quarterly, yearly) or level ID (e.g. w_open, d_prev_high). Default: the
+    /// levels the Key Levels indicator shows with its own settings (4H off,
+    /// daily open, Monday range and mid, weekly and monthly open, high, low
+    /// and mid, quarterly open and mid, yearly open and mid).
+    pub levels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -267,7 +289,7 @@ impl OrbitTapeMcp {
         }
         let (file_exchange, symbols) = match params.symbols {
             Some(symbols) => (None, symbols.iter().map(|symbol| coin(symbol)).collect()),
-            None => crate::scan::symbols_from_file(self.paths.symbols_file.as_deref(), false)?,
+            None => self.scan_list()?,
         };
         let mut coins: Vec<String> = Vec::new();
         for symbol in symbols {
@@ -282,7 +304,7 @@ impl OrbitTapeMcp {
             return Err(format!("at most {MAX_SCAN_SYMBOLS} symbols per scan"));
         }
         let exchange = match params.exchange.as_deref() {
-            Some(text) => perp_exchange(Some(text))?,
+            Some(text) => perp_exchange(text)?,
             None => file_exchange.unwrap_or(PerpExchange::Okx),
         };
         let bars = DEFAULT_RUN_BARS.max(lookback + 1);
@@ -310,11 +332,13 @@ impl OrbitTapeMcp {
             match result {
                 Ok((series, signals)) => {
                     let last = series.klines.last().expect("candles are never empty");
+                    let precision = Precision::of(&series.ticker_info);
                     signal_count += signals.len();
                     rows.push(json!({
+                        "base": coin,
                         "symbol": series.instrument,
                         "last_closed_bar": utc(last.time.as_u64() as i64),
-                        "close": last.close.to_f64(),
+                        "close": precision.price(last.close.to_f64()),
                         "signals": signals
                             .iter()
                             .map(|signal| if lookback > 1 {
@@ -327,14 +351,14 @@ impl OrbitTapeMcp {
                 }
                 Err(error) => {
                     failed += 1;
-                    rows.push(json!({ "symbol": coin, "error": error }));
+                    rows.push(json!({ "base": coin, "error": error }));
                 }
             }
         }
         to_text(&json!({
             "indicator": indicator.descriptor.title,
-            "path": path.display().to_string(),
-            "exchange": exchange.name(),
+            "path": path,
+            "exchange": exchange_id(exchange),
             "timeframe": timeframe.to_string(),
             "lookback_bars": lookback,
             "signal_count": signal_count,
@@ -344,40 +368,44 @@ impl OrbitTapeMcp {
     }
 
     #[tool(
-        description = "Closed OHLCV candles of a USDT perpetual on Binance or OKX, oldest first. Times are bar open times in UTC."
+        description = "Closed OHLCV candles of a USDT perpetual on Binance or OKX, oldest first. Times are bar open times in UTC. Prices are rounded to the instrument's tick size. volume is quote volume in USDT (base volume times the bar's close, like the app's default size unit), rounded to cents."
     )]
     pub async fn get_candles(
         &self,
         Parameters(params): Parameters<CandlesParams>,
     ) -> Result<String, String> {
-        let exchange = perp_exchange(params.exchange.as_deref())?;
+        let exchange = self.exchange(params.exchange.as_deref())?;
         let timeframe = timeframe(params.timeframe.as_deref())?;
         let limit = params.limit.unwrap_or(100);
         if !(1..=MAX_CANDLES).contains(&limit) {
             return Err(format!("limit must be 1 to {MAX_CANDLES}"));
         }
+        let base = symbol_coin(&params.symbol)?;
         let series = self
             .candles
-            .closed_candles(exchange, symbol_coin(&params.symbol)?, timeframe, limit)
+            .closed_candles(exchange, base.clone(), timeframe, limit)
             .await?;
+        let precision = Precision::of(&series.ticker_info);
         let first = series.klines.len().saturating_sub(limit);
         let rows = series.klines[first..]
             .iter()
             .map(|kline| {
                 json!([
                     utc(kline.time.as_u64() as i64),
-                    kline.open.to_f64(),
-                    kline.high.to_f64(),
-                    kline.low.to_f64(),
-                    kline.close.to_f64(),
-                    kline.volume.total().to_f64(),
+                    precision.price(kline.open.to_f64()),
+                    precision.price(kline.high.to_f64()),
+                    precision.price(kline.low.to_f64()),
+                    precision.price(kline.close.to_f64()),
+                    round_decimals(kline.volume.total().to_f64(), VOLUME_DECIMALS),
                 ])
             })
             .collect::<Vec<_>>();
         to_text(&json!({
+            "base": base,
             "symbol": series.instrument,
-            "exchange": exchange.name(),
+            "exchange": exchange_id(exchange),
             "timeframe": timeframe.to_string(),
+            "volume_unit": "USDT",
             "columns": ["time_utc", "open", "high", "low", "close", "volume"],
             "candles": rows,
         }))
@@ -392,7 +420,7 @@ impl OrbitTapeMcp {
     ) -> Result<String, String> {
         let (path, indicator) = self.indicator(Some(&params.indicator))?;
         let config = indicator_config(&indicator, &inputs(params.inputs))?;
-        let exchange = perp_exchange(params.exchange.as_deref())?;
+        let exchange = self.exchange(params.exchange.as_deref())?;
         let timeframe = timeframe(params.timeframe.as_deref())?;
         let last = params.last.unwrap_or(20);
         if !(1..=MAX_LAST).contains(&last) {
@@ -402,17 +430,19 @@ impl OrbitTapeMcp {
         if !(last..=MAX_BARS).contains(&bars) {
             return Err(format!("bars must be {last} to {MAX_BARS}"));
         }
+        let base = symbol_coin(&params.symbol)?;
         let series = self
             .candles
-            .closed_candles(exchange, symbol_coin(&params.symbol)?, timeframe, bars)
+            .closed_candles(exchange, base.clone(), timeframe, bars)
             .await?;
         let report = indicator_report(&indicator, &config, &series, last)?;
         to_text(&json!({
             "indicator": indicator.descriptor.title,
             "id": indicator.descriptor.id.as_str(),
-            "path": path.display().to_string(),
+            "path": path,
+            "base": base,
             "symbol": series.instrument,
-            "exchange": exchange.name(),
+            "exchange": exchange_id(exchange),
             "timeframe": timeframe.to_string(),
             "bars_run": series.klines.len(),
             "report": report,
@@ -420,7 +450,7 @@ impl OrbitTapeMcp {
     }
 
     #[tool(
-        description = "Current Key Levels of a USDT perpetual: 4H, daily, weekly, monthly, quarterly and yearly opens, previous highs, lows and mids, and the Monday range, sorted by price, with the last close."
+        description = "Current Key Levels of a USDT perpetual, sorted by price, with the last close and whether each level is above or below it. By default the levels the Key Levels indicator shows with its own settings; pass levels to ask for others (4H, daily, Monday, weekly, monthly, quarterly, yearly opens, previous highs, lows and mids)."
     )]
     pub async fn key_levels(
         &self,
@@ -431,16 +461,19 @@ impl OrbitTapeMcp {
             &indicator,
             &[("exportValues".to_owned(), "true".to_owned())],
         )?;
-        let exchange = perp_exchange(params.exchange.as_deref())?;
+        let wanted = key_level_selection(&indicator, params.levels.as_deref())?;
+        let exchange = self.exchange(params.exchange.as_deref())?;
+        let base = symbol_coin(&params.symbol)?;
         let series = self
             .candles
             .closed_candles(
                 exchange,
-                symbol_coin(&params.symbol)?,
+                base.clone(),
                 Timeframe::H1,
                 key_levels_bars(chrono::Utc::now()),
             )
             .await?;
+        let precision = Precision::of(&series.ticker_info);
         let mut last_output = None;
         headless::run_closed(
             &indicator,
@@ -453,19 +486,20 @@ impl OrbitTapeMcp {
         let close = series
             .klines
             .last()
-            .map(|kline| kline.close.to_f64())
+            .map(|kline| precision.price(kline.close.to_f64()))
             .unwrap_or_default();
         let mut levels = indicator
             .descriptor
             .plots
             .iter()
+            .filter(|plot| wanted.contains(&plot.id))
             .filter_map(|plot| {
                 let value = output
                     .plots
                     .iter()
                     .find(|out| out.id == plot.id)
                     .and_then(|out| number(&out.value))?;
-                Some((plot.label.clone(), plot.id.clone(), value))
+                Some((plot.label.clone(), plot.id.clone(), precision.price(value)))
             })
             .collect::<Vec<_>>();
         if levels.is_empty() {
@@ -473,8 +507,10 @@ impl OrbitTapeMcp {
         }
         levels.sort_by(|a, b| b.2.total_cmp(&a.2));
         to_text(&json!({
+            "base": base,
             "symbol": series.instrument,
-            "exchange": exchange.name(),
+            "exchange": exchange_id(exchange),
+            "selection": if params.levels.is_some() { "requested" } else { "indicator defaults" },
             "as_of_bar_utc": utc(output.time),
             "close": close,
             "levels": levels
@@ -537,18 +573,20 @@ impl OrbitTapeMcp {
     }
 
     #[tool(
-        description = "List the user's installed indicators: name, ID, path, inputs (with defaults and options) and alert conditions."
+        description = "List the user's installed indicators: name, ID, path (relative to its indicators folder, with source user or bundled), inputs (with defaults and options) and alert conditions. Colors are #RRGGBB, #RRGGBBAA, or theme.<role> (theme.<role>@AA with alpha)."
     )]
     pub async fn list_indicators(&self) -> Result<String, String> {
         let indicators = self
             .installed()
             .into_iter()
-            .map(|(path, indicator)| {
-                let descriptor = &indicator.descriptor;
+            .map(|found| {
+                let descriptor = &found.indicator.descriptor;
+                let indicator = &found.indicator;
                 json!({
                     "name": descriptor.title,
                     "id": descriptor.id.as_str(),
-                    "path": path.display().to_string(),
+                    "path": found.path,
+                    "source": found.source,
                     "description": descriptor.description,
                     "inputs": descriptor.inputs.iter().map(|input| {
                         let mut entry = json!({
@@ -569,7 +607,7 @@ impl OrbitTapeMcp {
                         }
                         entry
                     }).collect::<Vec<_>>(),
-                    "alerts": alert_plots(&indicator)
+                    "alerts": alert_plots(indicator)
                         .into_iter()
                         .map(|(_, title)| title)
                         .collect::<Vec<_>>(),
@@ -580,7 +618,7 @@ impl OrbitTapeMcp {
     }
 
     #[tool(
-        description = "The newest alerts Orbit Tape fired (indicator and price alerts), newest first, from its saved alert history."
+        description = "The newest alerts Orbit Tape fired (indicator and price alerts), newest first, from its saved alert history: when it fired, the chart's exchange, market and timeframe, the bar it fired on (null for entries saved by older versions), the condition and price."
     )]
     pub async fn alert_history(
         &self,
@@ -603,10 +641,14 @@ impl OrbitTapeMcp {
             .entries()
             .take(last)
             .map(|alert| {
+                let exchange = alert.ticker.exchange;
                 json!({
                     "fired_utc": utc(alert.fired_at as i64),
+                    "bar_utc": alert.bar_time.map(|time| utc(time as i64)),
                     "symbol": alert.symbol,
-                    "exchange": alert.exchange,
+                    "exchange": venue_id(exchange.venue()),
+                    "market": market_id(exchange.market_type()),
+                    "timeframe": alert.basis.to_string(),
                     "source": alert.source,
                     "condition": alert.condition,
                     "price": alert.price,
@@ -637,9 +679,9 @@ impl ServerHandler for OrbitTapeMcp {
 
 impl OrbitTapeMcp {
     /// Every installed indicator that compiles, first folder wins per ID.
-    fn installed(&self) -> Vec<(PathBuf, CompiledIndicator)> {
-        let mut found: Vec<(PathBuf, CompiledIndicator)> = Vec::new();
-        for folder in &self.paths.indicator_folders {
+    fn installed(&self) -> Vec<Installed> {
+        let mut found: Vec<Installed> = Vec::new();
+        for (index, folder) in self.paths.indicator_folders.iter().enumerate() {
             let Ok((paths, _)) = indicator_engine::source_files_in_directory(folder) else {
                 continue;
             };
@@ -648,19 +690,70 @@ impl OrbitTapeMcp {
                     continue;
                 };
                 let id = indicator.descriptor.id.as_str().to_owned();
-                if !found
+                if found
                     .iter()
-                    .any(|(_, known)| known.descriptor.id.as_str() == id)
+                    .any(|known| known.indicator.descriptor.id.as_str() == id)
                 {
-                    found.push((path, indicator));
+                    continue;
                 }
+                found.push(Installed {
+                    stem: path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or_default()
+                        .to_lowercase(),
+                    path: path
+                        .strip_prefix(folder)
+                        .unwrap_or(&path)
+                        .display()
+                        .to_string(),
+                    source: if index == 0 { "user" } else { "bundled" },
+                    indicator,
+                });
             }
         }
         found
     }
 
-    /// An indicator by .ind path, ID, file name, short name or title.
-    fn indicator(&self, wanted: Option<&str>) -> Result<(PathBuf, CompiledIndicator), String> {
+    /// The exchange asked for, else the scan list's, else OKX.
+    fn exchange(&self, text: Option<&str>) -> Result<PerpExchange, String> {
+        match text {
+            Some(text) => perp_exchange(text),
+            None => Ok(self
+                .scan_list()
+                .ok()
+                .and_then(|(exchange, _)| exchange)
+                .unwrap_or(PerpExchange::Okx)),
+        }
+    }
+
+    /// The user's scan-symbols.txt (never created), or the built-in list.
+    fn scan_list(&self) -> Result<(Option<PerpExchange>, Vec<String>), String> {
+        let path = &self.paths.symbols_file;
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                let (exchange, symbols) = crate::scan::parse_symbols(&text)
+                    .map_err(|error| format!("scan-symbols.txt: {error}"))?;
+                if symbols.is_empty() {
+                    return Err("scan-symbols.txt lists no coins".to_owned());
+                }
+                Ok((exchange, symbols))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok((
+                None,
+                crate::scan::DEFAULT_SYMBOLS
+                    .iter()
+                    .map(|&symbol| symbol.to_owned())
+                    .collect(),
+            )),
+            Err(error) => Err(format!("scan-symbols.txt: {error}")),
+        }
+    }
+
+    /// An indicator by .ind path, ID, file name, short name or title, with the
+    /// path to show: relative to its indicators folder, or as the client gave
+    /// it.
+    fn indicator(&self, wanted: Option<&str>) -> Result<(String, CompiledIndicator), String> {
         let wanted = wanted
             .map(str::trim)
             .filter(|wanted| !wanted.is_empty())
@@ -672,26 +765,35 @@ impl OrbitTapeMcp {
                 return Err(format!("{wanted} is a folder, not a .ind file"));
             }
             let indicator = headless::compile(&path)?;
-            return Ok((path, indicator));
+            return Ok((wanted.to_owned(), indicator));
         }
         let key = wanted.trim_end_matches(".ind").to_lowercase();
-        let installed = self.installed();
-        let matches = |path: &Path, indicator: &CompiledIndicator| {
-            let id = indicator.descriptor.id.as_str().to_lowercase();
+        let matches = |found: &Installed| {
+            let id = found.indicator.descriptor.id.as_str().to_lowercase();
             id == key
                 || id.rsplit('.').next() == Some(key.as_str())
-                || path.file_stem().and_then(|stem| stem.to_str()) == Some(key.as_str())
-                || indicator.descriptor.title.to_lowercase() == key
+                || found.stem == key
+                || found.indicator.descriptor.title.to_lowercase() == key
         };
-        installed
+        self.installed()
             .into_iter()
-            .find(|(path, indicator)| matches(path, indicator))
+            .find(matches)
+            .map(|found| (found.path, found.indicator))
             .ok_or_else(|| {
                 format!(
                     "unknown indicator '{wanted}'; use list_indicators to see the installed ones, or pass a .ind path"
                 )
             })
     }
+}
+
+/// An installed indicator, with its path relative to its folder.
+struct Installed {
+    path: String,
+    stem: String,
+    /// "user" for the user's own folder, "bundled" for the app's copies.
+    source: &'static str,
+    indicator: CompiledIndicator,
 }
 
 /// A path the client asked for, resolved: an existing folder, or a regular
@@ -732,6 +834,7 @@ fn indicator_report(
     last: usize,
 ) -> Result<Json, String> {
     let plots = &indicator.descriptor.plots;
+    let precision = Precision::of(&series.ticker_info);
     let first = series.klines.len().saturating_sub(last);
     let mut rows = Vec::new();
     let mut markers = Vec::new();
@@ -747,13 +850,18 @@ fn indicator_report(
                 return;
             }
             let kline = &series.klines[index];
-            let mut row = vec![json!(utc(output.time)), json!(kline.close.to_f64())];
+            let mut row = vec![
+                json!(utc(output.time)),
+                json!(precision.price(kline.close.to_f64())),
+            ];
             for plot in plots {
                 let value = output
                     .plots
                     .iter()
                     .find(|out| out.id == plot.id)
-                    .map_or(Json::Null, |out| value_json(&out.value));
+                    .map_or(Json::Null, |out| {
+                        value_json(&out.value, |value| precision.plot(plot, value))
+                    });
                 if plot.alert && value == json!(true) {
                     alerts.push(json!({ "time_utc": utc(output.time), "alert": plot.label }));
                 }
@@ -765,7 +873,7 @@ fn indicator_report(
                     "time_utc": utc(output.time),
                     "id": marker.id,
                     "text": marker.text,
-                    "price": marker.value,
+                    "price": marker.value.map(|value| precision.price(value)),
                 }));
             }
             if index + 1 == series.klines.len() {
@@ -811,12 +919,176 @@ fn key_levels_bars(now: chrono::DateTime<chrono::Utc>) -> usize {
     (hours + 24 * 8).min(MAX_BARS)
 }
 
-fn perp_exchange(text: Option<&str>) -> Result<PerpExchange, String> {
-    match text {
-        None => Ok(PerpExchange::Binance),
-        Some(text) => PerpExchange::parse(text)
-            .ok_or_else(|| format!("unknown exchange '{text}' (binance or okx)")),
+fn perp_exchange(text: &str) -> Result<PerpExchange, String> {
+    PerpExchange::parse(text).ok_or_else(|| format!("unknown exchange '{text}' (binance or okx)"))
+}
+
+/// Exchange names in every output: the same words the tools take.
+fn exchange_id(exchange: PerpExchange) -> &'static str {
+    match exchange {
+        PerpExchange::Binance => "binance",
+        PerpExchange::Okx => "okx",
     }
+}
+
+fn venue_id(venue: Venue) -> &'static str {
+    match venue {
+        Venue::Binance => "binance",
+        Venue::Okex => "okx",
+        Venue::Bybit => "bybit",
+        Venue::Hyperliquid => "hyperliquid",
+        Venue::Mexc => "mexc",
+    }
+}
+
+fn market_id(market: MarketKind) -> &'static str {
+    match market {
+        MarketKind::Spot => "spot",
+        MarketKind::LinearPerps => "perp",
+        MarketKind::InversePerps => "inverse_perp",
+    }
+}
+
+/// Rounding for one instrument: prices to its tick size.
+#[derive(Clone, Copy)]
+struct Precision {
+    price_decimals: u32,
+}
+
+impl Precision {
+    fn of(info: &TickerInfo) -> Self {
+        Self {
+            price_decimals: (-i32::from(info.min_ticksize.power)).max(0) as u32,
+        }
+    }
+
+    fn price(self, value: f64) -> f64 {
+        round_decimals(value, self.price_decimals)
+    }
+
+    /// A plot value: with the plot's own precision, as a price for
+    /// `precision = "instrument"`, else to `PLOT_DIGITS` significant digits.
+    fn plot(self, plot: &PlotDescriptor, value: f64) -> f64 {
+        match plot.output_precision {
+            Some(OutputPrecision::Instrument) => self.price(value),
+            Some(OutputPrecision::Decimals(decimals)) => round_decimals(value, decimals.into()),
+            Some(OutputPrecision::Step(step)) if step > 0.0 => {
+                significant((value / step).round() * step, PLOT_DIGITS)
+            }
+            _ => significant(value, PLOT_DIGITS),
+        }
+    }
+}
+
+fn round_decimals(value: f64, decimals: u32) -> f64 {
+    let scale = 10f64.powi(decimals.min(15) as i32);
+    let rounded = (value * scale).round() / scale;
+    if rounded.is_finite() { rounded } else { value }
+}
+
+/// `value` to `digits` significant digits (only ever drops float noise).
+fn significant(value: f64, digits: i32) -> f64 {
+    if value == 0.0 || !value.is_finite() {
+        return value;
+    }
+    let decimals = digits - 1 - value.abs().log10().floor() as i32;
+    if decimals <= 0 {
+        return value.round();
+    }
+    round_decimals(value, decimals as u32)
+}
+
+/// A color as text: `#RRGGBB`, `#RRGGBBAA` when not opaque, or a theme role
+/// (`theme.danger`, `theme.danger@80` with alpha) that the app resolves from
+/// the desktop theme.
+fn color_text(bits: u64) -> String {
+    let color = Color(bits);
+    if color.theme_role().is_some() {
+        return color.to_string();
+    }
+    let argb = color.argb_bits();
+    let (alpha, rgb) = (argb >> 24, argb & 0x00ff_ffff);
+    if alpha == 0xff {
+        format!("#{rgb:06x}")
+    } else {
+        format!("#{rgb:06x}{alpha:02x}")
+    }
+}
+
+/// Plot IDs of the Key Levels indicator to report: the requested groups and
+/// IDs, or the ones its own settings show.
+fn key_level_selection(
+    indicator: &CompiledIndicator,
+    requested: Option<&[String]>,
+) -> Result<Vec<String>, String> {
+    const GROUPS: [(&str, &str); 7] = [
+        ("4h", "h4"),
+        ("daily", "d"),
+        ("monday", "mon"),
+        ("weekly", "w"),
+        ("monthly", "m"),
+        ("quarterly", "q"),
+        ("yearly", "y"),
+    ];
+    let plots = indicator
+        .descriptor
+        .plots
+        .iter()
+        .filter_map(|plot| Some((plot.id.clone(), key_level_toggle(&plot.id)?)))
+        .collect::<Vec<_>>();
+    let Some(requested) = requested else {
+        let shown =
+            |toggle: &str| {
+                indicator.descriptor.inputs.iter().any(|input| {
+                    input.id == toggle && matches!(input.default, InputValue::Bool(true))
+                })
+            };
+        return Ok(plots
+            .into_iter()
+            .filter(|(_, toggle)| shown(toggle))
+            .map(|(id, _)| id)
+            .collect());
+    };
+    let mut wanted = Vec::new();
+    for entry in requested {
+        let entry = entry.trim().to_lowercase();
+        let prefix = GROUPS
+            .iter()
+            .find(|(group, _)| *group == entry)
+            .map(|(_, prefix)| format!("{prefix}_"));
+        let found = plots
+            .iter()
+            .filter(|(id, _)| match &prefix {
+                Some(prefix) => id.starts_with(prefix.as_str()),
+                None => *id == entry,
+            })
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        if found.is_empty() {
+            let groups = GROUPS.map(|(group, _)| group).join(", ");
+            return Err(format!(
+                "unknown level '{entry}' (groups: {groups}; or level IDs such as w_open, d_prev_high)"
+            ));
+        }
+        wanted.extend(found);
+    }
+    Ok(wanted)
+}
+
+/// The Key Levels input that shows a level: `w_prev_high` is shown by
+/// `wRange`, `y_mid` by `yMid`.
+fn key_level_toggle(plot_id: &str) -> Option<String> {
+    let (period, kind) = plot_id.split_once('_')?;
+    if !["h4", "d", "mon", "w", "m", "q", "y"].contains(&period) {
+        return None;
+    }
+    let toggle = match kind {
+        "open" => "Open",
+        "prev_high" | "prev_low" | "high" | "low" => "Range",
+        "prev_mid" | "mid" => "Mid",
+        _ => return None,
+    };
+    Some(format!("{period}{toggle}"))
 }
 
 fn timeframe(text: Option<&str>) -> Result<Timeframe, String> {
@@ -849,14 +1121,14 @@ fn number(value: &Value) -> Option<f64> {
     }
 }
 
-fn value_json(value: &Value) -> Json {
+fn value_json(value: &Value, round: impl Fn(f64) -> f64) -> Json {
     match value {
         Value::Int(value) => json!(value),
-        Value::Float(value) if value.is_finite() => json!(value),
+        Value::Float(value) if value.is_finite() => json!(round(*value)),
         Value::Float(_) | Value::Na => Json::Null,
         Value::Bool(value) => json!(value),
         Value::String(value) => json!(value),
-        Value::Color(value) => json!(format!("#{value:08x}")),
+        Value::Color(value) => json!(color_text(*value)),
         other => json!(format!("{other:?}")),
     }
 }
@@ -867,7 +1139,7 @@ fn input_json(value: &InputValue) -> Json {
         InputValue::Float(value) => json!(value),
         InputValue::Bool(value) => json!(value),
         InputValue::String(value) => json!(value),
-        InputValue::Color(value) => json!(format!("#{value:08x}")),
+        InputValue::Color(value) => json!(color_text(*value)),
     }
 }
 
@@ -962,7 +1234,7 @@ mod tests {
     fn paths() -> Paths {
         Paths {
             indicator_folders: vec![repo("indicators")],
-            symbols_file: None,
+            symbols_file: repo("target/no-such-scan-symbols.txt"),
             alert_history: repo("target/no-such-alert-history.json"),
         }
     }
@@ -1002,13 +1274,16 @@ mod tests {
             inputs: Some(BTreeMap::from([("ctMode".into(), "true".into())])),
         }))));
         assert_eq!(out["indicator"], "Roman Trade Setup (H12 to H1)");
-        assert_eq!(out["exchange"], "Binance");
+        assert_eq!(out["exchange"], "binance");
+        assert_eq!(out["path"], "roman/roman-setup.ind");
         let rows = out["rows"].as_array().unwrap();
         assert_eq!(rows.len(), 2, "duplicates are dropped: {rows:?}");
+        assert_eq!(rows[0]["base"], "BTC");
         assert_eq!(rows[0]["symbol"], "BTCUSDT");
         assert_eq!(rows[0]["last_closed_bar"], "2026-01-15 23:00");
+        assert_eq!(rows[0]["close"], 95567.3);
         assert!(rows[0]["signals"].is_array());
-        assert_eq!(rows[1]["symbol"], "DOGE");
+        assert_eq!(rows[1]["base"], "DOGE");
         assert!(
             rows[1]["error"]
                 .as_str()
@@ -1043,19 +1318,39 @@ mod tests {
         let file = dir.join("scan-symbols.txt");
         std::fs::write(&file, "exchange = okx\nBTC-USDT-SWAP\n").unwrap();
         let mut with_file = paths();
-        with_file.symbols_file = Some(file);
-        let out = parse(block_on(
-            server_with(Arc::new(FixtureCandles), with_file).scan(Parameters(ScanParams {
-                indicator: Some("roman-setup".into()),
-                timeframe: Some("1h".into()),
-                exchange: None,
-                symbols: None,
-                lookback: None,
-                inputs: None,
-            })),
-        ));
-        assert_eq!(out["exchange"], "OKX");
+        with_file.symbols_file = file.clone();
+        let server = server_with(Arc::new(FixtureCandles), with_file);
+        let out = parse(block_on(server.scan(Parameters(ScanParams {
+            indicator: Some("roman-setup".into()),
+            timeframe: Some("1h".into()),
+            exchange: None,
+            symbols: None,
+            lookback: None,
+            inputs: None,
+        }))));
+        assert_eq!(out["exchange"], "okx");
         assert_eq!(out["rows"].as_array().unwrap().len(), 1);
+
+        // Every tool takes its default exchange from the same line.
+        std::fs::write(&file, "exchange = binance\nBTC\n").unwrap();
+        let candles = parse(block_on(server.get_candles(Parameters(CandlesParams {
+            symbol: "BTC".into(),
+            timeframe: None,
+            exchange: None,
+            limit: Some(1),
+        }))));
+        assert_eq!(candles["exchange"], "binance");
+        let levels = parse(block_on(server.key_levels(Parameters(KeyLevelsParams {
+            symbol: "BTC".into(),
+            exchange: None,
+            levels: Some(vec!["daily".into()]),
+        }))));
+        assert_eq!(levels["exchange"], "binance");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "exchange = binance\nBTC\n",
+            "the scan list is never written"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1067,11 +1362,24 @@ mod tests {
             exchange: None,
             limit: Some(3),
         }))));
+        assert_eq!(out["base"], "BTC");
         assert_eq!(out["symbol"], "BTCUSDT");
+        // No scan list: OKX, like scan.
+        assert_eq!(out["exchange"], "okx");
+        assert_eq!(out["volume_unit"], "USDT");
         let candles = out["candles"].as_array().unwrap();
         assert_eq!(candles.len(), 3);
         assert_eq!(candles[2][0], "2026-01-15 23:00");
         assert_eq!(candles[2][4], 95567.3);
+        for candle in candles {
+            for (column, decimals) in [(1, 1), (2, 1), (3, 1), (4, 1), (5, 2)] {
+                let text = candle[column].to_string();
+                let places = text
+                    .split_once('.')
+                    .map_or(0, |(_, fraction)| fraction.len());
+                assert!(places <= decimals, "column {column}: {text}");
+            }
+        }
 
         for (limit, timeframe, exchange, expected) in [
             (501, None, None, "limit must be 1 to 500"),
@@ -1101,7 +1409,7 @@ mod tests {
         assert!(
             unknown
                 .unwrap_err()
-                .contains("no Binance USDT perpetual for NOPE")
+                .contains("no OKX USDT perpetual for NOPE")
         );
         let invalid = block_on(server().get_candles(Parameters(CandlesParams {
             symbol: "../etc".into(),
@@ -1124,6 +1432,9 @@ mod tests {
             bars: Some(500),
         }))));
         assert_eq!(out["id"], "market.sma");
+        assert_eq!(out["path"], "market/sma.ind");
+        assert_eq!(out["base"], "BTC");
+        assert_eq!(out["exchange"], "okx");
         assert_eq!(out["bars_run"], 500);
         let report = &out["report"];
         let columns = report["columns"].as_array().unwrap();
@@ -1164,10 +1475,31 @@ mod tests {
         let out = parse(block_on(server().key_levels(Parameters(KeyLevelsParams {
             symbol: "BTC".into(),
             exchange: None,
+            levels: None,
         }))));
         assert_eq!(out["as_of_bar_utc"], "2026-01-15 23:00");
+        assert_eq!(out["base"], "BTC");
+        assert_eq!(out["selection"], "indicator defaults");
         let levels = out["levels"].as_array().unwrap();
-        assert!(levels.len() >= 20, "{levels:?}");
+        let ids = levels
+            .iter()
+            .map(|level| level["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        // The indicator's own settings: 4H off, daily open only, ...
+        assert!(ids.iter().all(|id| !id.starts_with("h4_")), "{ids:?}");
+        for id in [
+            "d_open",
+            "mon_high",
+            "w_prev_mid",
+            "m_open",
+            "q_open",
+            "y_mid",
+        ] {
+            assert!(ids.contains(&id), "{id} missing from {ids:?}");
+        }
+        for id in ["d_prev_high", "q_prev_high", "y_high"] {
+            assert!(!ids.contains(&id), "{id} is off by default: {ids:?}");
+        }
         let prices = levels
             .iter()
             .map(|level| level["price"].as_f64().unwrap())
@@ -1177,14 +1509,83 @@ mod tests {
             .iter()
             .map(|level| level["label"].as_str().unwrap())
             .collect::<Vec<_>>();
-        for label in [
-            "Weekly open",
-            "Prev day high",
-            "Monthly open",
-            "Yearly open",
-        ] {
+        for label in ["Weekly open", "Monthly open", "Yearly open"] {
             assert!(labels.contains(&label), "{label} missing from {labels:?}");
         }
+        for level in levels {
+            let text = level["price"].to_string();
+            assert!(
+                text.split_once('.')
+                    .is_none_or(|(_, fraction)| fraction.len() <= 1),
+                "{text}"
+            );
+        }
+
+        let requested = parse(block_on(server().key_levels(Parameters(KeyLevelsParams {
+            symbol: "BTC".into(),
+            exchange: Some("binance".into()),
+            levels: Some(vec!["4h".into(), "D_PREV_HIGH".into()]),
+        }))));
+        assert_eq!(requested["selection"], "requested");
+        let mut ids = requested["levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(
+            ids,
+            [
+                "d_prev_high",
+                "h4_open",
+                "h4_prev_high",
+                "h4_prev_low",
+                "h4_prev_mid"
+            ]
+        );
+        let unknown = block_on(server().key_levels(Parameters(KeyLevelsParams {
+            symbol: "BTC".into(),
+            exchange: None,
+            levels: Some(vec!["hourly".into()]),
+        })));
+        assert!(unknown.unwrap_err().starts_with("unknown level 'hourly'"));
+    }
+
+    #[test]
+    fn colors_are_hex_or_theme_roles() {
+        assert_eq!(color_text(0xff11_2233), "#112233");
+        assert_eq!(color_text(0x8011_2233), "#11223380");
+        assert_eq!(color_text(0xd_f000_0000), "theme.text@f0");
+        assert_eq!(
+            color_text(Color::theme(indicator_engine::ThemeColor::Danger).0),
+            "theme.danger"
+        );
+    }
+
+    #[test]
+    fn rounds_to_the_instrument() {
+        let info = TickerInfo::new(
+            Ticker::new("PEPEUSDT", Exchange::BinanceLinear),
+            0.0000001,
+            1.0,
+            None,
+        );
+        let precision = Precision::of(&info);
+        assert_eq!(precision.price(0.000_012_345_67), 0.000_012_3);
+        assert_eq!(
+            round_decimals(132_861_314.768_700_02, VOLUME_DECIMALS),
+            132_861_314.77
+        );
+        assert_eq!(significant(0.1 + 0.2, PLOT_DIGITS), 0.3);
+        assert_eq!(
+            significant(132_861_314.768_700_02, PLOT_DIGITS),
+            132_861_314.8
+        );
+        assert_eq!(
+            significant(-0.000_123_456_789_012_3, PLOT_DIGITS),
+            -0.000_123_456_789_0
+        );
     }
 
     #[test]
@@ -1281,6 +1682,32 @@ mod tests {
             .unwrap();
         assert_eq!(ct["type"], "bool");
         assert_eq!(ct["default"], false);
+        assert_eq!(roman["path"], "roman/roman-setup.ind");
+        assert_eq!(roman["source"], "user");
+
+        let mut colors = 0;
+        for indicator in indicators {
+            let path = indicator["path"].as_str().unwrap();
+            assert!(!path.starts_with('/'), "{path}");
+            for input in indicator["inputs"].as_array().unwrap() {
+                if input["type"] != "color" {
+                    continue;
+                }
+                colors += 1;
+                let text = input["default"].as_str().unwrap();
+                let hex = text.strip_prefix('#').is_some_and(|digits| {
+                    matches!(digits.len(), 6 | 8) && digits.chars().all(|c| c.is_ascii_hexdigit())
+                });
+                let theme = text.strip_prefix("theme.").is_some_and(|role| {
+                    let (name, alpha) = role.split_once('@').unwrap_or((role, "ff"));
+                    name.chars().all(|c| c.is_ascii_lowercase())
+                        && alpha.len() == 2
+                        && alpha.chars().all(|c| c.is_ascii_hexdigit())
+                });
+                assert!(hex || theme, "{}: {text}", input["id"]);
+            }
+        }
+        assert!(colors > 10, "{colors} color inputs");
     }
 
     #[test]
@@ -1306,6 +1733,7 @@ mod tests {
                 source: "Roman Trade Setup".into(),
                 condition: (*condition).into(),
                 price: "95567.3".into(),
+                bar_time: (index > 0).then_some(1_768_514_400_000 + index as u64 * 3_600_000),
             });
         }
         std::fs::write(&file, serde_json::to_string(&history).unwrap()).unwrap();
@@ -1320,6 +1748,19 @@ mod tests {
         assert_eq!(alerts.len(), 2);
         assert_eq!(alerts[0]["condition"], "OB formed");
         assert_eq!(alerts[0]["fired_utc"], "2026-01-16 01:00");
+        assert_eq!(alerts[0]["bar_utc"], "2026-01-16 00:00");
+        assert_eq!(alerts[0]["exchange"], "binance");
+        assert_eq!(alerts[0]["market"], "perp");
+        assert_eq!(alerts[0]["timeframe"], "1h");
+        let older = parse(block_on(
+            server_with(Arc::new(FixtureCandles), {
+                let mut paths = paths();
+                paths.alert_history = file.clone();
+                paths
+            })
+            .alert_history(Parameters(AlertHistoryParams { last: Some(3) })),
+        ));
+        assert_eq!(older["alerts"][2]["bar_utc"], Json::Null);
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
             serde_json::to_string(&history).unwrap(),

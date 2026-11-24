@@ -199,7 +199,9 @@ Then add it to a candlestick chart from the indicator sidebar (**+**).
 on OKX (default) or Binance without opening a window, and lists every alert plot
 (`plot(..., alert = true)`) that fired on the last closed bar. When anything
 fired it also sends one desktop notification, grouped by signal and bar
-(for example `LTF MSS down Tue 13:00: BTC, BNB, SOL`). By default it runs
+(for example `LTF MSS down Tue 13:00: BTC, BNB, SOL`). The last line of
+each run says what happened to it: `no signals`, `notification sent (id N)`,
+`notification off (--no-notify)` or `notification failed: <reason>`. By default it runs
 Roman Setup (`roman-setup.ind`, from the indicators folder or the copy the
 .deb ships) on the 1H chart.
 

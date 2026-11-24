@@ -136,6 +136,7 @@ fn fired_alert(hit: &AlertHit) -> FiredAlert {
         source: hit.source_name.clone(),
         condition: hit.title.clone(),
         price: hit.close.to_string(hit.ticker_info.min_ticksize),
+        bar_time: Some(hit.bar_time.as_u64()),
     }
 }
 

@@ -51,20 +51,30 @@ Restart the client after editing its config.
 ## Tools
 
 All times are UTC and all candles are **closed** bars. Exchanges are `binance`
-or `okx` (USDT perpetuals); symbols can be written as `BTC`, `BTCUSDT` or
+or `okx` (USDT perpetuals). Every tool that takes `exchange` defaults to the
+`exchange =` line of your `scan-symbols.txt`, else `okx`, and every result
+names the exchange it used. Symbols can be written as `BTC`, `BTCUSDT` or
 `BTC-USDT-SWAP`, and Binance's 1000x contracts (`1000PEPEUSDT`) are found
-from `PEPE`. Timeframes: `1m 3m 5m 15m 30m 1h 2h 4h 12h 1d`.
+from `PEPE`; results carry both `base` (`BTC`, to join results across tools
+and exchanges) and `symbol`, the exchange's own name. Timeframes:
+`1m 3m 5m 15m 30m 1h 2h 4h 12h 1d`.
+
+Prices are rounded to the instrument's tick size. Candle `volume` is quote
+volume in USDT (base volume times the bar's close, the app's default size
+unit), rounded to cents. Indicator values use the plot's own precision, or
+10 significant digits. Colors are `#RRGGBB`, `#RRGGBBAA` when not opaque, or
+a desktop theme role such as `theme.danger` (`theme.text@f0` with alpha).
 
 | Tool | What it does | Main parameters |
 | --- | --- | --- |
-| `scan` | Runs an indicator over many coins and lists the alerts that fired on the last closed bar(s). Default: Roman Trade Setup on 1h over your `scan-symbols.txt` (its `exchange =` line, else OKX). | `indicator`, `timeframe`, `exchange`, `symbols` (at most 100), `lookback` (1 to 50), `inputs` |
-| `get_candles` | Closed OHLCV candles, oldest first. | `symbol`, `timeframe`, `exchange` (default binance), `limit` (default 100, at most 500) |
+| `scan` | Runs an indicator over many coins and lists the alerts that fired on the last closed bar(s). Default: Roman Trade Setup on 1h over your `scan-symbols.txt`. | `indicator`, `timeframe`, `exchange`, `symbols` (at most 100), `lookback` (1 to 50), `inputs` |
+| `get_candles` | Closed OHLCV candles, oldest first. | `symbol`, `timeframe`, `exchange`, `limit` (default 100, at most 500) |
 | `run_indicator` | Runs one indicator on one coin: every plot value, markers, fired alerts and the info panel for the last N bars. | `indicator`, `symbol`, `timeframe`, `exchange`, `inputs`, `last` (default 20, at most 200), `bars` (default 2000, at most 20000) |
-| `key_levels` | Current Key Levels (4H, daily, weekly, monthly, quarterly and yearly opens, previous highs, lows and mids, Monday range) sorted by price, each marked above or below the last close. Runs `key-levels.ind` on 1h candles back to the start of the year or the previous quarter. | `symbol`, `exchange` |
+| `key_levels` | Current Key Levels sorted by price, each marked above or below the last close. By default the levels `key-levels.ind` shows with its own settings (4H off; daily open; Monday range and mid; weekly and monthly open, high, low and mid; quarterly open and mid; yearly open and mid). Runs on 1h candles back to the start of the year or the previous quarter. | `symbol`, `exchange`, `levels` (groups `4h daily monday weekly monthly quarterly yearly`, or level IDs such as `w_open`, `d_prev_high`) |
 | `check_indicator` | Same as `orbit-tape-indicator check`. | `path` (a `.ind` file or folder), `namespace` |
 | `test_indicator` | Same as `orbit-tape-indicator test`: check, then run on synthetic bars. | `path`, `namespace` |
-| `list_indicators` | Your installed indicators: name, ID, path, inputs with defaults and options, and alert conditions. | none |
-| `alert_history` | The newest alerts the app fired, from its saved history. | `last` (default 20, at most 200) |
+| `list_indicators` | Your installed indicators: name, ID, path relative to its indicators folder (`roman/roman-setup.ind`) with `source` `user` or `bundled`, inputs with defaults and options, and alert conditions. | none |
+| `alert_history` | The newest alerts the app fired, from its saved history: fire time, the bar it fired on (`bar_utc`, null for alerts saved by older versions), exchange, market, timeframe, condition and price. | `last` (default 20, at most 200) |
 
 Indicators are found by `.ind` path, ID (`roman.roman-setup`), short name
 (`roman-setup`) or title, in `~/.local/share/orbit-tape/indicators/`, then
