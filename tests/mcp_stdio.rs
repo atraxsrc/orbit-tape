@@ -79,12 +79,18 @@ fn mcp_server_lists_its_tools_over_stdio() {
         [
             "alert_history",
             "check_indicator",
+            "create_alert",
+            "delete_alert",
             "get_candles",
             "key_levels",
+            "list_alerts",
             "list_indicators",
+            "pause_alerts",
+            "resume_alerts",
             "run_indicator",
             "scan",
             "test_indicator",
+            "update_alert",
         ]
     );
     for tool in responses[&2]["result"]["tools"].as_array().unwrap() {
