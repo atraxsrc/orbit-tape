@@ -276,6 +276,17 @@ systemctl --user enable --now orbit-tape-watch.service
 
 Details: [Alerts while the app is closed](docs/mcp.md#alerts-while-the-app-is-closed).
 
+For a daily check of your own trading plan (a market snapshot, Roman setups
+near a level, a few alerts, spot accumulation), write a plan file from
+`docs/plan.example.toml` and run the `daily_report` prompt, or let
+`orbit-tape report` run it once a day through Claude Code (off by default):
+
+```sh
+systemctl --user enable --now orbit-tape-report.timer
+```
+
+Details: [Daily routine](docs/mcp.md#daily-routine).
+
 ## Where files are stored
 
 Everything lives in one folder, `~/.local/share/orbit-tape/`
@@ -288,6 +299,8 @@ Everything lives in one folder, `~/.local/share/orbit-tape/`
 | Scan symbol list | `~/.local/share/orbit-tape/scan-symbols.txt` |
 | Saved alerts and the ntfy topic | `~/.local/share/orbit-tape/alerts.json` |
 | Fired alerts (last 500) | `~/.local/share/orbit-tape/alert-history.json` |
+| Trading plan (daily routine) | `~/.config/orbit-tape/plan.toml` |
+| Daily reports | `~/.local/share/orbit-tape/reports/` |
 | Logs | `~/.local/share/orbit-tape/orbit-tape-current.log` |
 | Market data cache (Binance archives) | `~/.local/share/orbit-tape/market_data/` |
 | Proxy and server credentials | the system keyring (service `orbit-tape.proxy` / `orbit-tape.server`) |

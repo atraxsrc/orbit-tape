@@ -8,6 +8,7 @@ mod alerts;
 mod audio;
 mod blur;
 mod connector;
+mod daily_report;
 mod deferred;
 mod headless;
 mod indicator_watch;
@@ -62,6 +63,7 @@ fn main() {
         Some("scan") => std::process::exit(scan::run(&arguments[1..])),
         Some("mcp") => std::process::exit(mcp::run(&arguments[1..])),
         Some("watch") => std::process::exit(watch::run(&arguments[1..])),
+        Some("report") => std::process::exit(daily_report::run(&arguments[1..])),
         _ => {}
     }
 

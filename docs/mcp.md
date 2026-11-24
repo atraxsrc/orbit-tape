@@ -8,7 +8,7 @@ the same exchange adapters and indicator engine the app uses.
 What it can and cannot do:
 
 - No API keys and no accounts: it only reads public candles from Binance or OKX
-  USDT perpetuals.
+  USDT perpetuals, and for `spot_status` OKX spot.
 - No orders and no trading actions of any kind.
 - The only file it writes is your saved alerts, `alerts.json` (see
   [Alerts](#alerts)). `scan` never creates `scan-symbols.txt`, and
@@ -83,6 +83,10 @@ a desktop theme role such as `theme.danger` (`theme.text@f0` with alpha).
 | `update_alert` | Changes an alert's price, direction, frequency, channel, message, or pauses/resumes it. | `id` and the fields to change |
 | `delete_alert` | Deletes an alert. | `id` |
 | `pause_alerts` / `resume_alerts` | Pauses or resumes alerts by ID, or all of them. Resuming all skips `once` alerts that already fired. | `ids` (optional) |
+| `get_plan` | Your trading plan file (see [Daily routine](#daily-routine)), checked, with the per-coin Roman Setup inputs and leverage filled in. | none |
+| `market_snapshot` | Per coin of the plan's universe: close, day % and the 24h high and low (a rolling 24 hours of 1h bars), week % (against 7 days ago), RSI(14) 1D, 4H and 1W, daily ATR(14), the 1M high and low, the 3M low, SMA200 1D and 1W and price against them, and Roman Setup's 12H bias. `notes` says what was missing. | `coins`, `exchange` |
+| `roman_setups` | Roman Setup on every coin of the plan with its inputs, and the routine's rules applied: the primary bias-aligned level and its distance, entry, stop (beyond the area plus 0.3 daily ATR), T1 and T2 with R multiples, notional and margin per $10 risked. Statuses `LIVE`, `WATCH`, `FLIP-WATCH`, `COUNTER-TREND`, and coins grouped by them; a setup whose stop is over the plan's maximum is skipped with the reason. | `coins` |
+| `spot_status` | The plan's spot accumulation on OKX spot: price against the reference price, the next level below, RSI 1D and 1W, against SMA200 1W, monthly buys done and next (skipped dates do not count), lump-sum parts left and how they are spread after the last date, and whether today is a SPOT ZONE, with the reasons. | `date` (default today) |
 
 Indicators are found by `.ind` path, ID (`roman.roman-setup`), short name
 (`roman-setup`) or title, in `~/.local/share/orbit-tape/indicators/`, then
@@ -109,6 +113,55 @@ a 66-coin `scan` on OKX takes about a minute, on Binance less. Fetched
 candles are reused until the next bar closes, so a second tool on the same
 coins and timeframe answers at once. `key_levels` fetches up to a year of 1h
 candles.
+
+## Daily routine
+
+The routine tools and the `daily_report` prompt run a daily check of your
+plan: a market snapshot, Roman setups near a level, a few alerts on the
+levels that matter, and your spot accumulation, as one short report.
+
+**The plan file** is `~/.config/orbit-tape/plan.toml` (`$ORBIT_TAPE_PLAN`
+moves it). Start from the example, then put in your own numbers:
+
+```sh
+mkdir -p ~/.config/orbit-tape
+cp /usr/share/doc/orbit-tape/plan.example.toml ~/.config/orbit-tape/plan.toml
+```
+
+It holds the prop rules (risk %, counter-trend risk %, the most correlated
+trades, the widest stop, leverage per coin), the coin universe and exchange,
+Roman Setup inputs with per-coin overrides, the optional spot plan (pair,
+holdings, goals, reference price, heads-up and buy levels with amounts and
+`used`, monthly dates with an optional `skipped` list, the SPOT ZONE
+distance) and the report settings (`max_new_alerts`, `alert_channel`,
+`footer`). Unknown keys are errors that name the key. The file stays on your
+machine; nothing in it is sent anywhere except to the Claude session you
+run the report in.
+
+**The prompt.** In Claude Code, `/mcp__orbit-tape__daily_report` runs it by
+hand. It calls `get_plan`, `market_snapshot`, `roman_setups` and
+`spot_status`, creates at most `max_new_alerts` alerts after checking
+`list_alerts` for duplicates (the nearest BTC or ETH bias-flip level first,
+then the nearest WATCH levels; never spot alerts), and replies with the
+report ending in your `footer`.
+
+**Every day, unattended.** `orbit-tape report` runs the prompt once with
+`claude -p`, with only this program's MCP server and its tools allowed,
+saves the answer to `~/.local/share/orbit-tape/reports/YYYY-MM-DD.md`
+(readable by you only) and sends it to the desktop and/or ntfy (the plan's
+`alert_channel`, or `--channel`). A failed run is sent too, with the reason.
+Each run uses the Claude plan or API key `claude` is logged in with. The
+timer is off until you turn it on:
+
+```sh
+systemctl --user enable --now orbit-tape-report.timer   # daily at 11:05
+systemctl --user edit orbit-tape-report.timer           # another time
+journalctl --user -u orbit-tape-report                  # what happened
+orbit-tape report --no-send                             # try it once now
+```
+
+If the service cannot find `claude`, set `Environment=ORBIT_TAPE_CLAUDE=/path/to/claude`
+with `systemctl --user edit orbit-tape-report.service`.
 
 ## Alerts
 
@@ -182,6 +235,8 @@ to ntfy too" also sends the open charts' indicator alerts there.
 - "Alert me on any Roman Setup signal on ETH 1H, on my phone too." (an
   `indicator` alert on `roman-setup`, `every_bar`, `both`)
 - "Pause all my alerts." / "Which alerts do I have, and did any fail?"
+- "Run my daily report." (the `daily_report` prompt)
+- "Which coins in my plan are within 5% of a Roman level?" (`roman_setups`)
 - "Check `~/.local/share/orbit-tape/indicators/my-rsi.ind` and fix the errors."
 
 Nothing the server returns is financial advice.

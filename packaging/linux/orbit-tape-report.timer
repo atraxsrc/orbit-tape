@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the Orbit Tape daily report once a day
+
+[Timer]
+# 11:05 local time. For another time: systemctl --user edit orbit-tape-report.timer
+# and set, under [Timer], an empty OnCalendar= line and then your own one.
+OnCalendar=*-*-* 11:05:00
+AccuracySec=1min
+# A run missed while the machine was asleep or off happens once it is back.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

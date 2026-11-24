@@ -144,3 +144,21 @@ starting over.
   syncs each chart's lines and the store both ways every alert poll, and the
   app applies the returned `StoreEdit`s. The app reloads `alerts.json` and the
   history when their mtime changes.
+
+## Daily routine (fork)
+
+- `data::config::plan` parses `plan.toml` (`deny_unknown_fields`, errors name
+  the field). `src/mcp/routine.rs` holds the routine tools; the rules are pure
+  and tested on their own: `routine/math.rs` (Wilder RSI and ATR, SMA),
+  `routine/setups.rs` (Roman levels, entry, stop, targets, statuses) and
+  `routine/spot.rs` (spot levels, monthly buys, SPOT ZONE). They read Roman
+  Setup's `x_*` plots, which match TradingView bar for bar
+  (`indicator-engine/tests/roman_ports.rs`).
+- `LiveCandles` (`src/mcp.rs`) caps requests per exchange with semaphores and
+  caches each (exchange, coin, timeframe) until the forming bar closes, so the
+  routine tools share fetches. OKX spot candles come from
+  `headless::SpotMarket`.
+- `src/mcp/report.rs` is the `daily_report` prompt text; `src/daily_report.rs`
+  (`orbit-tape report`) sends it to `claude -p` with a strict MCP config
+  pointing at this binary, saves the report and sends it via
+  `alert_channels`.
