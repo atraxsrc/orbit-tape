@@ -1,6 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Roman Trade Setup :: H12 (720) bias -> H1 execution (rev 7), ported from
 // the Pine Script original.
-// Copyright (c) 2026 Atrax. MIT licensed, see indicators/LICENSE-MIT.
+// Copyright (c) 2026 Atrax.
 //
 //  Phase 1: HTF bias via Market Structure Break (12H)
 //  Phase 2: 50% fib of the swing that created the bias

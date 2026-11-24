@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Enhanced Roman Order Block (rev 3), ported from the Pine Script original.
-// Copyright (c) 2026 Atrax. MIT licensed, see indicators/LICENSE-MIT.
+// Copyright (c) 2026 Atrax.
 //
 // Pattern (bullish, bearish is the mirror):
 //   A  candle before the OB

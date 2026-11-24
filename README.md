@@ -314,6 +314,7 @@ Orbit Tape is a fork of [Flowsurface](https://github.com/flowsurface-rs/flowsurf
 
 | Component | License |
 |---|---|
-| Application, data crate (`orbit-tape-data`), [bundled indicators](data/indicators/README.md), and [example indicators](examples/indicators/) | [GPL-3.0-or-later](LICENSE) |
+| Application, data crate (`orbit-tape-data`), [bundled indicators](data/indicators/README.md), [example indicators](examples/indicators/), and the [optional Roman and market indicators](indicators/README.md) | [GPL-3.0-or-later](LICENSE) |
+| Bull Market Support Band port (`indicators/market/bull-market-support-band.ind`) | [MPL-2.0](https://mozilla.org/MPL/2.0/) |
 | Indicator engine and CLI (`orbit-tape-indicator-engine`, `orbit-tape-indicator`) | [Apache-2.0](indicator-engine/LICENSE) |
 | Exchange adapters (`orbit-tape-exchange`) | [MIT](exchange/LICENSE) |
