@@ -793,6 +793,35 @@ mod tests {
     }
 
     #[test]
+    fn hidden_plots_are_outputs_but_not_drawn() {
+        let source = r##"
+            language(1)
+            indicator("Hidden", id = "test.hidden")
+            display(view = "primary_overlay")
+            format(precision = "base_ticker_min_tick")
+            plot(chart.close, id = "shown", pane = "main")
+            plot(chart.high, id = "debug", display = "none")
+            plot(chart.low, id = "forced", display = "none", layer = true)
+        "##;
+        let compiled = compile(source, "hidden.ind").expect("hidden source should compile");
+        let layers: Vec<_> = compiled
+            .descriptor
+            .presentation
+            .layers
+            .iter()
+            .map(|layer| layer.channel.as_str())
+            .collect();
+        assert_eq!(layers, ["shown", "forced"]);
+        assert!(
+            compiled
+                .descriptor
+                .plots
+                .iter()
+                .any(|plot| plot.id == "debug")
+        );
+    }
+
+    #[test]
     fn number_formats_match_pine_patterns() {
         use crate::intrinsic::format_number;
         let pattern = |value: f64, format: &str| {

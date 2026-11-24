@@ -1067,7 +1067,9 @@ impl LoweringContext {
                     self.error(call.span, "plot layer must be a boolean literal");
                     true
                 }
-                None => true,
+                // Like Pine's display.none: a hidden plot is still an output
+                // (alerts, the CLI, fills, other declarations) but not drawn.
+                None => self.static_named_string(call, "display").as_deref() != Some("none"),
             },
             alert: alert && value_type == PlotValueType::Boolean,
         }

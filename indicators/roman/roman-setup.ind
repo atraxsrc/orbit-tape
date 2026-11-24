@@ -768,11 +768,11 @@ fibPlot = select(showFib && !(evBull || evBear), fib50, na)
 plot(fibPlot, id = "fib50", title = "HTF 50% Fib", color = cFib, width = 1)
 brkPlot = select(showBrk && !(evBull || evBear), brkLvl, na)
 plot(brkPlot, id = "broken_level", title = "Broken HTF level", color = cBrk, width = 2)
-// next HTF MSS levels, broken where the level moves so no diagonal is drawn
+// next HTF MSS levels as dots, like plot.style_circles in the Pine original
 upFlipPlot = select(showFlip && !htfClosed, upFlip, na)
 dnFlipPlot = select(showFlip && !htfClosed, dnFlip, na)
-plot(upFlipPlot, id = "up_flip", title = "Next bullish HTF MSS above", color = color.new(cUp, 40))
-plot(dnFlipPlot, id = "dn_flip", title = "Next bearish HTF MSS below", color = color.new(cDn, 40))
+plot(upFlipPlot, id = "up_flip", title = "Next bullish HTF MSS above", color = color.new(cUp, 40), mark = "point")
+plot(dnFlipPlot, id = "dn_flip", title = "Next bearish HTF MSS below", color = color.new(cDn, 40), mark = "point")
 
 marker(low - nz(ltfAtr, 0.0) * 0.3, id = "htf_mss_up", visible = showHtfMk && evBull, color = cUp)
 marker(high + nz(ltfAtr, 0.0) * 0.3, id = "htf_mss_down", visible = showHtfMk && evBear, color = cDn)

@@ -191,5 +191,7 @@ for o in obs {
 plot(bullFormed, id = "bull_formed", title = "Bullish OB formed", alert = true)
 plot(bearFormed, id = "bear_formed", title = "Bearish OB formed", alert = true)
 plot(mitigatedNow, id = "mitigated", title = "OB mitigated", alert = true)
+// draws nothing; a price-chart overlay needs one layer to attach the boxes to
+plot(na, id = "anchor", display = "none", pane = "main", layer = true)
 plot(formedLevel, id = "formed_level", title = "Formed OB level", display = "none")
 plot(mitigatedLevel, id = "mitigated_level", title = "Mitigated OB level", display = "none")

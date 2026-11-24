@@ -306,12 +306,12 @@ without visual layers; readouts default to hidden.
 | `pane` | `indicator` (`main` in primary overlays); also `named:<number>` |
 | `scale` | `price`; also `independent` |
 | `style` | `line`; also `step`, `histogram`, `area` |
-| `display` | `value` (`none` for booleans) |
+| `display` | `value` (`none` for booleans); `none` hides the plot from the legend and the chart, like Pine's `display.none`, but keeps it as an output |
 | `precision` | Optional: `instrument`, `decimals:<0–18>`, `step:<positive number>` |
 | `width`, `offset` | `1`, `0`; width is positive and at most 64, offset is a signed 32-bit integer |
 | `color_slot`, `color` | Static style slot or runtime color |
 | `style_by` | Boolean output ID; requires `true_color_slot` and `false_color_slot` |
-| `layer_title`, `overlay`, `layer` | Plot title, `true`, `true` |
+| `layer_title`, `overlay`, `layer` | Plot title, `true`, `true` (`false` with `display = "none"`; `layer = true` draws a hidden plot anyway) |
 | `data_kind` | Inferred; `scalar`, `histogram`, `ohlc`, `range` |
 | `mark`, `axis` | Inferred; axis is `primary` or `secondary` |
 | `alert` | `false`; boolean literal, only for boolean plots |
