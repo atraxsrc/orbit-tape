@@ -11,6 +11,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -103,6 +104,7 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
         .create(true)
         .truncate(false)
         .write(true)
+        .mode(0o600)
         .open(lock_path(path))
 }
 
@@ -111,11 +113,20 @@ fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".{}.tmp", std::process::id()));
     let tmp = path.with_file_name(name);
-    let result = File::create(&tmp).and_then(|mut file| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        fs::rename(&tmp, path)
-    });
+    // Owner-only: the alerts file holds the ntfy topic (anyone who knows it
+    // can read the messages) and maybe a server address with a password.
+    // The rename also replaces an older, more open file with this one.
+    let result = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .and_then(|mut file| {
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            fs::rename(&tmp, path)
+        });
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
     }
@@ -174,6 +185,21 @@ mod tests {
             "not json"
         );
         assert_eq!(read::<BTreeSet<u32>>(&path).unwrap().len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn written_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("mode");
+        let path = dir.join("shared.json");
+        fs::write(&path, "[]").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        update(&path, |list: &mut Vec<u32>| list.push(1)).unwrap();
+        for file in [path.clone(), lock_path(&path)] {
+            let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", file.display());
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 
