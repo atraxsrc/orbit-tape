@@ -4,7 +4,7 @@ use crate::frame::{
     PlotOutput, RangeOutput, RegionOutput, RegionUpdate, SegmentOutput, SeriesInputValue,
 };
 use crate::hir::{
-    BarStateField, BinaryOperator, ExprId, ExpressionKind, SourceInputSlot, StateSlot,
+    BarStateField, BinaryOperator, ExprId, ExpressionKind, SeriesSlot, SourceInputSlot, StateSlot,
     StatementKind,
 };
 use crate::intrinsic::{IntrinsicError, IntrinsicEvalContext, IntrinsicState, WarmupSpec};
@@ -1007,11 +1007,13 @@ impl IndicatorInstance {
         match statement.kind {
             StatementKind::Binding { target, expression } => {
                 let value = self.evaluate_expression(expression)?;
+                self.note_stored(&value);
                 self.locals[target.0] = value;
             }
             StatementKind::LocalUpdate { target, expression } => {
                 if !self.try_push_array(target, expression)? {
                     let value = self.evaluate_expression(expression)?;
+                    self.note_stored(&value);
                     if let Some(local) = self.locals.get_mut(target.0) {
                         *local = value;
                     }
@@ -1030,6 +1032,9 @@ impl IndicatorInstance {
                 for (index, target) in targets.into_iter().enumerate() {
                     let value = values.get(index);
                     self.charge_by(1usize.saturating_add(value.map_or(0, Value::copy_work)))?;
+                    if let Some(value) = value {
+                        self.note_stored(value);
+                    }
                     if let Some(local) = self.locals.get_mut(target.0) {
                         *local = value.cloned().unwrap_or(Value::Na);
                     }
@@ -1419,7 +1424,11 @@ impl IndicatorInstance {
                         break;
                     }
                 }
-                self.checkpoint(output)?;
+                // A branch is straight-line code like the top level: what it
+                // keeps is bounded by its statements, so the full resource
+                // scan waits for the next loop iteration, function return or
+                // the end of the bar, where unbounded growth can happen.
+                self.enforce_output_limits(output)?;
             }
             StatementKind::While { condition, body } => {
                 let mut iterations = 0usize;
@@ -1509,6 +1518,7 @@ impl IndicatorInstance {
                     .chain(tuple.iter());
                 for value in values {
                     self.charge_by(1usize.saturating_add(value.copy_work()))?;
+                    self.note_stored(value);
                     if let Some(local) = self.locals.get_mut(target.0) {
                         *local = value.clone();
                     }
@@ -1596,6 +1606,7 @@ impl IndicatorInstance {
             return Ok(false);
         };
         let aliased = Arc::strong_count(values) > 1;
+        let (pushed_collections, pushed_heap) = value.resource_usage();
         Arc::make_mut(values).push(value);
         let (collections, heap_bytes) = self.locals[target.0].resource_usage();
         if collections > self.limits.max_collection_elements {
@@ -1604,7 +1615,7 @@ impl IndicatorInstance {
         if heap_bytes > self.limits.max_heap_bytes {
             return Err(RuntimeError::ResourceLimitExceeded("heap bytes"));
         }
-        if aliased {
+        if aliased || pushed_collections > 0 || pushed_heap > 0 {
             self.resource_check_dirty = true;
         }
         Ok(true)
@@ -1861,7 +1872,8 @@ impl IndicatorInstance {
                         }
                         _ => Value::Na,
                     };
-                    self.enforce_value_limits(&value)?;
+                    let grows = self.series_slot_grows(expression.series_slot, &value);
+                    self.check_value_limits(&value, grows)?;
                     if let Some(slot) = expression.series_slot {
                         self.working.current_series[slot.0] = Some(value.clone());
                     }
@@ -1928,12 +1940,15 @@ impl IndicatorInstance {
                     context
                         .charge(context.states.len())
                         .map_err(|_| RuntimeError::ExecutionLimitExceeded)?;
-                    let state_heap_exceeded = context
-                        .states
-                        .values()
-                        .map(IntrinsicState::heap_bytes)
-                        .fold(0usize, usize::saturating_add)
-                        > context.max_heap_bytes;
+                    // Only a stateful intrinsic changes the states, so only
+                    // then can their total have grown.
+                    let state_heap_exceeded = stateful
+                        && context
+                            .states
+                            .values()
+                            .map(IntrinsicState::heap_bytes)
+                            .fold(0usize, usize::saturating_add)
+                            > context.max_heap_bytes;
                     (result, state_heap_exceeded)
                 };
                 if state_heap_exceeded {
@@ -2000,6 +2015,7 @@ impl IndicatorInstance {
                     let Some(slot) = function.parameters.get(parameter_index) else {
                         continue;
                     };
+                    self.note_stored(&value);
                     if let Some(local) = self.locals.get_mut(slot.0) {
                         *local = value;
                         provided[parameter_index] = true;
@@ -2016,6 +2032,7 @@ impl IndicatorInstance {
                             continue;
                         };
                         let value = self.evaluate_expression(*default)?;
+                        self.note_stored(&value);
                         if let Some(slot) = function.parameters.get(parameter_index)
                             && let Some(local) = self.locals.get_mut(slot.0)
                         {
@@ -2042,7 +2059,13 @@ impl IndicatorInstance {
             }
         };
         let value = value.normalize_nonfinite();
-        self.check_value_limits(&value, !resident)?;
+        // Only a value that is kept somewhere the resource scan looks needs
+        // one: here, a series slot, and only when it is bigger than what the
+        // slot held (a loop overwriting a slot with like values can't raise
+        // the total). Locals, states and arrays mark it when they store a
+        // value (`note_stored`, `set_state_value`).
+        let grows = !resident && self.series_slot_grows(expression.series_slot, &value);
+        self.check_value_limits(&value, grows)?;
         if let Some(slot) = expression.series_slot
             && let Some(current) = self.working.current_series.get_mut(slot.0)
         {
@@ -2098,8 +2121,8 @@ impl IndicatorInstance {
             .get(slot.0)
             .copied()
             .unwrap_or(crate::hir::CallSiteId(slot.0));
-        self.resource_check_dirty = true;
         if self.state_owner(slot).is_some() && !self.call_site_stack.is_empty() {
+            self.resource_check_dirty = true;
             let state_call_site = self.state_call_site(call_site);
             if Arc::strong_count(&self.working.function_states) > 1 {
                 let work = self
@@ -2116,7 +2139,13 @@ impl IndicatorInstance {
                 .insert(state_call_site, StateValue::Value(value));
             return Ok(());
         }
+        // The total the resource scan adds up can only grow when the new value
+        // carries collections or heap data, or when this write copies the
+        // state table shared with the committed bar; a plain number replacing
+        // a value changes neither.
+        self.note_stored(&value);
         if Arc::strong_count(&self.working.states) > 1 {
+            self.resource_check_dirty = true;
             let work = self
                 .working
                 .states
@@ -2222,8 +2251,32 @@ impl IndicatorInstance {
         Ok(())
     }
 
-    fn enforce_value_limits(&mut self, value: &Value) -> Result<(), RuntimeError> {
-        self.check_value_limits(value, true)
+    /// Whether storing `value` in a series slot can raise the total the
+    /// resource scan adds up: it uses more than the slot's current value.
+    fn series_slot_grows(&self, slot: Option<SeriesSlot>, value: &Value) -> bool {
+        let Some(slot) = slot else {
+            return false;
+        };
+        let (collections, heap_bytes) = value.resource_usage();
+        if collections == 0 && heap_bytes == 0 {
+            return false;
+        }
+        let (held_collections, held_heap) = self
+            .working
+            .current_series
+            .get(slot.0)
+            .and_then(Option::as_ref)
+            .map_or((0, 0), Value::resource_usage);
+        collections > held_collections || heap_bytes > held_heap
+    }
+
+    /// Marks the resource scan as needed when a value carrying collections or
+    /// heap data is stored in a local.
+    fn note_stored(&mut self, value: &Value) {
+        let (collections, heap_bytes) = value.resource_usage();
+        if collections > 0 || heap_bytes > 0 {
+            self.resource_check_dirty = true;
+        }
     }
 
     /// Checks one value against the limits. `fresh` values are new
