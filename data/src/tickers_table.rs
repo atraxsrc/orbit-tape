@@ -6,6 +6,9 @@ use exchange::{
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
+/// Exchanges enabled for a new install.
+pub const DEFAULT_VENUES: [Venue; 2] = [Venue::Binance, Venue::Okex];
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     pub favorited_tickers: Vec<Ticker>,
@@ -21,7 +24,9 @@ impl Default for Settings {
             favorited_tickers: vec![],
             show_favorites: false,
             selected_sort_option: SortOptions::VolumeDesc,
-            selected_exchanges: Venue::ALL.to_vec(),
+            // New installs start with two exchanges; the others can be
+            // switched on in the ticker list. Saved settings keep their own list.
+            selected_exchanges: DEFAULT_VENUES.to_vec(),
             selected_markets: MarketKind::ALL.into_iter().collect(),
         }
     }
@@ -240,4 +245,24 @@ fn split_price_changes(
 
 fn price_to_display_string(price: Price, precision: Option<MinTicksize>) -> Option<String> {
     precision.map(|precision| price.to_string(precision))
+}
+
+#[cfg(test)]
+mod default_venue_tests {
+    use super::*;
+
+    #[test]
+    fn new_installs_enable_binance_and_okx_saved_lists_stay() {
+        assert_eq!(
+            Settings::default().selected_exchanges,
+            vec![Venue::Binance, Venue::Okex]
+        );
+        let saved = Settings {
+            selected_exchanges: Venue::ALL.to_vec(),
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&saved).unwrap();
+        let loaded: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.selected_exchanges, Venue::ALL.to_vec());
+    }
 }
