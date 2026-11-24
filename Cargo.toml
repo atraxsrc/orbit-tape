@@ -123,6 +123,10 @@ rodio = { version = "0.22.2", default-features = false, features = [ "playback",
 notify-rust = { version = "4.11", default-features = false, features = ["z"] }
 # Live reload of user indicator files (inotify), see src/indicator_watch.rs.
 notify = { version = "8.2", default-features = false }
+# `orbit-tape mcp`: Model Context Protocol server over stdio (Apache-2.0),
+# see src/mcp.rs.
+rmcp = { version = "3.11", default-features = false, features = ["server", "macros", "transport-io"] }
+schemars = "1"
 
 bytemuck = "1.25.0"
 iced_wgpu = "0.14.0"

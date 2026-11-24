@@ -11,6 +11,7 @@ mod headless;
 mod indicator_watch;
 mod layout;
 mod logger;
+mod mcp;
 mod modal;
 mod notify;
 mod scan;
@@ -52,10 +53,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 fn main() {
-    // Headless subcommand: no window, no logger, no data migration.
+    // Headless subcommands: no window, no logger, no data migration.
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    if arguments.first().is_some_and(|argument| argument == "scan") {
-        std::process::exit(scan::run(&arguments[1..]));
+    match arguments.first().map(String::as_str) {
+        Some("scan") => std::process::exit(scan::run(&arguments[1..])),
+        Some("mcp") => std::process::exit(mcp::run(&arguments[1..])),
+        _ => {}
     }
 
     logger::install_panic_hook();

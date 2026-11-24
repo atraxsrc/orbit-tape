@@ -53,6 +53,10 @@ work; see [Credits](#credits).
   and "Remove alert" deletes the line; to keep the line, untick "Alert" in its
   toolbar. Any horizontal line can be turned into an alert from its toolbar.
   The same menu can remove all alerts, drawings, indicators or studies at once.
+- **Headless scan and MCP server:** `orbit-tape scan` runs an indicator over
+  a coin list from a systemd timer, and `orbit-tape mcp` gives AI assistants
+  read-only market tools. See [Headless scan](#headless-scan) and
+  [MCP server](#mcp-server-for-ai-assistants).
 - **Alert history:** the bell in the sidebar lists the last 500 fired alerts
   (time, symbol, condition, price) with an unread count, kept across
   restarts in `alert-history.json`. Click an entry to focus its chart.
@@ -234,6 +238,19 @@ systemctl --user disable --now orbit-tape-scan.timer  # stop
 
 To change the options, run `systemctl --user edit orbit-tape-scan.service` and
 override `ExecStart=` (an empty `ExecStart=` line first, then the new one).
+
+## MCP server for AI assistants
+
+`orbit-tape mcp` lets Claude (or any MCP client) scan markets, read candles,
+run your indicators and read Key Levels and the alert history. It is
+read-only: public candles from Binance or OKX, no API keys, no orders, no file
+writes.
+
+```sh
+claude mcp add orbit-tape -- orbit-tape mcp
+```
+
+Tools, setup for other clients and example questions: [docs/mcp.md](docs/mcp.md).
 
 ## Where files are stored
 
