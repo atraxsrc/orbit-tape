@@ -74,20 +74,20 @@ impl NtfySettings {
         !self.topic.trim().is_empty()
     }
 
-    /// The URL to publish to, `None` when ntfy is not set up.
-    pub fn url(&self) -> Option<String> {
-        if !self.is_set() {
-            return None;
-        }
-        let server = match self.server.trim() {
+    /// The server, without a trailing slash.
+    pub fn server(&self) -> String {
+        match self.server.trim() {
             "" => DEFAULT_NTFY_SERVER,
             server => server,
-        };
-        Some(format!(
-            "{}/{}",
-            server.trim_end_matches('/'),
-            self.topic.trim()
-        ))
+        }
+        .trim_end_matches('/')
+        .to_owned()
+    }
+
+    /// The topic's web page, `None` when ntfy is not set up.
+    pub fn url(&self) -> Option<String> {
+        self.is_set()
+            .then(|| format!("{}/{}", self.server(), self.topic.trim()))
     }
 }
 
@@ -205,7 +205,14 @@ impl AlertStore {
 
     /// Changes the saved alerts and returns the result of `change`.
     pub fn update<R>(change: impl FnOnce(&mut Self) -> R) -> std::io::Result<R> {
-        shared_file::update(&Self::path(), change)
+        Self::update_in(&Self::path(), change)
+    }
+
+    pub fn update_in<R>(
+        path: &std::path::Path,
+        change: impl FnOnce(&mut Self) -> R,
+    ) -> std::io::Result<R> {
+        shared_file::update(path, change)
     }
 
     pub fn get(&self, id: &str) -> Option<&StoredAlert> {

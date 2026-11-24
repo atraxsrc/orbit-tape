@@ -289,25 +289,8 @@ fn exchange_name(hit: &AlertHit) -> String {
         .to_owned()
 }
 
-/// Shows a desktop notification without blocking the UI thread.
 fn notify(summary: String, body: String) {
-    let spawned = std::thread::Builder::new()
-        .name("alert-notification".to_owned())
-        .spawn(move || {
-            let result = notify_rust::Notification::new()
-                .appname("Orbit Tape")
-                .summary(&summary)
-                .body(&body)
-                .icon("appointment-soon")
-                .timeout(notify_rust::Timeout::Milliseconds(15_000))
-                .show();
-            if let Err(err) = result {
-                log::warn!("alert notification failed: {err}");
-            }
-        });
-    if let Err(err) = spawned {
-        log::warn!("alert notification thread failed: {err}");
-    }
+    crate::alert_channels::desktop(summary, body);
 }
 
 #[cfg(test)]

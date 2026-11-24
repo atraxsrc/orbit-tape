@@ -2,6 +2,8 @@
 /// icon name, so COSMIC matches windows to the launcher entry.
 pub const APP_ID: &str = "io.github.atraxsrc.OrbitTape";
 
+mod alert_channels;
+mod alert_engine;
 mod alerts;
 mod audio;
 mod blur;
@@ -19,6 +21,7 @@ mod screen;
 mod style;
 mod theme;
 mod version;
+mod watch;
 mod widget;
 mod window;
 
@@ -58,6 +61,7 @@ fn main() {
     match arguments.first().map(String::as_str) {
         Some("scan") => std::process::exit(scan::run(&arguments[1..])),
         Some("mcp") => std::process::exit(mcp::run(&arguments[1..])),
+        Some("watch") => std::process::exit(watch::run(&arguments[1..])),
         _ => {}
     }
 
