@@ -132,9 +132,12 @@ orbit-tape-indicator catalog mytools --output mytools/catalog.json --namespace m
 ```
 
 `catalog.json` lists every indicator with its path (relative to the catalog
-file), size and SHA-256 checksum. To serve it to the in-app catalog browser,
-commit the folder with its `catalog.json` to a GitHub repository and set
-**Settings > Indicator catalog** to the file's raw address, for example
+file), size and SHA-256 checksum. The in-app catalog browser loads the
+community catalog [orbit-tape-indicators](https://github.com/atraxsrc/orbit-tape-indicators)
+by default; to submit an indicator there, follow its contribution guide. To
+serve your own collection instead, commit the folder with its `catalog.json`
+to a GitHub repository and set **Settings > Indicator catalog** to the file's
+raw address, for example
 `https://raw.githubusercontent.com/<user>/<repo>/main/mytools/catalog.json`
 (or set `ORBIT_TAPE_CATALOG_URL`). The browser downloads each source from
 next to the catalog file and refuses it if the size or checksum differs, so

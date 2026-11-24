@@ -13,3 +13,4 @@ AGENTS.md
 scan-symbols.txt
 .env
 .env.*
+/drafts/

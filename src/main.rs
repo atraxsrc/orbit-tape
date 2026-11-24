@@ -204,7 +204,9 @@ impl OrbitTape {
             saved_state.volume_size_unit,
             boot,
             saved_state.alerts,
-            saved_state.indicator_catalog_url,
+            data::chart::kline::indicators::manifest::normalize_catalog_setting(
+                &saved_state.indicator_catalog_url,
+            ),
         );
         let network = Deferred::new(saved_state.network);
 

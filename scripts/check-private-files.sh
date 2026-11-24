@@ -4,7 +4,7 @@
 #   scripts/check-private-files.sh           check every tracked file (CI)
 #   scripts/check-private-files.sh --staged  check the files staged for commit
 #
-# Local notes, assistant config, private Pine sources, the personal scan list
+# Local notes, assistant config, private Pine sources, local drafts, the personal scan list
 # and shell dotfiles from a home directory never belong in this repository.
 
 set -eu
@@ -21,6 +21,7 @@ blocked=$(printf '%s\n' "$files" | grep -E \
     -e '(^|/)AGENTS\.md$' \
     -e '(^|/)\.claude/' \
     -e '^pine-sources/' \
+    -e '^drafts/' \
     -e '(^|/)scan-symbols\.txt$' \
     -e '(^|/)\.env(\..*)?$' \
     -e '^\.(bashrc|bash_profile|profile|zshrc|zprofile|gitconfig|ripgreprc|mcp\.json)$' \

@@ -184,9 +184,10 @@ Then add it to a candlestick chart from the indicator sidebar (**+**).
 - Language reference: [indicator-engine/LANGUAGE.md](indicator-engine/LANGUAGE.md)
 - Commented examples: [examples/indicators/](examples/indicators/)
 - Optional Roman Setup and Order Block ports: [indicators/](indicators/README.md)
-- Shared indicators: the in-app catalog browser loads a `catalog.json` from an
-  HTTPS address you set under Settings > Indicator catalog (for example a raw
-  GitHub URL), see [Sharing a collection](docs/custom-indicators.md#sharing-a-collection).
+- Shared indicators: the in-app catalog browser loads the community catalog
+  [orbit-tape-indicators](https://github.com/atraxsrc/orbit-tape-indicators)
+  when you open it. Settings > Indicator catalog points it at another
+  `catalog.json`, see [Sharing a collection](docs/custom-indicators.md#sharing-a-collection).
 
 ## Headless scan
 
@@ -292,7 +293,7 @@ Code map: [docs/ARCHITECTURE-NOTES.md](docs/ARCHITECTURE-NOTES.md).
 ## Privacy
 
 Orbit Tape has no telemetry, analytics or accounts. It talks to the exchanges
-you use and, only when you open it, the upstream indicator catalog. See
+you use and, only when you open it, the community indicator catalog on GitHub. See
 [PRIVACY.md](PRIVACY.md) for details.
 
 ## Credits
