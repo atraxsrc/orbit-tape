@@ -16,12 +16,8 @@ use std::path::{Path, PathBuf};
 
 /// Coins written to the symbols file the first time the scan runs without one.
 const DEFAULT_SYMBOLS: &[&str] = &[
-    "AAVE", "ADA", "AIXBT", "ALGO", "APT", "ARB", "ASTER", "ATOM", "AVAX", "BCH", "BNB", "BONK",
-    "BTC", "CRV", "DOGE", "DOT", "ENA", "ETC", "ETH", "ETHFI", "FARTCOIN", "FIL", "FLOKI", "GRASS",
-    "HBAR", "HYPE", "ICP", "INJ", "JTO", "JUP", "KAITO", "LDO", "LIT", "LINK", "LTC", "MON",
-    "MOODENG", "NEAR", "ONDO", "OP", "PENDLE", "PENGU", "PEPE", "PNUT", "POL", "POPCAT", "PUMP",
-    "RENDER", "S", "SHIB", "SOL", "STX", "SUI", "TAO", "TIA", "TRUMP", "TRX", "UNI", "VIRTUAL",
-    "WIF", "WLD", "XLM", "XPL", "XRP", "ZEC", "ZRO",
+    "AAVE", "ADA", "APT", "ARB", "AVAX", "BCH", "BNB", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC",
+    "NEAR", "OP", "SOL", "SUI", "TRX", "UNI", "XRP",
 ];
 const SYMBOLS_FILE: &str = "scan-symbols.txt";
 const SYMBOLS_FILE_HEADER: &str = "\
@@ -57,7 +53,7 @@ the last closed bar. Sends one desktop notification when anything fired.
   --symbols-file
                 file with one coin per line (# for comments) and an optional
                 `exchange = okx` line. Default: scan-symbols.txt in the data
-                folder, created with 66 coins on the first run
+                folder, created with 20 large-cap coins on the first run
   --timeframe   1m 3m 5m 15m 30m 1h 2h 4h 12h 1d (default 1h)
   --bars        candles of history per symbol (default 2000)
   --lookback    report alerts from the last n closed bars (default 1)
@@ -895,7 +891,7 @@ mod tests {
         assert!(parse_symbols("exchange = kraken\nBTC").is_err());
         assert!(parse_symbols("bars = 10\nBTC").is_err());
 
-        assert_eq!(DEFAULT_SYMBOLS.len(), 66);
+        assert_eq!(DEFAULT_SYMBOLS.len(), 20);
         let written = format!("{SYMBOLS_FILE_HEADER}{}\n", DEFAULT_SYMBOLS.join("\n"));
         assert_eq!(
             parse_symbols(&written).unwrap(),

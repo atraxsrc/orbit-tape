@@ -201,7 +201,7 @@ Roman Setup (`roman-setup.ind`, from the indicators folder or the copy the
 
 The coins come from `~/.local/share/orbit-tape/scan-symbols.txt`, one per
 line (`#` starts a comment), plus an `exchange = okx` or `exchange = binance`
-line (OKX when there is none). The first run creates it with 66 coins; edit
+line (OKX when there is none). The first run creates it with 20 large-cap coins; edit
 it to change the list or the exchange, delete it to get the default back. Write coins as `PEPE`;
 `PEPEUSDT`, `1000PEPEUSDT` and `PEPE-USDT-SWAP` work too, and Binance's 1000x
 contracts are found automatically. OKX is slower to fetch (about 3 s per coin
@@ -216,8 +216,8 @@ orbit-tape scan --indicator ~/.local/share/orbit-tape/indicators/my.ind --timefr
 ```
 
 ```
-Scanning 66 pairs on OKX, this takes a few minutes for a long list...
-Roman Trade Setup (H12 to H1) on 66 OKX perps, 1h chart, 2000 bars, last 1 closed bar(s)
+Scanning 20 pairs on OKX, this takes a few minutes for a long list...
+Roman Trade Setup (H12 to H1) on 20 OKX perps, 1h chart, 2000 bars, last 1 closed bar(s)
 SYMBOL         LAST CLOSED BAR     CLOSE  SIGNALS
 BTC-USDT-SWAP  Tue 24 Nov 11:00  61303.9  -
 ADA-USDT-SWAP  Tue 24 Nov 11:00   0.1487  HTF Bearish SFP
