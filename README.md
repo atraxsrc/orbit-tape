@@ -25,9 +25,11 @@ desktop on Pop!_OS. Orbit Tape is a fork of
 work; see [Credits](#credits).
 
 <div align="center">
-  <img src="assets/screenshots/main.png" alt="Orbit Tape on COSMIC: BTCUSDT 1H chart with Roman Trade Setup, Key Levels and SMA x4, a liquidity heatmap, time and sales, and a DOM ladder" style="max-width: 100%; height: auto;" />
+  <img src="assets/screenshots/main.png" alt="Orbit Tape on COSMIC: BTCUSDT 1H candles with indicators, a liquidity heatmap, time and sales, and a DOM ladder" style="max-width: 100%; height: auto;" />
   <br /><br />
-  <img src="assets/screenshots/indicators.png" alt="ETH-USDT-SWAP 1H chart with Key Levels and the indicator picker open" style="max-width: 100%; height: auto;" />
+  <img src="assets/screenshots/order-blocks.png" alt="Enhanced Roman Order Block on BTCUSDT 1H with its settings panel open" style="max-width: 100%; height: auto;" />
+  <br /><br />
+  <img src="assets/screenshots/theme.png" alt="Theme settings: follow COSMIC, accent colors and glass window" width="308" />
 </div>
 
 ## Features
