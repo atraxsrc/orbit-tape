@@ -689,6 +689,7 @@ impl OrbitTape {
                         mode,
                         url,
                         auth_token,
+                        accept_invalid_certs,
                     }) => {
                         if let Some(ref url) = url
                             && let Some(ref token) = auth_token
@@ -702,6 +703,7 @@ impl OrbitTape {
                             server_url: url,
                             server_auth_token: auth_token,
                             trade_fetch_mode: mode,
+                            server_accept_invalid_certs: accept_invalid_certs,
                             ..self.network.wanted().clone()
                         });
 

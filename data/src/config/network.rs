@@ -12,6 +12,11 @@ pub struct Network {
     #[serde(skip)]
     pub server_auth_token: Option<String>,
     pub trade_fetch_mode: TradeFetchMode,
+    /// Accept invalid TLS certificates (self-signed, expired, wrong host)
+    /// from the market-data server. Off unless the user turns it on; it never
+    /// applies to exchanges or the indicator catalog.
+    #[serde(default)]
+    pub server_accept_invalid_certs: bool,
 }
 
 impl Network {
@@ -43,5 +48,18 @@ impl std::fmt::Display for TradeFetchMode {
             Self::Exchange => write!(f, "Exchange"),
             Self::Server => write!(f, "Server"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_configs_verify_server_certificates() {
+        let old = r#"{"proxy":null,"server_url":"https://data.example","trade_fetch_mode":{"type":"Server"}}"#;
+        let network: Network = serde_json::from_str(old).unwrap();
+        assert!(!network.server_accept_invalid_certs);
+        assert!(!Network::default().server_accept_invalid_certs);
     }
 }
