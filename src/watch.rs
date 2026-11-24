@@ -40,6 +40,9 @@ pub fn run(arguments: &[String]) -> i32 {
     if let Err(error) = setup_logging() {
         eprintln!("orbit-tape watch: could not set up logging: {error}");
     }
+    // The app's proxy (Settings > Network), so the watcher's traffic goes
+    // where the app's goes.
+    crate::alert_channels::set_proxy(crate::alert_channels::saved_proxy());
     // Candle volume in USDT like the charts, so volume-based indicators match.
     exchange::unit::qty::set_preferred_currency(exchange::SizeUnit::Quote);
 

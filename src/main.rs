@@ -214,6 +214,7 @@ impl OrbitTape {
         let (audio_stream, audio_init_err) = AudioStream::new(saved_state.audio_cfg);
 
         let alert_store = data::config::alert_store::AlertStore::load();
+        alert_channels::set_proxy(saved_state.network.proxy.clone());
         let alert_engine_owner = Arc::new(std::sync::atomic::AtomicBool::new(false));
         alert_engine::spawn_in_app(Arc::clone(&alert_engine_owner));
         let settings = modal::settings::Settings::new(

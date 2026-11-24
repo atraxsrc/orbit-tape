@@ -6,7 +6,36 @@
 //! `Channel` choice and one more function next to [`ntfy`].
 
 use data::config::alert_store::{Channel, NtfySettings};
+use exchange::proxy::Proxy;
+use std::sync::OnceLock;
 use std::time::Duration;
+
+static PROXY: OnceLock<Option<Proxy>> = OnceLock::new();
+
+/// Sets the proxy for ntfy and the alert engine's exchange connections: the
+/// one in Settings > Network, so all traffic goes through it as the app's
+/// does. Call once at start; later calls are ignored (the setting needs a
+/// restart anyway).
+pub fn set_proxy(proxy: Option<Proxy>) {
+    let _ = PROXY.set(proxy);
+}
+
+pub fn proxy() -> Option<&'static Proxy> {
+    PROXY.get().and_then(Option::as_ref)
+}
+
+/// The proxy from the app's saved settings, with its password from the
+/// keychain, for programs that run without the app (`orbit-tape watch`).
+pub fn saved_proxy() -> Option<Proxy> {
+    let state = data::read_from_file(data::SAVED_STATE_PATH).ok()?;
+    let mut proxy = state.network.proxy?;
+    if proxy.auth().is_none()
+        && let Some(auth) = data::config::auth::load_proxy_auth(&proxy)
+    {
+        proxy.set_auth(Some(auth));
+    }
+    Some(proxy)
+}
 
 /// One alert, ready to send.
 #[derive(Debug, Clone, PartialEq)]
@@ -136,11 +165,14 @@ fn ntfy_message(alert: &Outgoing, settings: &NtfySettings) -> serde_json::Value 
 /// Publishes one message to ntfy.
 pub async fn ntfy(alert: &Outgoing, settings: &NtfySettings) -> Result<(), String> {
     let server = settings.server();
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|error| format!("could not build the HTTP client: {error}"))?;
+    let client = exchange::adapter::proxy::try_apply_proxy(
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20)),
+        proxy(),
+    )
+    .build()
+    .map_err(|error| format!("could not build the HTTP client: {error}"))?;
     // Messages name the server without any user:password@ part.
     let shown = redacted(&server);
     let response = client

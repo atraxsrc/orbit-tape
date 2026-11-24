@@ -39,13 +39,18 @@ pub struct LiveMarkets {
 
 impl LiveMarkets {
     pub fn new() -> Result<Self, String> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|error| format!("could not build the HTTP client: {error}"))?;
+        // The app's proxy, like every other connection it makes.
+        let proxy = crate::alert_channels::proxy();
+        let client = exchange::adapter::proxy::try_apply_proxy(
+            reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(30)),
+            proxy,
+        )
+        .build()
+        .map_err(|error| format!("could not build the HTTP client: {error}"))?;
         Ok(Self {
-            handles: AdapterHandles::spawn_venues(&client, Venue::ALL, None),
+            handles: AdapterHandles::spawn_venues(&client, Venue::ALL, proxy),
             listings: Mutex::new(HashMap::new()),
         })
     }
