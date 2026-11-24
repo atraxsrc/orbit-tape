@@ -184,6 +184,40 @@ Then add it to a candlestick chart from the indicator sidebar (**+**).
   HTTPS address you set under Settings > Indicator catalog (for example a raw
   GitHub URL), see [Sharing a collection](docs/custom-indicators.md#sharing-a-collection).
 
+## Headless scan
+
+`orbit-tape scan` runs an indicator over recent candles of Binance USDT
+perpetuals without opening a window, and lists every alert plot
+(`plot(..., alert = true)`) that fired on the last closed bar. When anything
+fired it also sends one desktop notification. By default it runs Roman Setup
+(`roman-setup.ind`, from the indicators folder or the copy the .deb ships) on
+the 1H chart of 15 large perps:
+
+```sh
+orbit-tape scan
+orbit-tape scan --symbols BTCUSDT,ETHUSDT --input ctMode=true --lookback 24
+orbit-tape scan --indicator ~/.local/share/orbit-tape/indicators/my.ind --timeframe 4h --no-notify
+```
+
+```
+Roman Trade Setup (H12 to H1) on 1h Binance perps, 2000 bars, last 1 closed bar(s)
+SYMBOL    LAST CLOSED BAR     CLOSE  SIGNALS
+BTCUSDT   Tue 24 Nov 11:00  61303.9  -
+ADAUSDT   Tue 24 Nov 11:00   0.1487  HTF Bearish SFP
+```
+
+The .deb installs a systemd user timer that runs the scan 90 seconds after
+every hour (off until you turn it on):
+
+```sh
+systemctl --user enable --now orbit-tape-scan.timer   # start
+journalctl --user -u orbit-tape-scan                  # past results
+systemctl --user disable --now orbit-tape-scan.timer  # stop
+```
+
+To change the options, run `systemctl --user edit orbit-tape-scan.service` and
+override `ExecStart=` (an empty `ExecStart=` line first, then the new one).
+
 ## Where files are stored
 
 Everything lives in one folder, `~/.local/share/orbit-tape/`

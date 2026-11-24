@@ -1,0 +1,10 @@
+[Unit]
+Description=Orbit Tape indicator scan (Roman Setup on Binance perps)
+Documentation=file:///usr/share/doc/orbit-tape/README.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Add options as needed, e.g. --symbols BTCUSDT,ETHUSDT --input ctMode=true.
+# See `orbit-tape scan --help`.
+ExecStart=/usr/bin/orbit-tape scan

@@ -12,6 +12,7 @@ mod layout;
 mod logger;
 mod modal;
 mod notify;
+mod scan;
 mod screen;
 mod style;
 mod theme;
@@ -50,6 +51,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 fn main() {
+    // Headless subcommand: no window, no logger, no data migration.
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if arguments.first().is_some_and(|argument| argument == "scan") {
+        std::process::exit(scan::run(&arguments[1..]));
+    }
+
     logger::install_panic_hook();
 
     // Before the logger, which creates the data directory.
