@@ -9,6 +9,7 @@
 //! Logs go to stderr; stdout carries the protocol.
 
 mod alerts;
+mod routine;
 
 use crate::headless::{
     self, MAX_BARS, Market, PerpExchange, Series, alert_plots, coin, evaluate_alerts,
@@ -184,6 +185,8 @@ pub struct Paths {
     pub alerts: PathBuf,
     /// Held by the program that runs the alerts.
     pub engine_lock: PathBuf,
+    /// The user's trading plan (read only).
+    pub plan: PathBuf,
 }
 
 impl Paths {
@@ -194,6 +197,7 @@ impl Paths {
             alert_history: data::data_path(Some(data::config::alert_history::ALERT_HISTORY_PATH)),
             alerts: data::config::alert_store::AlertStore::path(),
             engine_lock: data::config::alert_store::AlertStore::engine_lock_path(),
+            plan: data::config::plan::path(),
         }
     }
 }
@@ -295,7 +299,9 @@ impl OrbitTapeMcp {
         Self {
             paths: Arc::new(paths),
             candles,
-            tool_router: Self::tool_router() + Self::alert_tool_router(),
+            tool_router: Self::tool_router()
+                + Self::alert_tool_router()
+                + Self::routine_tool_router(),
         }
     }
 
@@ -1318,6 +1324,7 @@ mod tests {
             alert_history: repo("target/no-such-alert-history.json"),
             alerts: repo("target/no-such-alerts.json"),
             engine_lock: repo("target/no-such-alert-engine"),
+            plan: repo("docs/plan.example.toml"),
         }
     }
 
@@ -2042,5 +2049,26 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("at most 50"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------ routine
+
+    #[test]
+    fn get_plan_returns_the_plan_and_names_a_missing_one() {
+        let out = parse(block_on(server().get_plan()));
+        assert!(out["path"].as_str().unwrap().ends_with("plan.example.toml"));
+        assert_eq!(out["plan"]["universe"]["exchange"], "okx");
+        assert!(out["plan"]["prop"]["leverage"]["BTC"].is_number());
+        assert!(out["plan"]["spot"]["monthly"]["dates"][0].is_string());
+
+        let missing = server_with(
+            Arc::new(FixtureCandles),
+            Paths {
+                plan: repo("target/no-such-plan.toml"),
+                ..paths()
+            },
+        );
+        let error = block_on(missing.get_plan()).unwrap_err();
+        assert!(error.contains("plan.example.toml"), "{error}");
     }
 }

@@ -55,6 +55,7 @@ assets = [
     ["examples/indicators/*.ind", "usr/share/doc/orbit-tape/examples/indicators/", "644"],
     ["docs/custom-indicators.md", "usr/share/doc/orbit-tape/custom-indicators.md", "644"],
     ["docs/mcp.md", "usr/share/doc/orbit-tape/mcp.md", "644"],
+    ["docs/plan.example.toml", "usr/share/doc/orbit-tape/plan.example.toml", "644"],
     ["README.md", "usr/share/doc/orbit-tape/README.md", "644"],
 ]
 

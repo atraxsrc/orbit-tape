@@ -7,6 +7,7 @@ pub mod auth;
 pub mod cosmic;
 pub mod glass;
 pub mod network;
+pub mod plan;
 pub mod shared_file;
 pub mod sidebar;
 pub mod state;

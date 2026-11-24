@@ -82,6 +82,7 @@ fn mcp_server_lists_its_tools_over_stdio() {
             "create_alert",
             "delete_alert",
             "get_candles",
+            "get_plan",
             "key_levels",
             "list_alerts",
             "list_indicators",
