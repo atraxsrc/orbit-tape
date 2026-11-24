@@ -408,3 +408,38 @@ fn a_missing_indicator_is_saved_as_the_alerts_error() {
         Some("indicator test.nope is not installed")
     );
 }
+
+#[test]
+fn an_alert_added_while_running_does_not_fire_on_an_older_bar() {
+    let paths = temp_paths("added-later");
+    let klines = candles();
+    let index = find_bar(&klines, 2_600, true);
+    let bar = klines[index].time.as_u64();
+    let ticker = ticker_info().ticker;
+    // Running with no alerts, then one is added mid-bar.
+    let mut core = core_with(&paths, Vec::new(), 0);
+    let mut store = core.store().clone();
+    store
+        .add(alert("up", up_bar(Some("up")), Frequency::EveryBar))
+        .unwrap();
+    core.set_store(store);
+    let now = bar + HOUR + 20 * 60_000;
+    assert!(
+        core.on_candles(ticker, Timeframe::H1, klines[..=index].to_vec(), now)
+            .is_empty()
+    );
+    // The next bar closing is checked as usual.
+    let next = find_bar(&klines, index + 1, true);
+    let fired = core.on_candles(
+        ticker,
+        Timeframe::H1,
+        klines[index + 1..=next].to_vec(),
+        klines[next].time.as_u64() + HOUR + 5_000,
+    );
+    assert!(
+        fired
+            .iter()
+            .any(|firing| firing.fired.bar_time == Some(klines[next].time.as_u64())),
+        "{fired:?}"
+    );
+}

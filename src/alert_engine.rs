@@ -99,6 +99,10 @@ struct Series {
     checked: Option<u64>,
     /// Do not ask before this time (after a failure).
     next_try: u64,
+    /// The first look reports the newest closed bar (at start and after a
+    /// wake). An alert added while running only sets the baseline, so it
+    /// does not fire on a bar that closed before it existed.
+    catch_up: bool,
 }
 
 /// What the engine needs to ask the exchange for next.
@@ -124,6 +128,8 @@ pub struct Core {
     series: HashMap<(Ticker, Timeframe), Series>,
     /// Error text changes to save, by alert ID (`None` clears).
     errors: BTreeMap<String, Option<String>>,
+    /// The alerts were loaded once (series seen later are new alerts).
+    loaded: bool,
 }
 
 impl Core {
@@ -137,6 +143,7 @@ impl Core {
             prices: HashMap::new(),
             series: HashMap::new(),
             errors: BTreeMap::new(),
+            loaded: false,
         }
     }
 
@@ -175,9 +182,14 @@ impl Core {
                 .or_insert_with(|| (rule, PriceState::default()));
         }
         self.series.retain(|key, _| series.contains(key));
+        let catch_up = !self.loaded;
         for key in series {
-            self.series.entry(key).or_default();
+            self.series.entry(key).or_insert_with(|| Series {
+                catch_up,
+                ..Series::default()
+            });
         }
+        self.loaded = true;
         self.store = store;
     }
 
@@ -189,6 +201,7 @@ impl Core {
         for series in self.series.values_mut() {
             series.checked = None;
             series.next_try = 0;
+            series.catch_up = true;
         }
     }
 
@@ -426,6 +439,12 @@ impl Core {
         {
             // The exchange does not have the bar yet.
             series.next_try = now + RETRY_MS;
+            return Vec::new();
+        }
+        // A new alert's first look: only the baseline.
+        if series.checked.is_none() && !series.catch_up {
+            series.checked = Some(newest_closed);
+            series.next_try = 0;
             return Vec::new();
         }
         // Bars to report: closed since the last look (only the newest on a
