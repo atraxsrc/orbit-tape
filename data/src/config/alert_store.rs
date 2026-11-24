@@ -167,7 +167,32 @@ pub enum Channel {
     Both,
 }
 
+impl Frequency {
+    pub const ALL: [Self; 2] = [Self::Once, Self::EveryBar];
+}
+
+impl std::fmt::Display for Frequency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Once => "Once",
+            Self::EveryBar => "Every bar",
+        })
+    }
+}
+
+impl std::fmt::Display for Channel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Desktop => "Desktop",
+            Self::Ntfy => "ntfy",
+            Self::Both => "Desktop + ntfy",
+        })
+    }
+}
+
 impl Channel {
+    pub const ALL: [Self; 3] = [Self::Desktop, Self::Ntfy, Self::Both];
+
     pub fn desktop(self) -> bool {
         matches!(self, Self::Desktop | Self::Both)
     }

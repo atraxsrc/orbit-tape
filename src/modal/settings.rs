@@ -5,6 +5,7 @@ use crate::{
 };
 
 use data::{
+    config::alert_store::{DEFAULT_NTFY_SERVER, NtfySettings},
     config::alerts::Alerts,
     config::cosmic::ThemeSource,
     config::glass::{self, Glass},
@@ -47,6 +48,12 @@ pub enum AlertChange {
     /// Turn one condition (`indicator-id/plot-id`) on or off.
     Condition(String, bool),
     Test,
+    /// Also send chart alerts to ntfy.
+    ChartNtfy(bool),
+    NtfyTopic(String),
+    NtfyServer(String),
+    SaveNtfy,
+    TestNtfy,
 }
 
 /// Work the settings cannot do themselves, because it acts on state owned
@@ -65,6 +72,10 @@ pub enum Action {
     Sidebar(sidebar::Message),
     /// Send a sample alert with the current settings.
     TestAlert,
+    /// Save the ntfy topic and server in alerts.json.
+    SaveNtfy(NtfySettings),
+    /// Send a sample message to the saved ntfy topic.
+    TestNtfy,
 }
 
 /// An edit to the glass setting, which lives in the theme state.
@@ -92,6 +103,9 @@ pub struct Settings {
     pub volume_size_unit: Deferred<exchange::SizeUnit>,
     pub boot: Deferred<data::BootSettings>,
     pub alerts: Alerts,
+    /// The ntfy fields as typed, and as saved in alerts.json.
+    pub ntfy: NtfySettings,
+    pub ntfy_saved: NtfySettings,
     /// Saved catalog address; empty means the default (see
     /// `manifest::resolve_catalog_url`).
     pub indicator_catalog_url: String,
@@ -104,6 +118,7 @@ impl Settings {
         volume_size_unit: exchange::SizeUnit,
         boot: data::BootSettings,
         alerts: Alerts,
+        ntfy: NtfySettings,
         indicator_catalog_url: String,
     ) -> Self {
         Self {
@@ -112,6 +127,8 @@ impl Settings {
             volume_size_unit: Deferred::new(volume_size_unit),
             boot: Deferred::new(boot),
             alerts,
+            ntfy_saved: ntfy.clone(),
+            ntfy,
             indicator_catalog_url,
         }
     }
@@ -159,6 +176,15 @@ impl Settings {
                 AlertChange::Volume(volume) => self.alerts.volume = volume.clamp(0.0, 100.0),
                 AlertChange::Condition(key, on) => self.alerts.set_muted(key, !on),
                 AlertChange::Test => return Some(Action::TestAlert),
+                AlertChange::ChartNtfy(on) => self.alerts.ntfy = on,
+                AlertChange::NtfyTopic(topic) => self.ntfy.topic = topic,
+                AlertChange::NtfyServer(server) => self.ntfy.server = server,
+                AlertChange::SaveNtfy => {
+                    self.ntfy.topic = self.ntfy.topic.trim().to_owned();
+                    self.ntfy.server = self.ntfy.server.trim().to_owned();
+                    return Some(Action::SaveNtfy(self.ntfy.clone()));
+                }
+                AlertChange::TestNtfy => return Some(Action::TestNtfy),
             },
         }
         None
@@ -501,7 +527,7 @@ impl Settings {
             column![text("Time zone").size(crate::style::text_size::SECTION), timezone_picklist,].spacing(12),
             column![text("Market data").size(crate::style::text_size::SECTION), column![size_in_quote_ccy_checkbox, cache_metadata_checkbox].spacing(4)].spacing(12),
             column![text("Theme").size(crate::style::text_size::SECTION), follow_cosmic, theme_picklist, accent_section, glass_section,].spacing(12),
-            column![text("Alerts").size(crate::style::text_size::SECTION), alerts_view(&self.alerts),].spacing(12),
+            column![text("Alerts").size(crate::style::text_size::SECTION), alerts_view(&self.alerts), ntfy_view(&self.alerts, &self.ntfy, &self.ntfy_saved),].spacing(12),
             column![text("Indicator catalog").size(crate::style::text_size::SECTION), catalog_url_view(&self.indicator_catalog_url),].spacing(12),
             column![text("Interface scale").size(crate::style::text_size::SECTION), scale_factor,].spacing(12),
             column![text("Rendering").size(crate::style::text_size::SECTION), antialiasing_checkbox,].spacing(12),
@@ -615,6 +641,55 @@ fn catalog_url_view(url: &str) -> Element<'_, Message> {
             .size(crate::style::text_size::SMALL),
     ]
     .spacing(4)
+    .into()
+}
+
+/// ntfy push messages (phone): topic, server, test.
+fn ntfy_view<'a>(
+    alerts: &'a Alerts,
+    ntfy: &'a NtfySettings,
+    saved: &'a NtfySettings,
+) -> Element<'a, Message> {
+    let topic = iced::widget::text_input("Topic, e.g. orbit-tape-7f3k9q2m", &ntfy.topic)
+        .on_input(|topic| Message::Alert(AlertChange::NtfyTopic(topic)))
+        .on_submit(Message::Alert(AlertChange::SaveNtfy))
+        .size(crate::style::text_size::BODY);
+    let server = iced::widget::text_input(
+        &format!("Server (empty = {DEFAULT_NTFY_SERVER})"),
+        &ntfy.server,
+    )
+    .on_input(|server| Message::Alert(AlertChange::NtfyServer(server)))
+    .on_submit(Message::Alert(AlertChange::SaveNtfy))
+    .size(crate::style::text_size::BODY);
+    let dirty = ntfy.topic.trim() != saved.topic || ntfy.server.trim() != saved.server;
+    let buttons = row![
+        button(text("Save")).on_press_maybe(dirty.then_some(Message::Alert(AlertChange::SaveNtfy))),
+        button(text("Send test")).on_press_maybe(
+            (saved.is_set() && !dirty).then_some(Message::Alert(AlertChange::TestNtfy))
+        ),
+    ]
+    .spacing(8);
+    let chart_alerts = tooltip(
+        checkbox(alerts.ntfy)
+            .label("Chart alerts to ntfy too")
+            .on_toggle(|on| Message::Alert(AlertChange::ChartNtfy(on))),
+        Some(
+            "Indicator alerts of the open charts. Saved alerts (the alert list) each pick desktop, ntfy or both.",
+        ),
+        Position::Top,
+    );
+    column![
+        text("Phone (ntfy)")
+            .size(crate::style::text_size::SMALL)
+            .style(style::secondary_text),
+        topic,
+        server,
+        buttons,
+        row![chart_alerts].height(24).align_y(Alignment::Center),
+        text("Subscribe to the topic in the ntfy app. Anyone who knows the topic can read the alerts, so pick one that is hard to guess.")
+            .size(crate::style::text_size::SMALL),
+    ]
+    .spacing(6)
     .into()
 }
 

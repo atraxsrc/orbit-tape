@@ -41,6 +41,7 @@ use price::{Fire, PriceRule, PriceState, Side};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Candles of history an indicator alert runs over, like `orbit-tape scan`.
@@ -911,6 +912,38 @@ pub fn run_blocking(paths: Paths) -> Result<(), String> {
         run(paths, market).await;
         Ok(())
     })
+}
+
+/// For the app: a background thread that takes the engine lock whenever
+/// nobody else holds it and then runs the engine. `owner` tells the UI
+/// whether this app runs the alerts.
+pub fn spawn_in_app(owner: Arc<AtomicBool>) {
+    let spawned = std::thread::Builder::new()
+        .name("alert-engine".to_owned())
+        .spawn(move || {
+            let lock_path = AlertStore::engine_lock_path();
+            loop {
+                match shared_file::try_lock(&lock_path) {
+                    Ok(Some(_lock)) => {
+                        owner.store(true, Ordering::Relaxed);
+                        log::info!("this app runs the saved alerts");
+                        if let Err(error) = run_blocking(Paths::installed()) {
+                            log::error!("alert engine: {error}");
+                        }
+                        owner.store(false, Ordering::Relaxed);
+                        return;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        log::warn!("alert engine lock: {error}");
+                    }
+                }
+                std::thread::sleep(Duration::from_secs(10));
+            }
+        });
+    if let Err(error) = spawned {
+        log::error!("could not start the alert engine: {error}");
+    }
 }
 
 #[cfg(test)]

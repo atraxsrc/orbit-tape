@@ -18,23 +18,60 @@ pub struct Outgoing {
 }
 
 /// Sends `alert` to the chosen channels without blocking. Failures are
-/// logged; ntfy failures are also passed to `on_ntfy_error`.
+/// logged; the ntfy result is also passed to `on_ntfy_done`.
 pub fn send(
     alert: Outgoing,
     channel: Channel,
     ntfy_settings: &NtfySettings,
-    on_ntfy_error: impl FnOnce(String) + Send + 'static,
+    on_ntfy_done: impl FnOnce(Result<(), String>) + Send + 'static,
 ) {
     if channel.desktop() {
         desktop(alert.summary.clone(), alert.body.clone());
     }
     if channel.ntfy() {
         if ntfy_settings.is_set() {
-            spawn_ntfy(alert, ntfy_settings.clone(), on_ntfy_error);
+            spawn_ntfy(alert, ntfy_settings.clone(), on_ntfy_done);
         } else {
             log::warn!("alert wants ntfy, but no ntfy topic is set");
-            on_ntfy_error("no ntfy topic is set (Settings, Alerts)".to_owned());
+            on_ntfy_done(Err("no ntfy topic is set (Settings, Alerts)".to_owned()));
         }
+    }
+}
+
+/// ntfy results for the UI to show, filled from background threads.
+#[derive(Debug, Clone, Default)]
+pub struct Reports(std::sync::Arc<std::sync::Mutex<Vec<Result<String, String>>>>);
+
+impl Reports {
+    /// Records the result of a send; `success` is shown when it worked
+    /// (`None` = nothing to show).
+    pub fn recorder(
+        &self,
+        success: Option<String>,
+    ) -> impl FnOnce(Result<(), String>) + Send + 'static {
+        let reports = self.0.clone();
+        move |result| {
+            let report = match result {
+                Ok(()) => match success {
+                    Some(text) => Ok(text),
+                    None => return,
+                },
+                Err(error) => Err(format!("ntfy: {error}")),
+            };
+            reports
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(report);
+        }
+    }
+
+    pub fn take(&self) -> Vec<Result<String, String>> {
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 }
 
@@ -64,7 +101,7 @@ pub fn desktop(summary: String, body: String) {
 pub fn spawn_ntfy(
     alert: Outgoing,
     settings: NtfySettings,
-    on_error: impl FnOnce(String) + Send + 'static,
+    on_done: impl FnOnce(Result<(), String>) + Send + 'static,
 ) {
     let spawned = std::thread::Builder::new()
         .name("alert-ntfy".to_owned())
@@ -74,10 +111,10 @@ pub fn spawn_ntfy(
                 .build()
                 .map_err(|error| error.to_string())
                 .and_then(|runtime| runtime.block_on(ntfy(&alert, &settings)));
-            if let Err(error) = result {
+            if let Err(error) = &result {
                 log::warn!("ntfy: {error}");
-                on_error(error);
             }
+            on_done(result);
         });
     if let Err(err) = spawned {
         log::warn!("ntfy thread failed: {err}");
@@ -104,12 +141,14 @@ pub async fn ntfy(alert: &Outgoing, settings: &NtfySettings) -> Result<(), Strin
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|error| format!("could not build the HTTP client: {error}"))?;
+    // Messages name the server without any user:password@ part.
+    let shown = redacted(&server);
     let response = client
         .post(server.as_str())
         .json(&ntfy_message(alert, settings))
         .send()
         .await
-        .map_err(|error| format!("could not reach {server}: {error}"))?;
+        .map_err(|error| format!("could not reach {shown}: {}", error.without_url()))?;
     let status = response.status();
     if status.is_success() {
         return Ok(());
@@ -119,7 +158,19 @@ pub async fn ntfy(alert: &Outgoing, settings: &NtfySettings) -> Result<(), Strin
         .ok()
         .and_then(|json| json["error"].as_str().map(str::to_owned))
         .unwrap_or_else(|| text.chars().take(200).collect());
-    Err(format!("{server} answered {status}: {detail}"))
+    Err(format!("{shown} answered {status}: {detail}"))
+}
+
+/// The server address without credentials, for messages and logs.
+fn redacted(server: &str) -> String {
+    match url::Url::parse(server) {
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.as_str().trim_end_matches('/').to_owned()
+        }
+        Err(_) => "the ntfy server".to_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -141,5 +192,14 @@ mod tests {
         assert_eq!(json["title"], "BTCUSDT 1h: LTF MSS down");
         assert_eq!(json["message"], "Roman Trade Setup\nClose 95567.3");
         assert_eq!(settings.server(), "https://ntfy.sh");
+    }
+
+    #[test]
+    fn messages_never_show_server_credentials() {
+        assert_eq!(
+            redacted("https://me:secret@ntfy.example.org"),
+            "https://ntfy.example.org"
+        );
+        assert_eq!(redacted("not a url"), "the ntfy server");
     }
 }

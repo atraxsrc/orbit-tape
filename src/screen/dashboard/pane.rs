@@ -1,4 +1,5 @@
 mod content;
+pub use content::kline::alert_sync::StoreEdit;
 pub mod settings;
 mod state;
 

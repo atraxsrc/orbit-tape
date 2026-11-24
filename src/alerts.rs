@@ -5,9 +5,11 @@
 //! chart can be open in several panes), skips muted conditions, and delivers
 //! the rest the way the alert settings ask.
 
+use crate::alert_channels::{self, Outgoing, Reports};
 use data::chart::Basis;
-use data::chart::kline::alerts::{AlertHit, AlertSource};
+use data::chart::kline::alerts::AlertHit;
 use data::config::alert_history::{AlertHistory, FiredAlert};
+use data::config::alert_store::NtfySettings;
 use data::config::alerts::Alerts;
 use exchange::{Ticker, UnixMs};
 use rodio::Source;
@@ -83,7 +85,13 @@ impl AlertCenter {
     /// then notifies. Returns what was delivered, the saved history when it
     /// changed, and an error message for the user when the chime could not
     /// be played.
-    pub fn deliver(&mut self, hits: Vec<AlertHit>, settings: &Alerts) -> Delivery {
+    pub fn deliver(
+        &mut self,
+        hits: Vec<AlertHit>,
+        settings: &Alerts,
+        ntfy: &NtfySettings,
+        reports: &Reports,
+    ) -> Delivery {
         let mut delivery = Delivery::default();
         if !settings.enabled {
             return delivery;
@@ -158,6 +166,16 @@ impl AlertCenter {
             if settings.notification {
                 notify(summary(hit, alert.missed), body(hit));
             }
+            if settings.ntfy && ntfy.is_set() {
+                alert_channels::spawn_ntfy(
+                    Outgoing {
+                        summary: summary(hit, alert.missed),
+                        body: body(hit),
+                    },
+                    ntfy.clone(),
+                    reports.recorder(None),
+                );
+            }
         }
         if settings.sound {
             delivery.error = self.play_chime(settings.volume).err();
@@ -166,11 +184,9 @@ impl AlertCenter {
         delivery
     }
 
-    /// Whether the hit's bar closed before this run started. Price alerts
-    /// are live, never missed.
+    /// Whether the hit's bar closed before this run started.
     fn missed(&self, hit: &AlertHit) -> bool {
-        let (AlertSource::Indicator { .. }, Basis::Time(timeframe)) = (&hit.source, hit.basis)
-        else {
+        let Basis::Time(timeframe) = hit.basis else {
             return false;
         };
         let closed_at = hit
@@ -192,6 +208,16 @@ impl AlertCenter {
             return self.play_chime(settings.volume).err();
         }
         None
+    }
+
+    /// Plays the chime for alerts another program delivered, as the
+    /// settings ask.
+    pub fn chime(&mut self, settings: &Alerts) -> Option<String> {
+        if settings.enabled && settings.sound {
+            self.play_chime(settings.volume).err()
+        } else {
+            None
+        }
     }
 
     fn play_chime(&mut self, volume: f32) -> Result<(), String> {
@@ -265,18 +291,11 @@ fn body(hit: &AlertHit) -> String {
                 .to_string()
         })
         .unwrap_or_default();
-    match hit.source {
-        AlertSource::Indicator { .. } => format!(
-            "{}\nClose {close}, bar opened {bar}\n{}",
-            hit.source_name,
-            exchange_name(hit)
-        ),
-        AlertSource::PriceLevel { .. } => format!(
-            "{}\nLast {close} at {bar}\n{}",
-            hit.source_name,
-            exchange_name(hit)
-        ),
-    }
+    format!(
+        "{}\nClose {close}, bar opened {bar}\n{}",
+        hit.source_name,
+        exchange_name(hit)
+    )
 }
 
 fn exchange_name(hit: &AlertHit) -> String {
@@ -290,13 +309,14 @@ fn exchange_name(hit: &AlertHit) -> String {
 }
 
 fn notify(summary: String, body: String) {
-    crate::alert_channels::desktop(summary, body);
+    alert_channels::desktop(summary, body);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use data::chart::kline::IndicatorId;
+    use data::chart::kline::alerts::AlertSource;
     use exchange::adapter::Exchange;
     use exchange::unit::price::Price;
     use exchange::{TickerInfo, Timeframe};
@@ -351,18 +371,40 @@ mod tests {
     fn a_restart_does_not_deliver_the_same_bar_again() {
         let path = history_file("restart");
         let mut first = center(&path, BAR);
-        let fired = first.deliver(vec![hit(BAR)], &quiet()).fired;
+        let fired = first
+            .deliver(
+                vec![hit(BAR)],
+                &quiet(),
+                &NtfySettings::default(),
+                &Reports::default(),
+            )
+            .fired;
         assert_eq!(fired.len(), 1);
         assert!(!fired[0].missed);
 
         // Restarted before the next bar closed: the chart catches up on the
         // same bar, which was already delivered.
         let mut restarted = center(&path, BAR + HOUR + 60_000);
-        assert!(restarted.deliver(vec![hit(BAR)], &quiet()).fired.is_empty());
+        assert!(
+            restarted
+                .deliver(
+                    vec![hit(BAR)],
+                    &quiet(),
+                    &NtfySettings::default(),
+                    &Reports::default()
+                )
+                .fired
+                .is_empty()
+        );
         // The next bar still fires.
         assert_eq!(
             restarted
-                .deliver(vec![hit(BAR + HOUR)], &quiet())
+                .deliver(
+                    vec![hit(BAR + HOUR)],
+                    &quiet(),
+                    &NtfySettings::default(),
+                    &Reports::default()
+                )
                 .fired
                 .len(),
             1
@@ -375,8 +417,24 @@ mod tests {
         // Both started before either delivered anything.
         let mut app = center(&path, BAR);
         let mut watcher = center(&path, BAR);
-        assert_eq!(watcher.deliver(vec![hit(BAR)], &quiet()).fired.len(), 1);
-        let delivery = app.deliver(vec![hit(BAR)], &quiet());
+        assert_eq!(
+            watcher
+                .deliver(
+                    vec![hit(BAR)],
+                    &quiet(),
+                    &NtfySettings::default(),
+                    &Reports::default()
+                )
+                .fired
+                .len(),
+            1
+        );
+        let delivery = app.deliver(
+            vec![hit(BAR)],
+            &quiet(),
+            &NtfySettings::default(),
+            &Reports::default(),
+        );
         assert!(delivery.fired.is_empty());
         // The app still learns the saved history, with the watcher's entry.
         assert_eq!(delivery.history.unwrap().len(), 1);
@@ -394,7 +452,18 @@ mod tests {
         )
         .unwrap();
         let mut center = center(&path, BAR + 2 * HOUR);
-        assert_eq!(center.deliver(vec![hit(BAR)], &quiet()).fired.len(), 1);
+        assert_eq!(
+            center
+                .deliver(
+                    vec![hit(BAR)],
+                    &quiet(),
+                    &NtfySettings::default(),
+                    &Reports::default()
+                )
+                .fired
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -403,7 +472,12 @@ mod tests {
         let path = history_file("missed");
         let mut center = center(&path, BAR + HOUR + HOUR / 2);
         let fired = center
-            .deliver(vec![hit(BAR), hit(BAR + HOUR)], &quiet())
+            .deliver(
+                vec![hit(BAR), hit(BAR + HOUR)],
+                &quiet(),
+                &NtfySettings::default(),
+                &Reports::default(),
+            )
             .fired;
         assert_eq!(
             fired.iter().map(|alert| alert.missed).collect::<Vec<_>>(),

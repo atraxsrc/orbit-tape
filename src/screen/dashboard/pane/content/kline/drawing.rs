@@ -10,7 +10,7 @@ use crate::widget::chart::kline::drawing::{
 };
 use crate::widget::{color_swatch_button, tooltip};
 use data::chart::kline::composition::{ChartComposition, PanelId};
-use data::chart::kline::{DrawingSettings, PriceAlert};
+use data::chart::kline::{DrawingSettings, PriceAlert, YUnit};
 use data::config::theme::{ThemeAccent, ThemeColor, ThemeColorRole, ThemeColorShade};
 
 use iced::widget::{checkbox, pick_list, row, text, tooltip::Position as TooltipPosition};
@@ -667,6 +667,16 @@ impl std::fmt::Display for BoxStyleTarget {
     }
 }
 
+/// A line that carries a price alert.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct AlertLine {
+    pub drawing: DrawingId,
+    /// Its saved alert; `None` until it is saved.
+    pub id: Option<String>,
+    pub y_unit: YUnit,
+    pub armed: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct DrawingTools {
     active_tool: DrawingTool,
@@ -926,7 +936,7 @@ impl DrawingTools {
             horizontal_lines
                 .iter()
                 .filter(|drawing| drawing.supports_price_alert())
-                .map(|drawing| drawing.alert.is_some_and(|alert| alert.armed)),
+                .map(|drawing| drawing.alert.as_ref().is_some_and(|alert| alert.armed)),
         );
 
         Some(DrawingSelectionSummary {
@@ -2288,8 +2298,8 @@ impl DrawingTools {
 
     /// Arms (true) or removes (false) price alerts on the given lines.
     /// Locked lines and drawings that cannot carry an alert are skipped.
+    /// Re-arming a fired line keeps its saved alert.
     fn set_alerts(&mut self, ids: &[DrawingId], armed: bool) -> bool {
-        let alert = armed.then_some(PriceAlert { armed: true });
         let mut changed = false;
         for drawing in self
             .drawings
@@ -2297,12 +2307,152 @@ impl DrawingTools {
             .filter(|drawing| ids.contains(&drawing.id) && !drawing.locked)
             .filter(|drawing| drawing.supports_price_alert())
         {
-            if drawing.alert != alert {
-                drawing.alert = alert;
-                changed = true;
+            match (&mut drawing.alert, armed) {
+                (Some(alert), true) if !alert.armed => {
+                    alert.armed = true;
+                    changed = true;
+                }
+                (Some(_), true) => {}
+                (None, true) => {
+                    drawing.alert = Some(PriceAlert {
+                        armed: true,
+                        id: None,
+                    });
+                    changed = true;
+                }
+                (Some(_), false) => {
+                    drawing.alert = None;
+                    changed = true;
+                }
+                (None, false) => {}
             }
         }
         changed
+    }
+
+    /// Alert lines of both bases (the inactive one too, so switching between
+    /// time and tick charts does not look like a deleted alert).
+    pub(super) fn alert_lines(&self) -> Vec<AlertLine> {
+        self.drawings
+            .iter()
+            .chain(&self.inactive_drawings)
+            .filter_map(|drawing| {
+                let alert = drawing.alert.as_ref()?;
+                let DrawingObject::HorizontalLine {
+                    panel_id: PanelId::Main,
+                    y_unit,
+                    ..
+                } = drawing.object
+                else {
+                    return None;
+                };
+                Some(AlertLine {
+                    drawing: drawing.id,
+                    id: alert.id.clone(),
+                    y_unit,
+                    armed: alert.armed,
+                })
+            })
+            .collect()
+    }
+
+    fn drawing_mut_any(&mut self, id: DrawingId) -> Option<&mut DrawingEntity> {
+        self.drawings
+            .iter_mut()
+            .chain(self.inactive_drawings.iter_mut())
+            .find(|drawing| drawing.id == id)
+    }
+
+    /// Links a line to its saved alert.
+    pub(super) fn set_alert_id(&mut self, drawing: DrawingId, id: String) {
+        if let Some(alert) = self
+            .drawing_mut_any(drawing)
+            .and_then(|drawing| drawing.alert.as_mut())
+        {
+            alert.id = Some(id);
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_alert_id_for_test(&mut self, drawing: DrawingId) {
+        if let Some(alert) = self
+            .drawing_mut_any(drawing)
+            .and_then(|drawing| drawing.alert.as_mut())
+        {
+            alert.id = None;
+        }
+    }
+
+    /// Moves an alert line and/or arms or disarms it, after its saved alert
+    /// changed elsewhere. Returns true when something changed.
+    pub(super) fn update_alert_line(
+        &mut self,
+        drawing: DrawingId,
+        y: Option<YUnit>,
+        armed: Option<bool>,
+    ) -> bool {
+        let Some(entity) = self.drawing_mut_any(drawing) else {
+            return false;
+        };
+        let mut changed = false;
+        if let (Some(new_y), DrawingObject::HorizontalLine { y_unit, .. }) = (y, &mut entity.object)
+            && *y_unit != new_y
+        {
+            *y_unit = new_y;
+            changed = true;
+        }
+        if let (Some(armed), Some(alert)) = (armed, entity.alert.as_mut())
+            && alert.armed != armed
+        {
+            alert.armed = armed;
+            changed = true;
+        }
+        changed
+    }
+
+    /// Removes a line from either basis, after its saved alert was deleted
+    /// elsewhere.
+    pub(super) fn remove_drawing_any(&mut self, drawing: DrawingId) -> bool {
+        let before = self.drawings.len() + self.inactive_drawings.len();
+        self.drawings.retain(|entity| entity.id != drawing);
+        self.inactive_drawings.retain(|entity| entity.id != drawing);
+        self.selected_drawings.retain(|id| *id != drawing);
+        before != self.drawings.len() + self.inactive_drawings.len()
+    }
+
+    /// Adds a line for a saved alert that has none on this chart, to the
+    /// time-based drawings. Not selected.
+    pub(super) fn add_alert_line(
+        &mut self,
+        id: String,
+        y_unit: YUnit,
+        armed: bool,
+        x: exchange::UnixMs,
+        style: DrawingStyle,
+    ) -> DrawingId {
+        let drawing = self.allocate_drawing_id();
+        let entity = DrawingEntity {
+            id: drawing,
+            object: DrawingObject::HorizontalLine {
+                panel_id: PanelId::Main,
+                y_unit,
+                x: DrawingX::Time(x),
+                ray: false,
+            },
+            style,
+            locked: false,
+            visible: true,
+            alert: Some(PriceAlert {
+                armed,
+                id: Some(id),
+            }),
+        };
+        if self.tick_mode {
+            self.inactive_drawings.push(entity);
+        } else {
+            self.drawings.push(entity);
+        }
+        drawing
     }
 
     fn remove_alert_lines(&mut self) -> bool {
@@ -2313,24 +2463,6 @@ impl DrawingTools {
         self.selected_drawings
             .retain(|id| drawings.iter().any(|drawing| drawing.id == *id));
         self.drawings.len() != before
-    }
-
-    /// Disarms alerts that fired. The lines and their tags stay.
-    pub(super) fn disarm_alerts(&mut self, ids: &[DrawingId]) -> bool {
-        let mut changed = false;
-        for drawing in self
-            .drawings
-            .iter_mut()
-            .filter(|drawing| ids.contains(&drawing.id))
-        {
-            if let Some(alert) = &mut drawing.alert
-                && alert.armed
-            {
-                alert.armed = false;
-                changed = true;
-            }
-        }
-        changed
     }
 
     fn allocate_drawing_id(&mut self) -> DrawingId {
@@ -2356,7 +2488,6 @@ impl DrawingTools {
 #[cfg(test)]
 mod price_alert_tests {
     use super::*;
-    use data::chart::kline::YUnit;
 
     fn anchor() -> DrawingAnchor {
         DrawingAnchor {

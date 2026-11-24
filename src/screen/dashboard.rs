@@ -1171,6 +1171,29 @@ impl Dashboard {
         hits
     }
 
+    /// Brings every chart's price alert lines and the saved alerts in step;
+    /// returns the edits to save.
+    pub fn sync_price_alerts(
+        &mut self,
+        store: &data::config::alert_store::AlertStore,
+        now: UnixMs,
+    ) -> Vec<pane::StoreEdit> {
+        let mut edits = Vec::new();
+        let popouts = self
+            .popout
+            .values_mut()
+            .flat_map(|(panes, _)| panes.iter_mut());
+        for (_, state) in self.panes.iter_mut().chain(popouts) {
+            if let pane::Content::Kline {
+                chart: Some(chart), ..
+            } = &mut state.content
+            {
+                edits.extend(chart.sync_price_alerts(store, now));
+            }
+        }
+        edits
+    }
+
     pub fn resolve_streams(
         &mut self,
         main_window: window::Id,

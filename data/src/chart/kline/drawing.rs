@@ -472,11 +472,16 @@ pub struct DrawingEntity {
     pub alert: Option<PriceAlert>,
 }
 
-/// A price alert attached to a horizontal line. It fires once when the live
-/// price crosses the line, then stays on the chart disarmed until re-armed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// A price alert attached to a horizontal line: the chart's view of a saved
+/// alert (`config::alert_store`). It fires once when the live price crosses
+/// the line, then stays on the chart disarmed until re-armed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PriceAlert {
     pub armed: bool,
+    /// The saved alert this line shows. Lines from older versions have none
+    /// until the chart saves them as alerts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -987,7 +992,7 @@ impl DrawingEntity {
                 panel_id: PanelId::Main,
                 y_unit,
                 ..
-            } if self.alert.is_some_and(|alert| alert.armed) => Some(y_unit),
+            } if self.alert.as_ref().is_some_and(|alert| alert.armed) => Some(y_unit),
             _ => None,
         }
     }
