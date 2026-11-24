@@ -349,3 +349,63 @@ fn enhanced_ob_matches_the_reference() {
     }
     assert!(events > 300, "the fixture should contain plenty of events");
 }
+
+/// Every x_* setup value of the TradingView script (rev 5) on OKX 1h with the
+/// daily profile (Zone tap or SFP; major-coin max distance 5 and zone height
+/// 2), against the port on the same OKX candles, bar for bar.
+fn check_setup_values(candles: &str, export: &str) {
+    let config = IndicatorConfig::default()
+        .with("mssGate", InputValue::String("Zone tap or SFP".to_owned()))
+        .with("maxDist", InputValue::Float(5.0))
+        .with("maxHeight", InputValue::Float(2.0))
+        // rev 5 has neither
+        .with("thinBody", InputValue::Float(0.0))
+        .with("brkTap", InputValue::Bool(false));
+    let outputs = run("roman-setup.ind", candles, config);
+    let expected = read_csv(export);
+    assert!(expected.len() > 900);
+    let columns: Vec<String> = expected[0]
+        .keys()
+        .filter(|name| name.starts_with("x_"))
+        .cloned()
+        .collect();
+    assert!(columns.len() >= 23, "{columns:?}");
+
+    let mut mismatches = Vec::new();
+    for row in &expected {
+        let time: i64 = row["time"].parse().unwrap();
+        let output = outputs
+            .get(&time)
+            .expect("TradingView bar is in the candles");
+        for column in &columns {
+            let (ours, theirs) = (plot(output, column), row[column].parse::<f64>().ok());
+            if !same(ours, theirs) {
+                mismatches.push(format!(
+                    "{time} {column}: ours {ours:?}, TradingView {theirs:?}"
+                ));
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{export}: {} mismatches, first: {:#?}",
+        mismatches.len(),
+        &mismatches[..mismatches.len().min(12)]
+    );
+}
+
+#[test]
+fn roman_setup_values_match_tradingview_on_okx_btc() {
+    check_setup_values(
+        "tests/okx-btcusdt-perp-1h-20261125.csv",
+        "tests/tradingview-roman-setup-rev5-okx-btc.csv",
+    );
+}
+
+#[test]
+fn roman_setup_values_match_tradingview_on_okx_eth() {
+    check_setup_values(
+        "tests/okx-ethusdt-perp-1h-20261125.csv",
+        "tests/tradingview-roman-setup-rev5-okx-eth.csv",
+    );
+}
