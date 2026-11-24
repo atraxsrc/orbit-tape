@@ -72,6 +72,11 @@ the copies the `.deb` ships in `/usr/share/doc/orbit-tape/indicators/`. `inputs`
 take values as text by input ID or label, for example `{"ctMode": "true"}`;
 `list_indicators` shows the IDs.
 
+`check_indicator`, `test_indicator` and `run_indicator` read only `.ind`
+sources: a path must be a folder (scanned for `.ind` files, links skipped) or
+a regular `.ind` file. A link named `.ind` that points at any other file is
+refused.
+
 Errors (unknown symbols, timeframes, indicators or inputs, and network
 failures) come back as tool errors with a short message; the server keeps
 running.

@@ -667,8 +667,12 @@ impl OrbitTapeMcp {
             .unwrap_or(headless::DEFAULT_INDICATOR);
         let as_path = Path::new(wanted);
         if wanted.ends_with(".ind") && as_path.components().count() > 1 {
-            let indicator = headless::compile(as_path)?;
-            return Ok((as_path.to_path_buf(), indicator));
+            let path = source_path(wanted)?;
+            if path.is_dir() {
+                return Err(format!("{wanted} is a folder, not a .ind file"));
+            }
+            let indicator = headless::compile(&path)?;
+            return Ok((path, indicator));
         }
         let key = wanted.trim_end_matches(".ind").to_lowercase();
         let installed = self.installed();
@@ -690,11 +694,29 @@ impl OrbitTapeMcp {
     }
 }
 
-fn check_sources(params: &CheckParams) -> Result<(tooling::SourceReport, PathBuf), String> {
-    let path = PathBuf::from(params.path.trim());
-    if path.is_file() && path.extension().is_none_or(|extension| extension != "ind") {
-        return Err(format!("{} is not a .ind file", path.display()));
+/// A path the client asked for, resolved: an existing folder, or a regular
+/// `.ind` file. A link to anything else (`x.ind -> ~/.ssh/id_ed25519`) is
+/// refused, so only indicator sources are ever read; folder scans skip links.
+fn source_path(text: &str) -> Result<PathBuf, String> {
+    let requested = PathBuf::from(text.trim());
+    let resolved = requested
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", requested.display()))?;
+    if resolved.is_dir() {
+        return Ok(resolved);
     }
+    if resolved.is_file()
+        && resolved
+            .extension()
+            .is_some_and(|extension| extension == "ind")
+    {
+        return Ok(resolved);
+    }
+    Err(format!("{} is not a .ind file", requested.display()))
+}
+
+fn check_sources(params: &CheckParams) -> Result<(tooling::SourceReport, PathBuf), String> {
+    let path = source_path(&params.path)?;
     let paths = tooling::source_paths(&path)?;
     Ok((
         tooling::load_sources(&paths, params.namespace.as_deref()),
@@ -1213,6 +1235,32 @@ mod tests {
             namespace: None,
         })));
         assert!(refused.unwrap_err().ends_with("is not a .ind file"));
+        let disguised = dir.join("secret.ind");
+        std::os::unix::fs::symlink(&not_ind, &disguised).unwrap();
+        for result in [
+            block_on(server().check_indicator(Parameters(CheckParams {
+                path: disguised.display().to_string(),
+                namespace: None,
+            }))),
+            block_on(server().run_indicator(Parameters(RunParams {
+                indicator: disguised.display().to_string(),
+                symbol: "BTC".into(),
+                timeframe: None,
+                exchange: None,
+                inputs: None,
+                last: None,
+                bars: None,
+            }))),
+        ] {
+            let error = result.unwrap_err();
+            assert!(error.ends_with("secret.ind is not a .ind file"), "{error}");
+            assert!(!error.contains("hello"), "{error}");
+        }
+        let missing = block_on(server().check_indicator(Parameters(CheckParams {
+            path: dir.join("missing.ind").display().to_string(),
+            namespace: None,
+        })));
+        assert!(missing.unwrap_err().contains("missing.ind"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
