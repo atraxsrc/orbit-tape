@@ -2,6 +2,7 @@
 //! the plan's universe, the Roman setups and the spot status built on it.
 
 mod math;
+pub(crate) mod setups;
 
 use super::{
     DEFAULT_RUN_BARS, OrbitTapeMcp, Precision, Series, coin, exchange_id, indicator_config, number,
@@ -30,6 +31,12 @@ const H4_BARS: usize = 300;
 const WEEKLY_BARS: usize = 260;
 const HOURS_PER_DAY: usize = 24;
 const HOURS_PER_WEEK: usize = 168;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetupsParams {
+    /// Coins, e.g. ["BTC", "ETH"]. Default: the plan's universe.
+    pub coins: Option<Vec<String>>,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SnapshotParams {
@@ -123,6 +130,80 @@ impl OrbitTapeMcp {
         let roman = self.roman_values(roman, &coin, plan, &hours)?;
         let snapshot = Snapshot::new(&hours, &days, h4.ok().as_ref(), weeks.ok().as_ref());
         Ok(snapshot.to_json(&coin, &hours, roman))
+    }
+}
+
+impl OrbitTapeMcp {
+    async fn coin_setup(
+        &self,
+        exchange: PerpExchange,
+        coin: String,
+        roman: &CompiledIndicator,
+        plan: &Plan,
+    ) -> Result<Json, String> {
+        let candles = &self.candles;
+        let (hours, days) = iced::futures::join!(
+            candles.closed_candles(exchange, coin.clone(), Timeframe::H1, DEFAULT_RUN_BARS),
+            candles.closed_candles(exchange, coin.clone(), Timeframe::D1, DAILY_BARS),
+        );
+        let (hours, days) = (hours?, days?);
+        let values = self.roman_values(roman, &coin, Some(plan), &hours)?;
+        let snapshot = Snapshot::new(&hours, &days, None, None);
+        let input = setups::CoinInput {
+            close: snapshot.close,
+            atr: snapshot.atr_1d,
+            high_24h: snapshot.high_24h,
+            low_24h: snapshot.low_24h,
+            high_1m: snapshot.high_1m,
+            low_1m: snapshot.low_1m,
+            values,
+        };
+        let rules = setups::Rules {
+            max_stop_pct: plan.prop.max_stop_pct,
+            leverage: plan.prop.leverage_of(&coin),
+            risk_pct: plan.prop.risk_pct,
+            counter_trend_risk_pct: plan.prop.counter_trend_risk_pct,
+        };
+        let setup = input.setup(&rules);
+        let mut out = serde_json::to_value(&setup).map_err(|error| error.to_string())?;
+        rounded(&mut out, Precision::of(&hours.ticker_info));
+        out["base"] = json!(coin);
+        out["symbol"] = json!(hours.instrument);
+        out["close"] = json!(Precision::of(&hours.ticker_info).price(snapshot.close));
+        out["as_of_bar_utc"] = json!(hours.klines.last().map(|k| utc(k.time.as_u64() as i64)));
+        out["atr_1d"] = json!(
+            snapshot
+                .atr_1d
+                .map(|atr| Precision::of(&hours.ticker_info).price(atr))
+        );
+        Ok(out)
+    }
+}
+
+/// Rounds a setup for reading: prices to the tick, percentages and R
+/// multiples to 2 decimals, sizes to whole units.
+fn rounded(value: &mut Json, precision: Precision) {
+    match value {
+        Json::Object(map) => {
+            for (key, value) in map.iter_mut() {
+                if let Some(number) = value.as_f64() {
+                    let decimals = match key.as_str() {
+                        "near" | "far" | "entry" | "stop" | "t1" | "t2" | "level" => None,
+                        key if key.ends_with("_pct") || key.ends_with("_r") => Some(2),
+                        "notional_per_10" | "margin_per_10" => Some(0),
+                        _ => continue,
+                    };
+                    *value = json!(match decimals {
+                        None => precision.price(number),
+                        Some(decimals) => round_decimals(number, decimals),
+                    });
+                } else {
+                    rounded(value, precision);
+                }
+            }
+        }
+        Json::Array(items) => items.iter_mut().for_each(|item| rounded(item, precision)),
+        _ => {}
     }
 }
 
@@ -298,6 +379,59 @@ impl OrbitTapeMcp {
         to_text(&json!({
             "path": self.paths.plan.display().to_string(),
             "plan": plan,
+        }))
+    }
+
+    #[tool(
+        description = "Roman Setup (H12 bias, H1 execution) on every coin of the plan's universe (or the coins given) with the plan's inputs, and the routine's rules applied: the primary bias-aligned level (nearest resistance zone or broken level for a bearish bias, support for a bullish one, on the trade's side of price) and its distance %, entry (its near edge, or the broken level or 50% fib if nearer; the close when price is inside), stop beyond the area + 0.3 daily ATR, T1 (24h low/high) and T2 (1M low/high) with R multiples, notional and margin per $10 risked at the plan's max leverage. Statuses: LIVE (a tap on the bias side in the last 24 1h bars and a bias-aligned 1h MSS after it), WATCH (within 5% of the primary level), FLIP-WATCH (within 3% of the 12H bias-flip level), COUNTER-TREND (armed after an HTF SFP against the bias: entry after the next 1h MSS, stop beyond the SFP wick + 0.2 ATR, counter-trend risk). Setups whose stop is over the plan's max stop % are skipped with the reason. Script output, not advice."
+    )]
+    pub async fn roman_setups(
+        &self,
+        Parameters(params): Parameters<SetupsParams>,
+    ) -> Result<String, String> {
+        use iced::futures::StreamExt;
+        let plan = self.plan()?;
+        let (exchange, coins) = self.universe(params.coins, None, Some(&plan))?;
+        let (_, roman) = self.indicator(Some(ROMAN))?;
+        let rows: Vec<Json> = iced::futures::stream::iter(coins)
+            .map(|coin| {
+                let (roman, plan) = (&roman, &plan);
+                async move {
+                    self.coin_setup(exchange, coin.clone(), roman, plan)
+                        .await
+                        .unwrap_or_else(|error| json!({ "base": coin, "error": error }))
+                }
+            })
+            .buffered(COINS_PARALLEL)
+            .collect()
+            .await;
+        let group = |status: &str| -> Vec<Json> {
+            rows.iter()
+                .filter(|row| {
+                    row["statuses"]
+                        .as_array()
+                        .is_some_and(|list| list.iter().any(|s| s == status))
+                })
+                .map(|row| row["base"].clone())
+                .collect()
+        };
+        to_text(&json!({
+            "exchange": exchange_id(exchange),
+            "live": group("LIVE"),
+            "watch": group("WATCH"),
+            "flip_watch": group("FLIP-WATCH"),
+            "counter_trend": group("COUNTER-TREND"),
+            "failed": rows.iter().filter(|row| row.get("error").is_some()).count(),
+            "rules": {
+                "risk_pct": plan.prop.risk_pct,
+                "counter_trend_risk_pct": plan.prop.counter_trend_risk_pct,
+                "max_correlated": plan.prop.max_correlated,
+                "max_stop_pct": plan.prop.max_stop_pct,
+                "live_tap_bars": setups::LIVE_BARS,
+                "watch_pct": setups::WATCH_PCT,
+                "flip_watch_pct": setups::FLIP_PCT,
+            },
+            "coins": rows,
         }))
     }
 

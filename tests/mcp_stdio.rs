@@ -89,6 +89,7 @@ fn mcp_server_lists_its_tools_over_stdio() {
             "market_snapshot",
             "pause_alerts",
             "resume_alerts",
+            "roman_setups",
             "run_indicator",
             "scan",
             "test_indicator",

@@ -136,3 +136,36 @@ fn market_snapshot_takes_coins_without_a_plan() {
     .unwrap_err();
     assert!(error.contains("plan.example.toml"), "{error}");
 }
+
+#[test]
+fn roman_setups_apply_the_rules_to_the_universe() {
+    let out = parse(block_on(
+        server().roman_setups(Parameters(SetupsParams { coins: None })),
+    ));
+    assert_eq!(out["exchange"], "okx");
+    assert_eq!(out["failed"], 4);
+    assert_eq!(out["rules"]["max_stop_pct"], 5.0);
+    let btc = &out["coins"][0];
+    assert_eq!(btc["base"], "BTC");
+    assert_eq!(btc["close"], 95567.3);
+    // The fixture's last bar: bullish, the broken HTF level below price is
+    // the nearest support, 3.73% away: WATCH.
+    assert_eq!(btc["bias"], "bullish");
+    assert_eq!(btc["statuses"], json!(["WATCH"]));
+    assert_eq!(btc["primary"]["kind"], "broken_level");
+    assert_eq!(btc["primary"]["distance_pct"], 3.73);
+    let trade = &btc["trade"];
+    assert_eq!(trade["direction"], "long");
+    assert_eq!(trade["entry"], 91999.0);
+    // 0.3 x the daily ATR (2610.9) below the level, rounded to the tick.
+    assert_eq!(btc["atr_1d"], 2610.9);
+    assert_eq!(trade["stop"], 91215.7);
+    assert_eq!(trade["max_leverage"], 10.0, "the example plan's BTC");
+    assert_eq!(trade["notional_per_10"], 1175.0);
+    assert_eq!(btc["flip"]["to"], "bearish");
+    assert_eq!(out["watch"], json!(["BTC"]));
+    // Groups list coins by status.
+    for group in ["live", "watch", "flip_watch", "counter_trend"] {
+        assert!(out[group].is_array());
+    }
+}
