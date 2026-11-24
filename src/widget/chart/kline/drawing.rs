@@ -751,7 +751,7 @@ impl DrawingView<'_> {
                 self.snapshot.selected_drawings.contains(&drawing.id),
                 pixels,
             );
-            if let Some(alert) = drawing.alert {
+            if let Some(alert) = &drawing.alert {
                 self.draw_alert_tag(frame, drawing, alert.armed, palette, generated_accents);
             }
         }

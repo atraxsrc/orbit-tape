@@ -174,8 +174,23 @@ impl Market {
     }
 }
 
-/// Closed candles with open times in `[from, to)`, oldest first.
+/// Closed candles with open times in `[from, to)`, oldest first; at least one.
 async fn fetch_klines(
+    handles: &AdapterHandles,
+    ticker_info: TickerInfo,
+    timeframe: Timeframe,
+    from: u64,
+    to: u64,
+) -> Result<Vec<Kline>, String> {
+    let klines = fetch_kline_range(handles, ticker_info, timeframe, from, to).await?;
+    if klines.is_empty() {
+        return Err("no candles".to_owned());
+    }
+    Ok(klines)
+}
+
+/// Candles with open times in `[from, to)`, oldest first; maybe none.
+pub async fn fetch_kline_range(
     handles: &AdapterHandles,
     ticker_info: TickerInfo,
     timeframe: Timeframe,
@@ -198,10 +213,29 @@ async fn fetch_klines(
     klines.retain(|kline| kline.time.as_u64() < to);
     klines.sort_unstable_by_key(|kline| kline.time);
     klines.dedup_by_key(|kline| kline.time);
-    if klines.is_empty() {
-        return Err("no candles".to_owned());
-    }
     Ok(klines)
+}
+
+/// The installed indicator with this ID (`namespace.name`), searching
+/// `folders` in order. Compiled fresh, so edits to the file count.
+pub fn find_indicator_by_id(
+    folders: &[PathBuf],
+    id: &str,
+) -> Result<(PathBuf, CompiledIndicator), String> {
+    for folder in folders {
+        let Ok((paths, _)) = indicator_engine::source_files_in_directory(folder) else {
+            continue;
+        };
+        for path in paths {
+            let Ok(indicator) = compile(&path) else {
+                continue;
+            };
+            if indicator.descriptor.id.as_str() == id {
+                return Ok((path, indicator));
+            }
+        }
+    }
+    Err(format!("indicator {id} is not installed"))
 }
 
 /// The installed indicators folder (`ORBIT_TAPE_INDICATORS_PATH` overrides it).

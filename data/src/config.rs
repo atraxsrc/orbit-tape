@@ -1,11 +1,13 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub mod alert_history;
+pub mod alert_store;
 pub mod alerts;
 pub mod auth;
 pub mod cosmic;
 pub mod glass;
 pub mod network;
+pub mod shared_file;
 pub mod sidebar;
 pub mod state;
 pub mod theme;

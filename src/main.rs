@@ -2,6 +2,8 @@
 /// icon name, so COSMIC matches windows to the launcher entry.
 pub const APP_ID: &str = "io.github.atraxsrc.OrbitTape";
 
+mod alert_channels;
+mod alert_engine;
 mod alerts;
 mod audio;
 mod blur;
@@ -19,6 +21,7 @@ mod screen;
 mod style;
 mod theme;
 mod version;
+mod watch;
 mod widget;
 mod window;
 
@@ -58,6 +61,7 @@ fn main() {
     match arguments.first().map(String::as_str) {
         Some("scan") => std::process::exit(scan::run(&arguments[1..])),
         Some("mcp") => std::process::exit(mcp::run(&arguments[1..])),
+        Some("watch") => std::process::exit(watch::run(&arguments[1..])),
         _ => {}
     }
 
@@ -139,6 +143,13 @@ struct OrbitTape {
     notifications: Notifications,
     alert_center: alerts::AlertCenter,
     alert_history: data::config::alert_history::AlertHistory,
+    alert_history_stamp: Option<(std::time::SystemTime, u64)>,
+    /// Saved alerts (alerts.json), shared with `orbit-tape watch` and the MCP.
+    alert_store: data::config::alert_store::AlertStore,
+    alert_store_stamp: Option<(std::time::SystemTime, u64)>,
+    /// True while this app runs the saved alerts (holds the engine lock).
+    alert_engine_owner: Arc<std::sync::atomic::AtomicBool>,
+    ntfy_reports: alert_channels::Reports,
     last_alert_poll: std::time::Instant,
     window_scale_factors: window::WindowScaleFactors,
     network: Deferred<data::Network>,
@@ -202,12 +213,17 @@ impl OrbitTape {
 
         let (audio_stream, audio_init_err) = AudioStream::new(saved_state.audio_cfg);
 
+        let alert_store = data::config::alert_store::AlertStore::load();
+        alert_channels::set_proxy(saved_state.network.proxy.clone());
+        let alert_engine_owner = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        alert_engine::spawn_in_app(Arc::clone(&alert_engine_owner));
         let settings = modal::settings::Settings::new(
             saved_state.timezone,
             saved_state.scale_factor,
             saved_state.volume_size_unit,
             boot,
             saved_state.alerts,
+            alert_store.channels.ntfy.clone(),
             data::chart::kline::indicators::manifest::normalize_catalog_setting(
                 &saved_state.indicator_catalog_url,
             ),
@@ -233,6 +249,15 @@ impl OrbitTape {
             notifications: Notifications::new(),
             alert_center: alerts::AlertCenter::new(&alert_history, exchange::UnixMs::now()),
             alert_history,
+            alert_history_stamp: data::config::shared_file::modified(
+                &data::config::alert_history::AlertHistory::path(),
+            ),
+            alert_store_stamp: data::config::shared_file::modified(
+                &data::config::alert_store::AlertStore::path(),
+            ),
+            alert_store,
+            alert_engine_owner,
+            ntfy_reports: alert_channels::Reports::default(),
             last_alert_poll: std::time::Instant::now(),
             network_editor: NetworkEditor::new(&network),
             network,
@@ -666,6 +691,27 @@ impl OrbitTape {
                             self.notifications.push(Toast::error(err));
                         }
                     }
+                    Some(Action::SaveNtfy(ntfy)) => {
+                        let saved = ntfy.clone();
+                        self.edit_saved_alert(|store| {
+                            store.channels.ntfy = ntfy;
+                            Ok(())
+                        });
+                        if self.alert_store.channels.ntfy == saved {
+                            self.settings.ntfy_saved = saved;
+                        }
+                    }
+                    Some(Action::TestNtfy) => {
+                        alert_channels::spawn_ntfy(
+                            alert_channels::Outgoing {
+                                summary: "Orbit Tape test alert".to_owned(),
+                                body: "ntfy works. Alerts will look like this.".to_owned(),
+                            },
+                            self.alert_store.channels.ntfy.clone(),
+                            self.ntfy_reports
+                                .recorder(Some("Test message sent to ntfy".to_owned())),
+                        );
+                    }
                     Some(Action::Sidebar(message)) => {
                         return self.update(Message::Sidebar(message));
                     }
@@ -728,9 +774,9 @@ impl OrbitTape {
                         self.network_editor.reopen(&self.network);
                     }
                     Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Alerts)))
-                        if self.alert_history.mark_read() =>
+                        if self.alert_history.unread() > 0 =>
                     {
-                        self.alert_history.save();
+                        self.mark_alerts_read();
                     }
                     Some(screen::sidebar::Action::MenuChanged(_)) => {}
                     Some(screen::sidebar::Action::TickerSelected(ticker_info, content)) => {
@@ -806,41 +852,213 @@ impl OrbitTape {
         }
     }
 
-    /// Collects alert conditions from the charts and delivers them. Runs at
-    /// most twice a second; bar closes are rarer than that.
+    /// Collects alert conditions from the charts and delivers them, keeps
+    /// the charts' price alert lines in step with the saved alerts, and
+    /// picks up what other programs saved. Runs at most twice a second; bar
+    /// closes are rarer than that.
     fn poll_alerts(&mut self, now: std::time::Instant) {
         const INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
         if now.saturating_duration_since(self.last_alert_poll) < INTERVAL {
             return;
         }
         self.last_alert_poll = now;
-        let hits = self
+        self.reload_shared_alerts();
+        for report in self.ntfy_reports.take() {
+            self.notifications.push(match report {
+                Ok(text) => Toast::info(text),
+                Err(error) => Toast::error(error),
+            });
+        }
+
+        let unix_now = exchange::UnixMs::now();
+        let store = std::mem::take(&mut self.alert_store);
+        let edits = self
             .active_dashboard_mut()
-            .take_alerts(exchange::UnixMs::now());
+            .sync_price_alerts(&store, unix_now);
+        self.alert_store = store;
+        if !edits.is_empty() {
+            self.apply_store_edits(edits);
+        }
+
+        let hits = self.active_dashboard_mut().take_alerts(unix_now);
         if hits.is_empty() {
             return;
         }
-        let (fired, error) = self.alert_center.deliver(hits, &self.settings.alerts);
-        if !fired.is_empty() {
-            for alert in fired {
-                self.alert_history.push(alert);
-            }
-            // The list is open, so the user sees the new entries.
-            if self.sidebar.is_menu_active(sidebar::Menu::Alerts) {
-                self.alert_history.mark_read();
-            }
-            self.alert_history.save();
+        let delivery = self.alert_center.deliver(
+            hits,
+            &self.settings.alerts,
+            &self.alert_store.channels.ntfy,
+            &self.ntfy_reports,
+        );
+        if let Some(history) = delivery.history {
+            self.alert_history = history;
         }
-        if let Some(err) = error {
+        // The list is open, so the user sees the new entries.
+        if !delivery.fired.is_empty() && self.sidebar.is_menu_active(sidebar::Menu::Alerts) {
+            self.mark_alerts_read();
+        }
+        if let Some(err) = delivery.error {
             self.notifications.push(Toast::error(err));
+        }
+    }
+
+    /// Reloads alerts.json and the alert history when another program (the
+    /// alert engine, `orbit-tape watch`, the MCP) changed them. New fired
+    /// alerts from elsewhere play the chime.
+    fn reload_shared_alerts(&mut self) {
+        use data::config::alert_history::AlertHistory;
+        use data::config::alert_store::AlertStore;
+        use data::config::shared_file;
+
+        let stamp = shared_file::modified(&AlertStore::path());
+        if stamp != self.alert_store_stamp {
+            self.alert_store_stamp = stamp;
+            self.alert_store = AlertStore::load();
+        }
+
+        let stamp = shared_file::modified(&AlertHistory::path());
+        if stamp == self.alert_history_stamp {
+            return;
+        }
+        self.alert_history_stamp = stamp;
+        let loaded = AlertHistory::load();
+        let new = loaded
+            .entries()
+            .filter(|entry| !self.alert_history.entries().any(|known| known == *entry))
+            .count();
+        self.alert_history = loaded;
+        if new == 0 {
+            return;
+        }
+        if self.sidebar.is_menu_active(sidebar::Menu::Alerts) {
+            self.mark_alerts_read();
+        }
+        if let Some(err) = self.alert_center.chime(&self.settings.alerts) {
+            self.notifications.push(Toast::error(err));
+        }
+    }
+
+    /// Saves what the charts changed on their alert lines.
+    fn apply_store_edits(&mut self, edits: Vec<screen::dashboard::pane::StoreEdit>) {
+        use data::config::alert_store::{AlertKind, AlertStore};
+        use screen::dashboard::pane::StoreEdit;
+
+        let saved = AlertStore::update(|store| {
+            let mut errors = Vec::new();
+            for edit in edits {
+                match edit {
+                    StoreEdit::Add(alert) => {
+                        if let Err(error) = store.add(alert.clone()) {
+                            // Over the limit: keep it, paused.
+                            errors.push(error);
+                            let _ = store.add(data::config::alert_store::StoredAlert {
+                                enabled: false,
+                                ..alert
+                            });
+                        }
+                    }
+                    StoreEdit::Update { id, level, enabled } => {
+                        if let (Some(new), Some(AlertKind::Price { level, .. })) =
+                            (level, store.get_mut(&id).map(|alert| &mut alert.kind))
+                        {
+                            *level = new;
+                        }
+                        if let Some(enabled) = enabled
+                            && let Err(error) = store.set_enabled(&id, enabled)
+                        {
+                            errors.push(error);
+                        }
+                    }
+                    StoreEdit::Delete(id) => {
+                        store.remove(&id);
+                    }
+                }
+            }
+            (store.clone(), errors)
+        });
+        match saved {
+            Ok((store, errors)) => {
+                self.alert_store = store;
+                for error in errors {
+                    self.notifications.push(Toast::warn(error));
+                }
+            }
+            Err(error) => self
+                .notifications
+                .push(Toast::error(format!("Could not save the alerts: {error}"))),
+        }
+    }
+
+    /// Changes one saved alert from the alert list.
+    fn edit_saved_alert(
+        &mut self,
+        change: impl FnOnce(&mut data::config::alert_store::AlertStore) -> Result<(), String>,
+    ) {
+        match data::config::alert_store::AlertStore::update(|store| {
+            let result = change(store);
+            (store.clone(), result)
+        }) {
+            Ok((store, result)) => {
+                self.alert_store = store;
+                if let Err(error) = result {
+                    self.notifications.push(Toast::warn(error));
+                }
+            }
+            Err(error) => self
+                .notifications
+                .push(Toast::error(format!("Could not save the alerts: {error}"))),
+        }
+    }
+
+    fn mark_alerts_read(&mut self) {
+        self.alert_history.mark_read();
+        match data::config::alert_history::AlertHistory::mark_read_saved() {
+            Ok(history) => self.alert_history = history,
+            Err(error) => log::warn!("could not save the alert history: {error}"),
         }
     }
 
     fn update_alert_history(&mut self, message: modal::alert_history::Message) -> Task<Message> {
         match message {
+            modal::alert_history::Message::SetEnabled(id, enabled) => {
+                self.edit_saved_alert(|store| store.set_enabled(&id, enabled));
+                Task::none()
+            }
+            modal::alert_history::Message::SetFrequency(id, frequency) => {
+                self.edit_saved_alert(|store| {
+                    let alert = store.get_mut(&id).ok_or("That alert was deleted")?;
+                    alert.frequency = frequency;
+                    Ok(())
+                });
+                Task::none()
+            }
+            modal::alert_history::Message::SetChannel(id, channel) => {
+                let ntfy_missing = channel.ntfy() && !self.alert_store.channels.ntfy.is_set();
+                self.edit_saved_alert(|store| {
+                    let alert = store.get_mut(&id).ok_or("That alert was deleted")?;
+                    alert.channel = channel;
+                    Ok(())
+                });
+                if ntfy_missing {
+                    self.notifications.push(Toast::warn(
+                        "Set an ntfy topic in Settings, Alerts first".to_owned(),
+                    ));
+                }
+                Task::none()
+            }
+            modal::alert_history::Message::Delete(id) => {
+                self.edit_saved_alert(|store| {
+                    store.remove(&id);
+                    Ok(())
+                });
+                Task::none()
+            }
             modal::alert_history::Message::Clear => {
                 self.alert_history.clear();
-                self.alert_history.save();
+                match data::config::alert_history::AlertHistory::clear_saved() {
+                    Ok(history) => self.alert_history = history,
+                    Err(error) => log::warn!("could not save the alert history: {error}"),
+                }
                 Task::none()
             }
             modal::alert_history::Message::Focus(index) => {
@@ -1366,7 +1584,19 @@ impl OrbitTape {
 
                 dashboard_modal(
                     base,
-                    modal::alert_history::view(&self.alert_history).map(Message::AlertHistory),
+                    modal::alert_history::view(
+                        &self.alert_history,
+                        &self.alert_store,
+                        if self
+                            .alert_engine_owner
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                        {
+                            modal::alert_history::Runner::ThisApp
+                        } else {
+                            modal::alert_history::Runner::Elsewhere
+                        },
+                    )
+                    .map(Message::AlertHistory),
                     Message::Sidebar(screen::sidebar::Message::ToggleSidebarMenu(None)),
                     padding,
                     Alignment::Start,

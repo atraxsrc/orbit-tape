@@ -126,3 +126,21 @@ starting over.
   then sends a freedesktop notification (`notify-rust`, on a background thread)
   and a synthesized chime. Settings live in `data::config::alerts::Alerts`
   (`State::alerts`).
+- Saved alerts (fork, B2): `data::config::alert_store` (`alerts.json`) holds
+  price and indicator alerts plus the ntfy settings; `config::shared_file`
+  changes it and `alert-history.json` under an exclusive lock file with an
+  atomic rename, so the app, `orbit-tape watch` and `orbit-tape mcp` can all
+  write. Hits are claimed in the history (`AlertHistory::claim`) before they
+  are sent, which is the duplicate protection across processes and restarts.
+- `src/alert_engine.rs` evaluates the saved alerts. Only the holder of
+  `alert-engine.lock` runs it: `spawn_in_app` takes it when free,
+  `orbit-tape watch` (`src/watch.rs`) blocks on it. `Core` is the pure state
+  (price cross rules in `alert_engine/price.rs`, indicator runs over 2000
+  closed candles per bar close, catch-up of one bar at start and after a
+  wall-clock jump); `run` drives it with trade streams and candle requests
+  from `MarketData` (`alert_engine/market.rs`). `src/alert_channels.rs`
+  sends desktop notifications and ntfy messages through the app's proxy.
+- Chart price alert lines are views of saved alerts: `kline/alert_sync.rs`
+  syncs each chart's lines and the store both ways every alert poll, and the
+  app applies the returned `StoreEdit`s. The app reloads `alerts.json` and the
+  history when their mtime changes.

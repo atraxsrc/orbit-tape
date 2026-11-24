@@ -1,0 +1,13 @@
+[Unit]
+Description=Orbit Tape alert watcher (runs saved alerts with no window)
+Documentation=file:///usr/share/doc/orbit-tape/mcp.md
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/orbit-tape watch
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

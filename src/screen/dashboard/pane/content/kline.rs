@@ -1,3 +1,4 @@
+pub mod alert_sync;
 mod context_menu;
 mod drawing;
 mod fetch;
@@ -41,7 +42,7 @@ pub use settings::Message as SettingsMessage;
 pub use updates::DataUpdate;
 
 use data::chart::Basis;
-use data::chart::kline::alerts::{AlertHit, AlertSource, AlertWatch, PriceLevelWatch};
+use data::chart::kline::alerts::{AlertHit, AlertWatch};
 use data::chart::kline::composition::{
     ChartComposition, DEFAULT_MIN_PANEL_RATIO, MarkKind, PanelId, PanelScaleMode,
 };
@@ -109,7 +110,7 @@ pub struct KlineChart {
     render_invalidation: RenderInvalidation,
     last_maintenance_at: Instant,
     alert_watch: AlertWatch,
-    price_watch: PriceLevelWatch,
+    alert_sync: alert_sync::AlertSync,
     context_menu: Option<context_menu::ContextMenu>,
 }
 
@@ -202,7 +203,7 @@ impl KlineChart {
             drawing_sidebar_visible: true,
             last_maintenance_at: Instant::now(),
             alert_watch: AlertWatch::default(),
-            price_watch: PriceLevelWatch::default(),
+            alert_sync: alert_sync::AlertSync::default(),
             context_menu: None,
             render_invalidation: RenderInvalidation::new(),
             settings_reconfigure_pending: false,
@@ -889,24 +890,31 @@ impl KlineChart {
 
     /// Alert conditions that turned true on bars closed since the last call.
     pub fn take_alerts(&mut self, now: UnixMs) -> Vec<AlertHit> {
-        let mut hits = self.take_indicator_alerts(now);
-        let price_hits =
-            self.price_watch
-                .poll(&self.data, self.drawings.tools.active_drawings(), now);
-        if !price_hits.is_empty() {
-            let fired = price_hits
-                .iter()
-                .filter_map(|hit| match hit.source {
-                    AlertSource::PriceLevel { drawing, .. } => Some(drawing),
-                    AlertSource::Indicator { .. } => None,
-                })
-                .collect::<Vec<_>>();
-            if self.drawings.tools.disarm_alerts(&fired) {
-                self.render_invalidation.invalidate();
-            }
-            hits.extend(price_hits);
+        self.take_indicator_alerts(now)
+    }
+
+    /// Brings this chart's price alert lines and the saved alerts in step;
+    /// returns the edits to save.
+    pub fn sync_price_alerts(
+        &mut self,
+        store: &data::config::alert_store::AlertStore,
+        now: UnixMs,
+    ) -> Vec<alert_sync::StoreEdit> {
+        let style = data::chart::kline::DrawingSettings::default()
+            .style_defaults
+            .style_for(data::chart::kline::DrawingTool::HorizontalLine);
+        let (edits, redraw) = self.alert_sync.sync(
+            &mut self.drawings.tools,
+            store,
+            self.data.base_ticker(),
+            self.basis,
+            now,
+            style,
+        );
+        if redraw {
+            self.render_invalidation.invalidate();
         }
-        hits
+        edits
     }
 
     /// The right-click menu for a click at `position`, if it has any entry.
@@ -939,7 +947,7 @@ impl KlineChart {
             if drawing.locked || !drawing.supports_price_alert() {
                 return None;
             }
-            let alert = match drawing.alert {
+            let alert = match &drawing.alert {
                 None => context_menu::LineAlert::None,
                 Some(alert) if alert.armed => context_menu::LineAlert::Armed,
                 Some(_) => context_menu::LineAlert::Fired,

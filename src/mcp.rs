@@ -1,11 +1,14 @@
 //! `orbit-tape mcp`: a Model Context Protocol server over stdio, so an AI
 //! assistant (Claude Code, the Claude desktop app, any MCP client) can scan
-//! markets, read candles and run indicators.
+//! markets, read candles, run indicators and manage saved alerts.
 //!
-//! Read-only: no API keys, no orders, and no file writes. It opens no window
-//! and does not talk to a running Orbit Tape. Candles come from Binance or OKX
-//! USDT perpetuals through the same adapters as the app and `orbit-tape scan`.
+//! No API keys and no orders. The only file it writes is the saved alerts
+//! (`alerts.json`, see `mcp/alerts.rs`), which the app or `orbit-tape watch`
+//! runs. It opens no window. Candles come from Binance or OKX USDT
+//! perpetuals through the same adapters as the app and `orbit-tape scan`.
 //! Logs go to stderr; stdout carries the protocol.
+
+mod alerts;
 
 use crate::headless::{
     self, MAX_BARS, Market, PerpExchange, Series, alert_plots, coin, evaluate_alerts,
@@ -35,8 +38,9 @@ pub const USAGE: &str = "\
 usage: orbit-tape mcp
 
 Runs a Model Context Protocol server on stdin/stdout for AI assistants such as
-Claude. Read-only: it fetches public candles from Binance or OKX and runs your
-indicators; it needs no API keys and places no orders. See docs/mcp.md.
+Claude. It fetches public candles from Binance or OKX, runs your indicators and
+manages your saved alerts; it needs no API keys and places no orders. See
+docs/mcp.md.
 
   claude mcp add orbit-tape -- orbit-tape mcp";
 
@@ -99,6 +103,13 @@ type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Where closed candles come from: the exchanges, or files in tests.
 pub trait CandleSource: Send + Sync + 'static {
+    /// The listed USDT perpetual of a coin: its instrument name and details.
+    fn resolve(
+        &self,
+        exchange: PerpExchange,
+        coin: String,
+    ) -> BoxFuture<'_, Result<(String, TickerInfo), String>>;
+
     fn closed_candles(
         &self,
         exchange: PerpExchange,
@@ -132,6 +143,19 @@ impl LiveCandles {
 }
 
 impl CandleSource for LiveCandles {
+    fn resolve(
+        &self,
+        exchange: PerpExchange,
+        coin: String,
+    ) -> BoxFuture<'_, Result<(String, TickerInfo), String>> {
+        Box::pin(async move {
+            let market = self.market(exchange).await?;
+            market
+                .resolve(&coin)
+                .ok_or_else(|| format!("no {} USDT perpetual for {coin}", exchange.name()))
+        })
+    }
+
     fn closed_candles(
         &self,
         exchange: PerpExchange,
@@ -156,6 +180,10 @@ pub struct Paths {
     /// a missing file means the built-in list on OKX.
     pub symbols_file: PathBuf,
     pub alert_history: PathBuf,
+    /// Saved alerts, the only file the server writes.
+    pub alerts: PathBuf,
+    /// Held by the program that runs the alerts.
+    pub engine_lock: PathBuf,
 }
 
 impl Paths {
@@ -164,6 +192,8 @@ impl Paths {
             indicator_folders: headless::indicator_search_folders(),
             symbols_file: data::data_path(Some(crate::scan::SYMBOLS_FILE)),
             alert_history: data::data_path(Some(data::config::alert_history::ALERT_HISTORY_PATH)),
+            alerts: data::config::alert_store::AlertStore::path(),
+            engine_lock: data::config::alert_store::AlertStore::engine_lock_path(),
         }
     }
 }
@@ -265,7 +295,7 @@ impl OrbitTapeMcp {
         Self {
             paths: Arc::new(paths),
             candles,
-            tool_router: Self::tool_router(),
+            tool_router: Self::tool_router() + Self::alert_tool_router(),
         }
     }
 
@@ -666,12 +696,15 @@ impl ServerHandler for OrbitTapeMcp {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("orbit-tape", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Orbit Tape: read-only crypto market tools. Candles are closed bars of USDT \
+                "Orbit Tape: crypto market tools. Candles are closed bars of USDT \
                  perpetuals on Binance or OKX; times are UTC. Use list_indicators to see the \
                  user's indicators and their inputs, scan for alert signals across many coins, \
                  run_indicator for one coin's values, key_levels for support and resistance \
-                 levels, and alert_history for what fired in the app. Nothing here places \
-                 orders or is financial advice.",
+                 levels, and alert_history for what fired. create_alert, list_alerts, \
+                 update_alert, delete_alert, pause_alerts and resume_alerts manage saved \
+                 alerts (price crosses and indicator conditions) that the app or orbit-tape \
+                 watch runs and sends to the desktop or the user's phone (ntfy). Nothing here \
+                 places orders or is financial advice.",
             )
     }
 }
@@ -1150,6 +1183,7 @@ fn to_text(value: &Json) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::alerts::{AlertIdParams, AlertIdsParams};
     use super::*;
     use exchange::adapter::Exchange;
     use exchange::{Kline, Ticker, TickerInfo};
@@ -1159,7 +1193,38 @@ mod tests {
     /// BTC 1h candles from a CSV; every other coin or timeframe is unlisted.
     struct FixtureCandles;
 
+    fn fixture_info() -> TickerInfo {
+        TickerInfo::new(
+            Ticker::new("BTCUSDT", Exchange::BinanceLinear),
+            0.1,
+            0.001,
+            None,
+        )
+    }
+
     impl CandleSource for FixtureCandles {
+        fn resolve(
+            &self,
+            exchange: PerpExchange,
+            coin: String,
+        ) -> BoxFuture<'_, Result<(String, TickerInfo), String>> {
+            Box::pin(async move {
+                match (exchange, coin.as_str()) {
+                    (PerpExchange::Binance, "BTC") => Ok(("BTCUSDT".to_owned(), fixture_info())),
+                    (PerpExchange::Okx, "BTC") => Ok((
+                        "BTC-USDT-SWAP".to_owned(),
+                        TickerInfo::new(
+                            Ticker::new("BTC-USDT-SWAP", Exchange::OkexLinear),
+                            0.1,
+                            0.01,
+                            None,
+                        ),
+                    )),
+                    _ => Err(format!("no {} USDT perpetual for {coin}", exchange.name())),
+                }
+            })
+        }
+
         fn closed_candles(
             &self,
             exchange: PerpExchange,
@@ -1213,6 +1278,14 @@ mod tests {
     struct DownCandles;
 
     impl CandleSource for DownCandles {
+        fn resolve(
+            &self,
+            _: PerpExchange,
+            _: String,
+        ) -> BoxFuture<'_, Result<(String, TickerInfo), String>> {
+            Box::pin(async { Err("symbols: connection refused".to_owned()) })
+        }
+
         fn closed_candles(
             &self,
             _: PerpExchange,
@@ -1237,6 +1310,8 @@ mod tests {
             indicator_folders: vec![repo("indicators")],
             symbols_file: repo("target/no-such-scan-symbols.txt"),
             alert_history: repo("target/no-such-alert-history.json"),
+            alerts: repo("target/no-such-alerts.json"),
+            engine_lock: repo("target/no-such-alert-engine"),
         }
     }
 
@@ -1795,5 +1870,155 @@ mod tests {
         assert_eq!(scan["failed_symbols"], 2);
         // The same server keeps answering.
         assert!(block_on(server.list_indicators()).is_ok());
+    }
+
+    // ------------------------------------------------------------- alerts
+
+    fn alert_server(name: &str) -> (OrbitTapeMcp, PathBuf) {
+        let dir = temp_dir(&format!("alerts-{name}"));
+        let paths = Paths {
+            alerts: dir.join("alerts.json"),
+            engine_lock: dir.join("alert-engine"),
+            ..paths()
+        };
+        (server_with(Arc::new(FixtureCandles), paths), dir)
+    }
+
+    fn create(server: &OrbitTapeMcp, params: Json) -> Result<String, String> {
+        block_on(server.create_alert(Parameters(serde_json::from_value(params).unwrap())))
+    }
+
+    #[test]
+    fn create_list_update_pause_resume_and_delete_a_price_alert() {
+        let (server, dir) = alert_server("price");
+        let out = parse(create(
+            &server,
+            json!({"symbol": "BTC", "exchange": "okx", "condition": "crosses_above", "price": 62000}),
+        ));
+        let id = out["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            out["summary"],
+            "BTC-USDT-SWAP OKX 1h: price crosses above 62000 (once, desktop)"
+        );
+        assert_eq!(out["alert"]["created_by"], "claude");
+        assert_eq!(out["alert"]["exchange"], "okx");
+        assert!(out["engine"].as_str().unwrap().starts_with("not running"));
+
+        let list = parse(block_on(server.list_alerts()));
+        assert_eq!(list["active"], 1);
+        assert_eq!(list["max_active"], 50);
+        assert_eq!(list["alerts"][0]["id"], id.as_str());
+        assert_eq!(list["alerts"][0]["status"], "active");
+
+        let updated = parse(block_on(server.update_alert(Parameters(
+            serde_json::from_value(json!({"id": id, "price": 61500.5, "condition": "crosses", "frequency": "every_bar", "message": "check the 4h"})).unwrap(),
+        ))));
+        assert_eq!(
+            updated["summary"],
+            "BTC-USDT-SWAP OKX 1h: price crosses 61500.5 (every bar, desktop)"
+        );
+        assert_eq!(updated["alert"]["message"], "check the 4h");
+
+        let paused = parse(block_on(
+            server.pause_alerts(Parameters(AlertIdsParams { ids: None })),
+        ));
+        assert_eq!(paused["paused"], json!([id]));
+        assert_eq!(paused["active"], 0);
+        let resumed = parse(block_on(server.resume_alerts(Parameters(AlertIdsParams {
+            ids: Some(vec![id.clone()]),
+        }))));
+        assert_eq!(resumed["resumed"], json!([id]));
+
+        let deleted = parse(block_on(
+            server.delete_alert(Parameters(AlertIdParams { id: id.clone() })),
+        ));
+        assert_eq!(deleted["deleted"], id.as_str());
+        assert!(block_on(server.delete_alert(Parameters(AlertIdParams { id }))).is_err());
+        // The app and the engine read the same file.
+        let saved: data::config::alert_store::AlertStore =
+            data::config::shared_file::read(&dir.join("alerts.json")).unwrap();
+        assert!(saved.alerts.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_indicator_alert_on_any_roman_setup_signal() {
+        let (server, dir) = alert_server("indicator");
+        let out = parse(create(
+            &server,
+            json!({"symbol": "BTCUSDT", "exchange": "binance", "condition": "indicator", "indicator": "roman-setup", "inputs": {"ctMode": "true"}}),
+        ));
+        let alert = &out["alert"];
+        assert_eq!(alert["indicator"], "roman.roman-setup");
+        assert_eq!(alert["alert"], Json::Null);
+        assert_eq!(alert["frequency"], "every_bar");
+        assert_eq!(alert["inputs"]["ctMode"], "true");
+        assert_eq!(
+            out["summary"],
+            "BTCUSDT Binance 1h: any roman.roman-setup alert (ctMode=true) (every bar, desktop)"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_alert_checks_everything_before_saving() {
+        let (server, dir) = alert_server("invalid");
+        let fails = |params: Json, wanted: &str| {
+            let error = create(&server, params).unwrap_err();
+            assert!(error.contains(wanted), "{error}");
+        };
+        fails(
+            json!({"symbol": "NOPE", "exchange": "binance", "condition": "crosses_above", "price": 1}),
+            "no Binance USDT perpetual for NOPE",
+        );
+        fails(
+            json!({"symbol": "BTC", "exchange": "kraken", "condition": "crosses_above", "price": 1}),
+            "unknown exchange",
+        );
+        fails(
+            json!({"symbol": "BTC", "condition": "crosses_above", "price": 1, "timeframe": "7m"}),
+            "unknown timeframe",
+        );
+        fails(
+            json!({"symbol": "BTC", "condition": "crosses_above", "price": -5}),
+            "positive number",
+        );
+        fails(
+            json!({"symbol": "BTC", "condition": "indicator", "indicator": "no-such-indicator"}),
+            "unknown indicator",
+        );
+        fails(
+            json!({"symbol": "BTC", "condition": "indicator", "indicator": "roman-setup", "alert": "Moon"}),
+            "has no alert condition 'Moon'",
+        );
+        fails(
+            json!({"symbol": "BTC", "condition": "indicator", "indicator": "roman-setup", "inputs": {"nope": "1"}}),
+            "unknown input",
+        );
+        fails(
+            json!({"symbol": "BTC", "condition": "crosses_above", "price": 1, "channel": "ntfy"}),
+            "no ntfy topic is set",
+        );
+        assert!(!dir.join("alerts.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn at_most_fifty_active_alerts() {
+        let (server, dir) = alert_server("cap");
+        for n in 0..50 {
+            create(
+                &server,
+                json!({"symbol": "BTC", "exchange": "binance", "condition": "crosses_below", "price": 1000 + n}),
+            )
+            .unwrap();
+        }
+        let error = create(
+            &server,
+            json!({"symbol": "BTC", "exchange": "binance", "condition": "crosses_below", "price": 999}),
+        )
+        .unwrap_err();
+        assert!(error.contains("at most 50"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

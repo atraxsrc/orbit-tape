@@ -16,6 +16,8 @@ pub struct Alerts {
     pub sound: bool,
     /// Chime volume, 0-100.
     pub volume: f32,
+    /// Also send chart alerts to ntfy (set up in alerts.json).
+    pub ntfy: bool,
     /// Conditions turned off, as `indicator-id/plot-id`.
     pub muted: BTreeSet<String>,
 }
@@ -27,6 +29,7 @@ impl Default for Alerts {
             notification: true,
             sound: true,
             volume: 60.0,
+            ntfy: false,
             muted: BTreeSet::new(),
         }
     }

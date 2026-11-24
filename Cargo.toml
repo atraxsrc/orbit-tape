@@ -38,6 +38,7 @@ assets = [
     ["packaging/linux/io.github.atraxsrc.OrbitTape.metainfo.xml", "usr/share/metainfo/", "644"],
     ["packaging/linux/orbit-tape-scan.service", "usr/lib/systemd/user/", "644"],
     ["packaging/linux/orbit-tape-scan.timer", "usr/lib/systemd/user/", "644"],
+    ["packaging/linux/orbit-tape-watch.service", "usr/lib/systemd/user/", "644"],
     ["assets/app-icon/hicolor/16x16/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/16x16/apps/", "644"],
     ["assets/app-icon/hicolor/24x24/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/24x24/apps/", "644"],
     ["assets/app-icon/hicolor/32x32/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/32x32/apps/", "644"],
@@ -53,6 +54,7 @@ assets = [
     ["indicators/roman/*.ind", "usr/share/doc/orbit-tape/indicators/roman/", "644"],
     ["examples/indicators/*.ind", "usr/share/doc/orbit-tape/examples/indicators/", "644"],
     ["docs/custom-indicators.md", "usr/share/doc/orbit-tape/custom-indicators.md", "644"],
+    ["docs/mcp.md", "usr/share/doc/orbit-tape/mcp.md", "644"],
     ["README.md", "usr/share/doc/orbit-tape/README.md", "644"],
 ]
 
@@ -116,7 +118,7 @@ url.workspace = true
 ring = "0.17.14"
 fern = "0.7.1"
 reqwest.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["macros", "time", "sync"] }
 rodio = { version = "0.22.2", default-features = false, features = [ "playback", "wav" ]}
 # Desktop notifications for indicator alerts (freedesktop spec over zbus), see
 # src/alerts.rs.
