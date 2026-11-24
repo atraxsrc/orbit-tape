@@ -11,6 +11,7 @@ mod interaction;
 mod layout;
 mod overlay;
 mod painting;
+pub(crate) use painting::resolve_indicator_color;
 mod presentation;
 mod scene;
 pub mod studies;

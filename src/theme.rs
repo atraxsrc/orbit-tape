@@ -6,6 +6,9 @@ use iced_core::{Color, Theme};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThemeAccents {
     colors: [Color; ACCENT_COUNT],
+    /// The theme's palette the accents go with, for resolving theme colors
+    /// (`theme.success`, ...) in settings views.
+    palette: iced_core::theme::palette::Extended,
     generation: u64,
 }
 
@@ -28,11 +31,19 @@ impl ThemeAccents {
                 *color = *set;
             }
         }
-        Self { colors, generation }
+        Self {
+            colors,
+            palette: *theme.extended_palette(),
+            generation,
+        }
     }
 
     pub fn as_array(&self) -> &[Color; ACCENT_COUNT] {
         &self.colors
+    }
+
+    pub fn palette(&self) -> &iced_core::theme::palette::Extended {
+        &self.palette
     }
 
     pub const fn generation(self) -> u64 {

@@ -376,6 +376,8 @@ pub enum IndicatorIdSettingsMessage {
         config: Option<IndicatorConfig>,
     },
     DataConfig(IndicatorConfig),
+    /// Opens or closes the picker of a color setting.
+    ToggleColorPicker(String),
     AddOnSource(IndicatorAttachmentChoice),
     SourceSelected {
         input_id: String,
@@ -452,6 +454,8 @@ struct IndicatorSettingsState {
     indicator: data::chart::kline::IndicatorId,
     tab: inspector::InspectorTab,
     input_drafts: Vec<(String, String)>,
+    /// The color setting whose picker is open.
+    open_color: Option<String>,
 }
 
 impl IndicatorSettingsState {
@@ -464,6 +468,7 @@ impl IndicatorSettingsState {
             indicator,
             tab: inspector::InspectorTab::Inputs,
             input_drafts: Vec::new(),
+            open_color: None,
         }
     }
 
@@ -481,6 +486,18 @@ impl IndicatorSettingsState {
 
     fn select_tab(&mut self, tab: inspector::InspectorTab) {
         self.tab = tab;
+    }
+
+    fn color_open(&self, setting_id: &str) -> bool {
+        self.open_color.as_deref() == Some(setting_id)
+    }
+
+    fn toggle_color(&mut self, setting_id: String) {
+        self.open_color = if self.color_open(&setting_id) {
+            None
+        } else {
+            Some(setting_id)
+        };
     }
 
     fn input_draft(&self, setting_id: &str) -> Option<&str> {
@@ -574,7 +591,14 @@ fn kline_indicator_cfg_view<'a>(
                 },
             )
             .unwrap_or_default();
-        indicator_settings_content(settings, &composition, config, &indicator, modal)
+        indicator_settings_content(
+            settings,
+            &composition,
+            config,
+            &indicator,
+            modal,
+            theme_accents,
+        )
     });
     let mut style_sections = Vec::new();
     if let Some(mark_section) = mark_section {
@@ -682,6 +706,7 @@ fn indicator_settings_content<'a>(
     config: IndicatorConfig,
     indicator: &IndicatorId,
     modal: &'a IndicatorSettingsState,
+    theme_accents: ThemeAccents,
 ) -> Option<Element<'a, Message>> {
     let mut inputs = Vec::new();
     for source_setting in &composition.source_settings {
@@ -710,8 +735,14 @@ fn indicator_settings_content<'a>(
 
     for setting in settings {
         let group = setting.group.clone();
-        let section = indicator_setting_view(config.clone(), indicator.clone(), setting, modal)
-            .into_element();
+        let section = indicator_setting_view(
+            config.clone(),
+            indicator.clone(),
+            setting,
+            modal,
+            theme_accents,
+        )
+        .into_element();
 
         match group {
             Some(group) => {
@@ -756,6 +787,7 @@ fn indicator_setting_view<'a>(
     indicator: IndicatorId,
     setting: IndicatorSetting,
     modal: &'a IndicatorSettingsState,
+    theme_accents: ThemeAccents,
 ) -> InspectorSection<'a, Message> {
     let IndicatorSetting {
         id,
@@ -858,23 +890,17 @@ fn indicator_setting_view<'a>(
                 .input_draft(&id)
                 .map(str::to_owned)
                 .unwrap_or_else(|| format_indicator_color(value));
-            let is_valid = parse_indicator_color(&input_value).is_some();
-            let setting_indicator = indicator.clone();
-            let input = text_input("", &input_value)
-                .on_input(move |value| {
-                    indicator_input_message(
-                        instance_id,
-                        setting_indicator.clone(),
-                        config.clone(),
-                        id.clone(),
-                        value,
-                        |value| parse_indicator_color(value).map(IndicatorSettingValue::Color),
-                    )
-                })
-                .style(move |theme, status| style::validated_text_input(theme, status, is_valid))
-                .width(Length::Fill);
-
-            indicator_setting_section(label, tooltip, input)
+            let control = indicator_color_control(
+                instance_id,
+                indicator,
+                config,
+                id.clone(),
+                value,
+                input_value,
+                modal.color_open(&id),
+                theme_accents,
+            );
+            indicator_setting_section(label, tooltip, control)
         }
         (IndicatorSettingControl::Text, IndicatorSettingValue::Text(value)) => {
             let input_value = modal.input_draft(&id).map(str::to_owned).unwrap_or(value);
@@ -1013,6 +1039,96 @@ fn format_indicator_color(value: u64) -> String {
     }
 }
 
+/// A color setting: a square showing the color and a box taking `#RRGGBB`,
+/// `#AARRGGBB` or `theme.<role>`. Clicking the square opens a picker and a
+/// row of theme colors, which follow the COSMIC theme.
+#[allow(clippy::too_many_arguments)]
+fn indicator_color_control<'a>(
+    instance_id: data::chart::kline::IndicatorInstanceId,
+    indicator: IndicatorId,
+    config: IndicatorConfig,
+    id: String,
+    value: u64,
+    input_value: String,
+    open: bool,
+    theme_accents: ThemeAccents,
+) -> Element<'a, Message> {
+    let color = indicator_engine::Color(value);
+    let palette = *theme_accents.palette();
+    let resolved = crate::widget::chart::kline::resolve_indicator_color(color, &palette);
+    let is_valid = parse_indicator_color(&input_value).is_some();
+    let send = {
+        let indicator = indicator.clone();
+        let config = config.clone();
+        let id = id.clone();
+        move |text: String| {
+            indicator_input_message(
+                instance_id,
+                indicator.clone(),
+                config.clone(),
+                id.clone(),
+                text,
+                |value| parse_indicator_color(value).map(IndicatorSettingValue::Color),
+            )
+        }
+    };
+
+    let swatch = crate::widget::color_swatch_button(
+        move |_: &iced::Theme| resolved,
+        open,
+        Message::Indicator {
+            instance_id,
+            message: IndicatorIdSettingsMessage::ToggleColorPicker(id),
+        },
+    );
+    let input = text_input("#RRGGBB", &input_value)
+        .on_input(send.clone())
+        .style(move |theme, status| style::validated_text_input(theme, status, is_valid))
+        .width(Length::Fill);
+    let mut content = column![row![swatch, input].spacing(6).align_y(Alignment::Center)].spacing(8);
+
+    if open {
+        let alpha = color.alpha();
+        let pick = send.clone();
+        content = content.push(crate::widget::color_picker::color_picker(
+            data::config::theme::to_hsva(iced::Color { a: 1.0, ..resolved }),
+            move |hsva| {
+                let [r, g, b, _] = data::config::theme::from_hsva(hsva).into_rgba8();
+                pick(format!("#{alpha:02X}{r:02X}{g:02X}{b:02X}"))
+            },
+        ));
+
+        use indicator_engine::ThemeColor;
+        let roles = [
+            ThemeColor::Primary,
+            ThemeColor::Secondary,
+            ThemeColor::Success,
+            ThemeColor::Danger,
+            ThemeColor::Warning,
+            ThemeColor::Text,
+        ];
+        let theme_row = row(roles.into_iter().map(|role| {
+            let role_color = indicator_engine::Color::theme(role).with_alpha(alpha);
+            let shown = crate::widget::chart::kline::resolve_indicator_color(role_color, &palette);
+            crate::widget::color_swatch_button(
+                move |_: &iced::Theme| shown,
+                color.theme_role() == Some(role),
+                send(format_indicator_color(role_color.0)),
+            )
+        }))
+        .spacing(2);
+        content = content.push(
+            column![
+                text("Theme colors (follow COSMIC)").size(crate::style::text_size::SMALL),
+                theme_row,
+            ]
+            .spacing(4),
+        );
+    }
+
+    content.into()
+}
+
 fn parse_indicator_color(value: &str) -> Option<u64> {
     let value = value.trim();
     if let Some(theme) = value.strip_prefix("theme.") {
@@ -1025,10 +1141,12 @@ fn parse_indicator_color(value: &str) -> Option<u64> {
         return Some(indicator_engine::Color::theme(role).with_alpha(alpha).0);
     }
     let value = value.strip_prefix('#').unwrap_or(value);
-    (value.len() == 8)
-        .then(|| u32::from_str_radix(value, 16).ok())
-        .flatten()
-        .map(u64::from)
+    let bits = match value.len() {
+        6 => 0xff00_0000 | u32::from_str_radix(value, 16).ok()?,
+        8 => u32::from_str_radix(value, 16).ok()?,
+        _ => return None,
+    };
+    Some(u64::from(bits))
 }
 
 fn setting_choice_value(
@@ -2011,6 +2129,14 @@ impl InspectorState {
                                 config,
                             })
                         })
+                    }
+                    IndicatorIdSettingsMessage::ToggleColorPicker(id) => {
+                        if let SettingsTarget::Indicator(modal) = &mut self.target
+                            && modal.instance_id() == instance_id
+                        {
+                            modal.toggle_color(id);
+                        }
+                        None
                     }
                     IndicatorIdSettingsMessage::DataConfig(config) => Some(
                         ChartCommand::indicator_input(IndicatorInputCommand::DataConfig {

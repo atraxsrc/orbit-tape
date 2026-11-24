@@ -563,7 +563,7 @@ impl PixelGeometry {
 
 /// A fixed color as is; a theme color (`theme.success`, ...) from the current
 /// palette, which follows the COSMIC theme, keeping the indicator's alpha.
-pub(super) fn resolve_indicator_color(
+pub(crate) fn resolve_indicator_color(
     color: indicator_engine::Color,
     palette: &Extended,
 ) -> iced::Color {
