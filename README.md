@@ -147,7 +147,7 @@ command. Uninstall with `sudo apt remove orbit-tape`; your settings in
 
 The package also installs `orbit-tape-indicator`, the indicator CLI.
 
-### Build from source (Pop!_OS 24.04)
+### Build from source (Pop!_OS 26.04)
 
 ```sh
 sudo apt install build-essential pkg-config libasound2-dev git curl
@@ -256,10 +256,16 @@ Stored proxy and server credentials are read from the old keyring entries too.
 
 ## Roadmap
 
-- libcosmic UI port with a native header bar
-- `.deb` releases on GitHub for every version
-- A Flatpak, possibly
+Orbit Tape does what it set out to do. What is left is polish:
+
+- libcosmic UI port with a native header bar, so the title bar follows the
+  COSMIC theme too
+- Small fixes and polish here and there
 - More example indicators
+
+The `.deb` is the supported package; it fits COSMIC better than a sandboxed
+format, so there are no Flatpak plans. Contributions are welcome, see
+[Contributing and building](#contributing-and-building).
 
 ## Contributing and building
 
