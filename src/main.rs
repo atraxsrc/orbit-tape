@@ -7,6 +7,7 @@ mod audio;
 mod blur;
 mod connector;
 mod deferred;
+mod headless;
 mod indicator_watch;
 mod layout;
 mod logger;

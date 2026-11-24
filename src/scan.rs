@@ -6,20 +6,20 @@
 //! table and, when anything fired, sends one desktop notification. Meant to be
 //! run by hand or from a systemd user timer; no window is opened.
 
-use exchange::adapter::{AdapterHandles, Exchange, MarketKind, Venue};
-use exchange::{Kline, Ticker, TickerInfo, Timeframe, UnixMs};
-use indicator_engine::{
-    ChartFrame, CompiledIndicator, IndicatorConfig, IndicatorFrame, InputValue, InstrumentContext,
-    TimeOrTick, Value, ValueType,
+use crate::headless::{
+    DEFAULT_INDICATOR, MAX_BARS, Market, PerpExchange as ScanExchange, Series, Signal, alert_plots,
+    coin, compile, default_indicator, evaluate_alerts, format_price, indicator_config, local_time,
+    parse_timeframe,
 };
+use exchange::{Kline, TickerInfo, Timeframe};
 use std::path::{Path, PathBuf};
 
 /// Coins written to the symbols file the first time the scan runs without one.
-const DEFAULT_SYMBOLS: &[&str] = &[
+pub const DEFAULT_SYMBOLS: &[&str] = &[
     "AAVE", "ADA", "APT", "ARB", "AVAX", "BCH", "BNB", "BTC", "DOGE", "DOT", "ETH", "LINK", "LTC",
     "NEAR", "OP", "SOL", "SUI", "TRX", "UNI", "XRP",
 ];
-const SYMBOLS_FILE: &str = "scan-symbols.txt";
+pub const SYMBOLS_FILE: &str = "scan-symbols.txt";
 const SYMBOLS_FILE_HEADER: &str = "\
 # Coins for `orbit-tape scan`, one per line, scanned as USDT perpetuals.
 # Lines starting with # are ignored. Exchange: binance or okx.
@@ -31,9 +31,7 @@ exchange = okx
 const NOTIFY_MAX_LINES: usize = 10;
 /// Symbols per notification line before "+n".
 const NOTIFY_MAX_SYMBOLS: usize = 12;
-const DEFAULT_INDICATOR: &str = "roman-setup.ind";
 const DEFAULT_BARS: usize = 2000;
-const MAX_BARS: usize = 20_000;
 
 pub const USAGE: &str = "\
 usage: orbit-tape scan [--exchange binance|okx] [--indicator <file.ind>] [--symbols <A,B,...>]
@@ -75,83 +73,6 @@ struct Arguments {
     notify: bool,
 }
 
-/// Where the candles come from: USDT-margined perpetuals of one exchange.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScanExchange {
-    Binance,
-    Okx,
-}
-
-impl ScanExchange {
-    fn parse(text: &str) -> Option<Self> {
-        match text.trim().to_ascii_lowercase().as_str() {
-            "binance" => Some(Self::Binance),
-            "okx" | "okex" => Some(Self::Okx),
-            _ => None,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Binance => "Binance",
-            Self::Okx => "OKX",
-        }
-    }
-
-    fn venue(self) -> Venue {
-        match self {
-            Self::Binance => Venue::Binance,
-            Self::Okx => Venue::Okex,
-        }
-    }
-
-    fn exchange(self) -> Exchange {
-        match self {
-            Self::Binance => Exchange::BinanceLinear,
-            Self::Okx => Exchange::OkexLinear,
-        }
-    }
-
-    /// Instrument names to try for a coin, most likely first.
-    fn instruments(self, coin: &str) -> Vec<String> {
-        match self {
-            Self::Binance => vec![
-                format!("{coin}USDT"),
-                format!("1000{coin}USDT"),
-                format!("1000000{coin}USDT"),
-            ],
-            Self::Okx => vec![format!("{coin}-USDT-SWAP")],
-        }
-    }
-}
-
-/// The coin in a symbol as users write it: `BTC`, `BTCUSDT`, `1000PEPEUSDT`
-/// or `BTC-USDT-SWAP` all name a coin (`BTC`, `PEPE`).
-fn coin(symbol: &str) -> String {
-    let symbol = symbol.trim().to_uppercase();
-    let symbol = symbol
-        .strip_suffix("-USDT-SWAP")
-        .or_else(|| symbol.strip_suffix("-USDT"))
-        .or_else(|| symbol.strip_suffix("USDT").filter(|rest| !rest.is_empty()))
-        .unwrap_or(&symbol);
-    ["1000000", "1000"]
-        .iter()
-        .find_map(|prefix| {
-            symbol
-                .strip_prefix(prefix)
-                .filter(|rest| rest.starts_with(|c: char| c.is_ascii_alphabetic()))
-        })
-        .unwrap_or(symbol)
-        .to_owned()
-}
-
-/// One alert plot that fired.
-struct Signal {
-    symbol: String,
-    bar_time: i64,
-    title: String,
-}
-
 /// Runs the scan with the arguments after `scan` and returns the exit code.
 pub fn run(arguments: &[String]) -> i32 {
     if arguments
@@ -181,20 +102,14 @@ fn scan(arguments: &[String]) -> Result<(), String> {
     let indicator = compile(&path)?;
     let (file_exchange, symbols) = match &arguments.symbols {
         Some(symbols) => (None, symbols.clone()),
-        None => symbols_from_file(arguments.symbols_file.as_deref())?,
+        None => symbols_from_file(arguments.symbols_file.as_deref(), true)?,
     };
     let exchange = arguments
         .exchange
         .or(file_exchange)
         .unwrap_or(ScanExchange::Okx);
     let config = indicator_config(&indicator, &arguments.inputs)?;
-    let alert_plots = indicator
-        .descriptor
-        .plots
-        .iter()
-        .filter(|plot| plot.alert)
-        .map(|plot| (plot.id.clone(), plot.label.clone()))
-        .collect::<Vec<_>>();
+    let alert_plots = alert_plots(&indicator);
     if alert_plots.is_empty() {
         return Err(format!(
             "{} has no alert plots (plot(..., alert = true))",
@@ -239,7 +154,7 @@ fn scan(arguments: &[String]) -> Result<(), String> {
                 continue;
             }
         };
-        match evaluate(
+        match evaluate_alerts(
             &indicator,
             &config,
             &alert_plots,
@@ -338,12 +253,8 @@ fn parse_arguments(arguments: &[String]) -> Result<Arguments, String> {
                 );
             }
             "--timeframe" => {
-                parsed.timeframe = Timeframe::KLINE
-                    .iter()
-                    .chain(&[Timeframe::H12, Timeframe::D1])
-                    .copied()
-                    .find(|timeframe| timeframe.to_string().eq_ignore_ascii_case(value))
-                    .ok_or_else(|| format!("unknown --timeframe '{value}'"))?;
+                parsed.timeframe =
+                    parse_timeframe(value).map_err(|error| format!("--timeframe: {error}"))?;
             }
             "--bars" => {
                 parsed.bars = value
@@ -383,7 +294,7 @@ fn parse_arguments(arguments: &[String]) -> Result<Arguments, String> {
 /// Coins separated by commas, spaces or new lines, `#` starting a comment,
 /// plus an optional `exchange = binance|okx` line. Symbols are reduced to
 /// their coin ([`coin`]); duplicates are dropped, order kept.
-fn parse_symbols(text: &str) -> Result<(Option<ScanExchange>, Vec<String>), String> {
+pub fn parse_symbols(text: &str) -> Result<(Option<ScanExchange>, Vec<String>), String> {
     let mut exchange = None;
     let mut coins = Vec::new();
     for line in text.lines() {
@@ -408,10 +319,12 @@ fn parse_symbols(text: &str) -> Result<(Option<ScanExchange>, Vec<String>), Stri
     Ok((exchange, coins))
 }
 
-/// Reads the symbols file. The default one is created with [`DEFAULT_SYMBOLS`]
-/// when it does not exist yet; a file passed with `--symbols-file` must exist.
-fn symbols_from_file(
+/// Reads the symbols file. Without one, [`DEFAULT_SYMBOLS`] are used, and with
+/// `create` written to the default file; a file passed with `--symbols-file`
+/// must exist.
+pub fn symbols_from_file(
     explicit: Option<&Path>,
+    create: bool,
 ) -> Result<(Option<ScanExchange>, Vec<String>), String> {
     let path = explicit.map_or_else(|| data::data_path(Some(SYMBOLS_FILE)), Path::to_path_buf);
     match std::fs::read_to_string(&path) {
@@ -422,6 +335,17 @@ fn symbols_from_file(
                 return Err(format!("{} lists no coins", path.display()));
             }
             Ok((exchange, symbols))
+        }
+        Err(error)
+            if explicit.is_none() && !create && error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Ok((
+                None,
+                DEFAULT_SYMBOLS
+                    .iter()
+                    .map(|&symbol| symbol.to_owned())
+                    .collect(),
+            ))
         }
         Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
             let text = format!("{SYMBOLS_FILE_HEADER}{}\n", DEFAULT_SYMBOLS.join("\n"));
@@ -452,99 +376,6 @@ fn symbols_from_file(
     }
 }
 
-/// The bundled Roman Setup script: the installed copy first, then the one the
-/// .deb ships, then a source checkout.
-fn default_indicator() -> Option<PathBuf> {
-    let installed = std::env::var_os("ORBIT_TAPE_INDICATORS_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| data::data_path(Some("indicators")));
-    find_file(&installed, DEFAULT_INDICATOR, 4)
-        .or_else(|| {
-            let path =
-                Path::new("/usr/share/doc/orbit-tape/indicators/roman").join(DEFAULT_INDICATOR);
-            path.is_file().then_some(path)
-        })
-        .or_else(|| {
-            let path = Path::new("indicators/roman").join(DEFAULT_INDICATOR);
-            path.is_file().then_some(path)
-        })
-}
-
-fn find_file(directory: &Path, name: &str, depth: usize) -> Option<PathBuf> {
-    let mut entries = std::fs::read_dir(directory)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    entries.sort();
-    if let Some(found) = entries
-        .iter()
-        .find(|path| path.is_file() && path.file_name().is_some_and(|file| file == name))
-    {
-        return Some(found.clone());
-    }
-    if depth == 0 {
-        return None;
-    }
-    entries
-        .iter()
-        .filter(|path| path.is_dir())
-        .find_map(|path| find_file(path, name, depth - 1))
-}
-
-fn compile(path: &Path) -> Result<CompiledIndicator, String> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    indicator_engine::compile(&source, path).map_err(|diagnostics| {
-        let first = diagnostics.first().map_or_else(String::new, |diagnostic| {
-            format!(": {}", diagnostic.message)
-        });
-        format!(
-            "{} has {} error(s){first} (run orbit-tape-indicator check for details)",
-            path.display(),
-            diagnostics.len()
-        )
-    })
-}
-
-fn indicator_config(
-    indicator: &CompiledIndicator,
-    inputs: &[(String, String)],
-) -> Result<IndicatorConfig, String> {
-    let mut config = IndicatorConfig::default();
-    for (id, text) in inputs {
-        let descriptor = indicator
-            .descriptor
-            .inputs
-            .iter()
-            .find(|input| input.id == *id || input.label == *id)
-            .ok_or_else(|| format!("unknown input '{id}'"))?;
-        let value = parse_input(descriptor.value_type, text).ok_or_else(|| {
-            format!(
-                "invalid value '{text}' for input '{}' ({:?})",
-                descriptor.id, descriptor.value_type
-            )
-        })?;
-        config = config.with(descriptor.id.clone(), value);
-    }
-    Ok(config)
-}
-
-fn parse_input(value_type: ValueType, text: &str) -> Option<InputValue> {
-    Some(match value_type {
-        ValueType::Int => InputValue::Int(text.parse().ok()?),
-        ValueType::Time => InputValue::Time(text.parse().ok()?),
-        ValueType::Float => InputValue::Float(text.parse().ok()?),
-        ValueType::Bool => InputValue::Bool(match text {
-            "true" => true,
-            "false" => false,
-            _ => return None,
-        }),
-        ValueType::String => InputValue::String(text.to_owned()),
-        _ => return None,
-    })
-}
-
 type Fetched = Result<(TickerInfo, Vec<Kline>), String>;
 
 /// Per coin: the coin, the exchange instrument (or the coin when it is not
@@ -556,22 +387,7 @@ async fn fetch_all(
     exchange: ScanExchange,
     coins: &[String],
 ) -> Result<Vec<FetchedRow>, String> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|error| format!("could not build the HTTP client: {error}"))?;
-    let handles = AdapterHandles::spawn_venues(&client, [exchange.venue()], None);
-    let metadata = handles
-        .fetch_ticker_metadata(exchange.venue(), &[MarketKind::LinearPerps])
-        .await
-        .map_err(|error| format!("could not load {} perp symbols: {error}", exchange.name()))?;
-
-    let interval = arguments.timeframe.to_milliseconds();
-    // Open time of the bar that is still forming; everything before it is closed.
-    let forming = UnixMs::now().as_u64() / interval * interval;
-    let from = forming.saturating_sub(interval * arguments.bars as u64);
-
+    let market = Market::connect(exchange).await?;
     let mut rows = Vec::new();
     // Progress on the terminal only, so the journal of a timer run stays clean.
     let progress = std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -583,29 +399,16 @@ async fn fetch_all(
                 coins.len()
             );
         }
-        let listed = exchange
-            .instruments(coin)
-            .into_iter()
-            .find_map(|instrument| {
-                metadata
-                    .get(&Ticker::new(&instrument, exchange.exchange()))
-                    .copied()
-                    .flatten()
-                    .map(|ticker_info| (instrument, ticker_info))
-            });
-        let row = match listed {
-            None => (
-                coin.clone(),
-                coin.clone(),
-                Err(format!("no {} USDT perpetual", exchange.name())),
-            ),
-            Some((instrument, ticker_info)) => {
-                let fetched =
-                    fetch_klines(&handles, ticker_info, arguments.timeframe, from, forming)
-                        .await
-                        .map(|klines| (ticker_info, klines));
-                (coin.clone(), instrument, fetched)
-            }
+        let row = match market
+            .closed_candles(coin, arguments.timeframe, arguments.bars)
+            .await
+        {
+            Ok(Series {
+                instrument,
+                ticker_info,
+                klines,
+            }) => (coin.clone(), instrument, Ok((ticker_info, klines))),
+            Err(error) => (coin.clone(), coin.clone(), Err(error)),
         };
         rows.push(row);
     }
@@ -613,116 +416,6 @@ async fn fetch_all(
         eprint!("\r\u{1b}[K");
     }
     Ok(rows)
-}
-
-/// Closed candles with open times in `[from, to)`, oldest first.
-async fn fetch_klines(
-    handles: &AdapterHandles,
-    ticker_info: TickerInfo,
-    timeframe: Timeframe,
-    from: u64,
-    to: u64,
-) -> Result<Vec<Kline>, String> {
-    let mut klines: Vec<Kline> = Vec::new();
-    let mut next = from;
-    while next < to {
-        let page = handles
-            .fetch_klines_page(ticker_info, timeframe, UnixMs::new(next), UnixMs::new(to))
-            .await
-            .map_err(|error| format!("candles: {error}"))?;
-        if page.next_from.as_u64() <= next {
-            break;
-        }
-        next = page.next_from.as_u64();
-        klines.extend(page.data);
-    }
-    klines.retain(|kline| kline.time.as_u64() < to);
-    klines.sort_unstable_by_key(|kline| kline.time);
-    klines.dedup_by_key(|kline| kline.time);
-    if klines.is_empty() {
-        return Err("no candles".to_owned());
-    }
-    Ok(klines)
-}
-
-fn evaluate(
-    indicator: &CompiledIndicator,
-    config: &IndicatorConfig,
-    alert_plots: &[(String, String)],
-    symbol: &str,
-    ticker_info: TickerInfo,
-    klines: &[Kline],
-    lookback: usize,
-) -> Result<Vec<Signal>, String> {
-    if klines.is_empty() {
-        return Err("no candles".to_owned());
-    }
-    let mut instance = indicator
-        .instantiate(config.clone())
-        .map_err(|error| format!("indicator: {error}"))?;
-    let first_reported = klines.len().saturating_sub(lookback);
-    let mut signals = Vec::new();
-    for (index, kline) in klines.iter().enumerate() {
-        let time = kline.time.as_u64() as i64;
-        let close = kline.close.to_f64();
-        let frame = IndicatorFrame {
-            index,
-            time,
-            basis: TimeOrTick::Time,
-            instrument: InstrumentContext {
-                min_tick: Some(ticker_info.min_ticksize.as_f64()),
-            },
-            chart: ChartFrame {
-                open: Some(kline.open.to_f64()),
-                high: Some(kline.high.to_f64()),
-                low: Some(kline.low.to_f64()),
-                close: Some(close),
-                volume: Some(kline.volume.total().to_f64()),
-                directional_volume_available: false,
-                buy_qty: 0.0,
-                sell_qty: 0.0,
-                trade: None,
-            },
-            open_interest: None,
-            series_inputs: Vec::new().into(),
-        };
-        let output = instance
-            .evaluate_closed(frame)
-            .map_err(|error| format!("bar {index} failed: {error}"))?;
-        if index < first_reported {
-            continue;
-        }
-        for (id, title) in alert_plots {
-            let fired = output
-                .plots
-                .iter()
-                .any(|plot| plot.id == *id && matches!(plot.value, Value::Bool(true)));
-            if fired {
-                signals.push(Signal {
-                    symbol: symbol.to_owned(),
-                    bar_time: time,
-                    title: title.clone(),
-                });
-            }
-        }
-    }
-    Ok(signals)
-}
-
-fn local_time(time_ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(time_ms)
-        .map(|time| {
-            time.with_timezone(&chrono::Local)
-                .format("%a %d %b %H:%M")
-                .to_string()
-        })
-        .unwrap_or_default()
-}
-
-fn format_price(price: f64) -> String {
-    let text = format!("{price:.8}");
-    let text = text.trim_end_matches('0');
-    text.trim_end_matches('.').to_owned()
 }
 
 fn print_table(rows: &[[String; 4]]) {
@@ -869,17 +562,6 @@ mod tests {
 
     #[test]
     fn reads_symbol_lists() {
-        for (symbol, expected) in [
-            ("btc", "BTC"),
-            ("BTCUSDT", "BTC"),
-            ("BTC-USDT-SWAP", "BTC"),
-            ("1000PEPEUSDT", "PEPE"),
-            ("1000000MOGUSDT", "MOG"),
-            ("SUSDT", "S"),
-            ("1INCHUSDT", "1INCH"),
-        ] {
-            assert_eq!(coin(symbol), expected, "{symbol}");
-        }
         assert_eq!(
             parse_symbols("# header\nexchange = OKX\nbtcusdt\n ETH, sol # majors\n\nBTC\n")
                 .unwrap(),
@@ -900,11 +582,6 @@ mod tests {
                 DEFAULT_SYMBOLS.iter().map(|s| s.to_string()).collect()
             )
         );
-        assert_eq!(
-            ScanExchange::Binance.instruments("PEPE")[..2],
-            ["PEPEUSDT".to_owned(), "1000PEPEUSDT".to_owned()]
-        );
-        assert_eq!(ScanExchange::Okx.instruments("PEPE"), ["PEPE-USDT-SWAP"]);
     }
 
     #[test]
@@ -946,55 +623,5 @@ mod tests {
             lines[NOTIFY_MAX_LINES],
             "and 11 more, see the terminal or journal"
         );
-    }
-
-    #[test]
-    fn reports_alerts_on_the_last_closed_bars() {
-        let indicator = indicator_engine::compile(
-            "language(1)\nindicator(\"Up bars\", id = \"test.up\")\n\
-             format(precision = \"base_ticker_min_tick\")\n\
-             plot(chart.close > chart.open, id = \"up\", title = \"Up bar\", alert = true)\n",
-            "up.ind",
-        )
-        .unwrap();
-        let alert_plots = vec![("up".to_owned(), "Up bar".to_owned())];
-        let ticker_info = TickerInfo::new(
-            Ticker::new("BTCUSDT", Exchange::BinanceLinear),
-            0.1,
-            0.001,
-            None,
-        );
-        let kline = |hour: u64, open: f64, close: f64| {
-            Kline::new(
-                hour * 3_600_000,
-                open,
-                open.max(close),
-                open.min(close),
-                close,
-                exchange::Volume::TotalOnly(exchange::unit::Qty::from_f64(1.0)),
-                ticker_info.min_ticksize,
-            )
-        };
-        // up, down, up
-        let klines = [kline(0, 1.0, 2.0), kline(1, 2.0, 1.0), kline(2, 1.0, 3.0)];
-        let config = IndicatorConfig::default();
-        let run = |lookback| {
-            evaluate(
-                &indicator,
-                &config,
-                &alert_plots,
-                "BTCUSDT",
-                ticker_info,
-                &klines,
-                lookback,
-            )
-            .unwrap()
-            .iter()
-            .map(|signal| signal.bar_time / 3_600_000)
-            .collect::<Vec<_>>()
-        };
-        assert_eq!(run(1), [2]);
-        assert_eq!(run(2), [2]);
-        assert_eq!(run(3), [0, 2]);
     }
 }
