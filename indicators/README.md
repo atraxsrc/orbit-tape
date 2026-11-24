@@ -8,6 +8,13 @@ source file in Orbit Tape's indicator language
 | --- | --- | --- |
 | [roman/roman-setup.ind](roman/roman-setup.ind) | `roman.roman-setup` | Roman Trade Setup (H12 to H1) (Pine v6, rev 7) |
 | [roman/enhanced-ob.ind](roman/enhanced-ob.ind) | `roman.enhanced-ob` | Enhanced Roman Order Block (Pine v6, rev 3) |
+| [market/key-levels.ind](market/key-levels.ind) | `market.key-levels` | Original (GPL-3.0-or-later): 4H/daily/weekly/monthly/quarterly/yearly opens, previous highs/lows/mids, Monday range, FX sessions |
+| [market/bull-market-support-band.ind](market/bull-market-support-band.ind) | `market.bull-market-support-band` | zkdev's "Bull Market Support Band" (Pine v5, MPL-2.0): 20W SMA, 21W EMA |
+| [market/sma.ind](market/sma.ind) | `market.sma` | Original (GPL-3.0-or-later): four SMAs, 20/50/100/200 by default |
+
+The `roman` scripts are MIT (see [LICENSE-MIT](LICENSE-MIT)). Each `market`
+script states its license in its header: the Bull Market Support Band port
+keeps the original's MPL-2.0 terms and credit.
 
 ## Tests
 
@@ -22,10 +29,22 @@ orbit-tape-indicator-engine --test roman_ports` checks:
 - Enhanced OB against an independent re-implementation of its Pine logic: every
   formation and mitigation event.
 
+`market/tests/` holds 5496 Binance BTCUSDT perpetual 1H candles (2025-06-01 to
+2026-01-15), the exchange's own 1d/1w/1M candles for that window and its full
+weekly history. `cargo test -p orbit-tape-indicator-engine --test
+market_indicators` checks:
+
+- Key Levels bar for bar against levels computed from the exchange's 1d/1w/1M
+  candles (quarters and years aggregated from months), including the merged
+  labels on 2026-01-01.
+- The Bull Market Support Band against values exported from the original Pine
+  script on TradingView (BINANCE:BTCUSDT.P, 100 weeks).
+- The SMAs against a direct average.
+
 ## Install
 
-Copy a script into the app's indicators folder, keeping its namespace folder,
-then restart Orbit Tape:
+Copy a script into the app's indicators folder, keeping its namespace folder.
+A running Orbit Tape loads it within a second:
 
 ```sh
 mkdir -p ~/.local/share/orbit-tape/indicators/roman
@@ -46,7 +65,7 @@ SFPs, LTF MSS and counter-trend MSS (Roman Setup), and OB formed / mitigated
 (Enhanced OB). With a chart showing the indicator, Orbit Tape sends a desktop
 notification and a chime when one is true on a newly closed bar. Turn single
 conditions off under Settings > Alerts. After updating a script, copy it again
-(or load it with `--indicator-path`) and restart.
+(or load it with `--indicator-path`); the app reloads it live.
 
 ## Check a script against candles
 

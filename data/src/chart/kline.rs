@@ -960,6 +960,17 @@ impl IndicatorInstanceStore {
             .fold(Default::default(), IndicatorHistoryRequirement::merge)
     }
 
+    /// After an indicator live reload: normalize every instance against the
+    /// new definitions (settings that no longer exist are dropped, new ones
+    /// take their defaults) and refresh the cached warmup lengths.
+    pub fn renormalize(&mut self) {
+        self.instances = std::mem::take(&mut self.instances)
+            .into_iter()
+            .map(IndicatorInstance::normalized)
+            .collect();
+        self.rebuild_warmup_cache();
+    }
+
     fn rebuild_warmup_cache(&mut self) {
         self.warmup_bars_by_id = self
             .instances

@@ -16,6 +16,7 @@ use iced::{
     },
 };
 
+pub mod bell;
 pub mod chart;
 pub mod color_picker;
 pub mod column_drag;

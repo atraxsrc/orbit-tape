@@ -756,7 +756,7 @@ impl MarkRenderer<'_> {
                 let wick_x = pixels.snap_x_for_stroke(x, line_width.1);
                 let color = ohlc
                     .color
-                    .map(painting::resolve_indicator_color)
+                    .map(|color| painting::resolve_indicator_color(color, palette))
                     .unwrap_or_else(|| {
                         self.indicators.indicator_color(
                             Some(value_id),
@@ -858,7 +858,7 @@ impl MarkRenderer<'_> {
                 }
                 let point_color = range
                     .color
-                    .map(painting::resolve_indicator_color)
+                    .map(|color| painting::resolve_indicator_color(color, palette))
                     .unwrap_or_else(|| {
                         self.indicators.indicator_color_for_output_at(
                             series,
@@ -1006,7 +1006,7 @@ impl MarkRenderer<'_> {
             };
             let fill_color = region
                 .fill_color
-                .map(painting::resolve_indicator_color)
+                .map(|color| painting::resolve_indicator_color(color, palette))
                 .or_else(|| {
                     region
                         .fill_color_slot
@@ -1015,7 +1015,7 @@ impl MarkRenderer<'_> {
                 });
             let border_color = region
                 .border_color
-                .map(painting::resolve_indicator_color)
+                .map(|color| painting::resolve_indicator_color(color, palette))
                 .or_else(|| region.border_color_slot.as_deref().map(slot_color));
 
             let style = match region.border_style {
@@ -1072,7 +1072,7 @@ impl MarkRenderer<'_> {
                 // faded for areas, which would make a label unreadable.
                 let tag_color = region
                     .fill_color
-                    .map(painting::resolve_indicator_color)
+                    .map(|color| painting::resolve_indicator_color(color, palette))
                     .or_else(|| region.fill_color_slot.as_deref().map(slot_color))
                     .or(border_color)
                     .unwrap_or(palette.primary.base.color);
@@ -1089,6 +1089,7 @@ impl MarkRenderer<'_> {
                     },
                     tag_color,
                     border_color.unwrap_or(palette.background.base.text),
+                    palette,
                 );
             }
         }
@@ -1124,7 +1125,7 @@ impl MarkRenderer<'_> {
                 let panel_color = rows
                     .iter()
                     .find_map(|row| row.panel_color)
-                    .map(painting::resolve_indicator_color)
+                    .map(|color| painting::resolve_indicator_color(color, self.palette))
                     .unwrap_or_else(|| self.palette.background.weak.color.scale_alpha(0.92));
                 let text_color = self.palette.background.base.text;
 
@@ -1185,7 +1186,7 @@ impl MarkRenderer<'_> {
                         frame.fill_rectangle(
                             Point::new(x, top),
                             Size::new(width, row_height),
-                            painting::resolve_indicator_color(background),
+                            painting::resolve_indicator_color(background, self.palette),
                         );
                     }
                     let center_y = top + row_height / 2.0;
@@ -1201,7 +1202,7 @@ impl MarkRenderer<'_> {
                     };
                     let color = |color: Option<indicator_engine::Color>| {
                         color
-                            .map(painting::resolve_indicator_color)
+                            .map(|color| painting::resolve_indicator_color(color, self.palette))
                             .unwrap_or(text_color)
                     };
                     if !row.left.is_empty() {
@@ -1254,7 +1255,7 @@ impl MarkRenderer<'_> {
                     };
                     let color = marker
                         .color
-                        .map(painting::resolve_indicator_color)
+                        .map(|color| painting::resolve_indicator_color(color, palette))
                         .unwrap_or_else(|| {
                             self.indicators.indicator_color(
                                 Some(value_id),
@@ -1293,7 +1294,7 @@ impl MarkRenderer<'_> {
             };
             let color = level
                 .color
-                .map(painting::resolve_indicator_color)
+                .map(|color| painting::resolve_indicator_color(color, palette))
                 .unwrap_or_else(|| {
                     self.indicators.indicator_color(
                         Some(value_id),
@@ -1393,7 +1394,7 @@ impl MarkRenderer<'_> {
             };
             let color = segment
                 .color
-                .map(painting::resolve_indicator_color)
+                .map(|color| painting::resolve_indicator_color(color, palette))
                 .unwrap_or(fallback_color);
             let start = Point::new(scene.map_x_plot(start_unit), start_y);
             let end = Point::new(scene.map_x_plot(end_unit), end_y);
@@ -2148,6 +2149,7 @@ fn draw_region_text(
     geometry: RegionTextGeometry,
     tag_color: iced::Color,
     inside_color: iced::Color,
+    palette: &Extended,
 ) {
     use indicator_engine::RegionTextPosition;
 
@@ -2155,26 +2157,63 @@ fn draw_region_text(
     if content.is_empty() {
         return;
     }
-    let text_width = content.chars().count() as f32 * REGION_TEXT_SIZE_PX * MONO_CHAR_WIDTH_RATIO;
+    let text_size = text.size.map_or(REGION_TEXT_SIZE_PX, |size| match size {
+        indicator_engine::InfoTextSize::Tiny => 8.0,
+        indicator_engine::InfoTextSize::Small => 10.0,
+        indicator_engine::InfoTextSize::Normal => 11.0,
+        indicator_engine::InfoTextSize::Large => 13.0,
+        indicator_engine::InfoTextSize::Huge => 16.0,
+    });
+    let text_width = content.chars().count() as f32 * text_size * MONO_CHAR_WIDTH_RATIO;
+
+    if text.position == RegionTextPosition::Right {
+        let x = geometry.right_x + REGION_TAG_GAP_PX;
+        let y = (geometry.upper_y + geometry.lower_y) / 2.0;
+        if !x.is_finite()
+            || !y.is_finite()
+            || x > plot.x + plot.width
+            || x + text_width < plot.x
+            || y < plot.y
+            || y > plot.y + plot.height
+        {
+            return;
+        }
+        let color = text
+            .color
+            .map(|color| painting::resolve_indicator_color(color, palette))
+            .unwrap_or(inside_color);
+        frame.fill_text(canvas::Text {
+            content: content.to_owned(),
+            position: Point::new(x, y),
+            color,
+            size: text_size.into(),
+            align_x: iced::Alignment::Start.into(),
+            align_y: iced::Alignment::Center.into(),
+            font: style::AZERET_MONO,
+            ..Default::default()
+        });
+        return;
+    }
 
     let (center, color, background) = match text.position {
+        RegionTextPosition::Right => return,
         RegionTextPosition::Inside => {
             let Some(rect) = geometry.rect else {
                 return;
             };
-            if rect.width < text_width || rect.height < REGION_TEXT_SIZE_PX {
+            if rect.width < text_width || rect.height < text_size {
                 return;
             }
             let color = text
                 .color
-                .map(painting::resolve_indicator_color)
+                .map(|color| painting::resolve_indicator_color(color, palette))
                 .unwrap_or(inside_color);
             (rect.center(), color, None)
         }
         RegionTextPosition::Above | RegionTextPosition::Below => {
             let x = (geometry.left_x + geometry.right_x) / 2.0;
             let width = text_width + 2.0 * REGION_TAG_PADDING_PX;
-            let height = REGION_TEXT_SIZE_PX + 2.0 * REGION_TAG_PADDING_PX;
+            let height = text_size + 2.0 * REGION_TAG_PADDING_PX;
             let top = if text.position == RegionTextPosition::Above {
                 geometry.upper_y - REGION_TAG_GAP_PX - height
             } else {
@@ -2198,7 +2237,7 @@ fn draw_region_text(
             }
             let color = text
                 .color
-                .map(painting::resolve_indicator_color)
+                .map(|color| painting::resolve_indicator_color(color, palette))
                 .unwrap_or(iced::Color::WHITE);
             (tag.center(), color, Some((tag, tag_color)))
         }
@@ -2218,7 +2257,7 @@ fn draw_region_text(
         content: content.to_owned(),
         position: center,
         color,
-        size: REGION_TEXT_SIZE_PX.into(),
+        size: text_size.into(),
         align_x: iced::Alignment::Center.into(),
         align_y: iced::Alignment::Center.into(),
         font: style::AZERET_MONO,

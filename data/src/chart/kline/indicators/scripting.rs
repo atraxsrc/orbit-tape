@@ -33,7 +33,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use url::Url;
 
-const MAX_RETAINED_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
+// Room for a script with ~30 plots on the longest indicator history the app
+// loads (50,000 bars); still a bound for a runaway script.
+const MAX_RETAINED_OUTPUT_BYTES: usize = 128 * 1024 * 1024;
 
 struct PresentationParts {
     panel_recipe: IndicatorPanelRecipe,
@@ -378,6 +380,11 @@ impl IndicatorOutputStore {
                 .is_some()
             {
                 self.budget.release(size_of::<(usize, SeriesOutput)>())?;
+            }
+            // A missing value reads as `na`, so `na` isn't stored: scripts
+            // with many mostly-empty plots stay small on long histories.
+            if plot.value.is_na() {
+                continue;
             }
 
             if !self.series.contains_key(&plot.id) {
@@ -1284,23 +1291,19 @@ pub fn registration(
 }
 
 impl IndicatorRegistration {
+    /// A chart only stores the inputs the user changed. Inputs left at their
+    /// default follow the script, so a new default (such as a theme color)
+    /// reaches charts saved earlier.
     pub fn default_config(&self) -> IndicatorConfig {
-        let values = self
-            .compiled
-            .descriptor
-            .inputs
-            .iter()
-            .map(|input| (input.id.clone(), input_value_to_json(&input.default)))
-            .collect();
-        IndicatorConfig::from_value(serde_json::Value::Object(values))
+        IndicatorConfig::from_value(serde_json::Value::Object(serde_json::Map::new()))
     }
 
     pub fn normalize_config(&self, config: IndicatorConfig) -> IndicatorConfig {
         let mut values = config.value().as_object().cloned().unwrap_or_default();
         for input in &self.compiled.descriptor.inputs {
-            values
-                .entry(input.id.clone())
-                .or_insert_with(|| input_value_to_json(&input.default));
+            if values.get(&input.id) == Some(&input_value_to_json(&input.default)) {
+                values.remove(&input.id);
+            }
         }
         IndicatorConfig::from_value(serde_json::Value::Object(values))
     }
@@ -1333,7 +1336,11 @@ impl IndicatorRegistration {
             .iter()
             .find(|input| input.id == id)?;
         let value = setting_value_to_json(input, value)?;
-        object.insert(id.to_owned(), value);
+        if value == input_value_to_json(&input.default) {
+            object.remove(id);
+        } else {
+            object.insert(id.to_owned(), value);
+        }
         Some(IndicatorConfig::from_value(serde_json::Value::Object(
             object,
         )))
@@ -1613,7 +1620,7 @@ fn input_value_from_json(value_type: &ValueType, value: &serde_json::Value) -> O
             .map(|value| InputValue::String(value.to_owned())),
         ValueType::Color => value
             .as_i64()
-            .and_then(|value| u32::try_from(value).ok())
+            .and_then(|value| u64::try_from(value).ok())
             .map(InputValue::Color),
         ValueType::Time => value.as_i64().map(InputValue::Time),
         _ => None,
@@ -1797,6 +1804,48 @@ mark(title = "Bars", source = "value", kind = "histogram", color_slot = "bars")
     }
 
     #[test]
+    fn charts_store_only_changed_inputs() {
+        let compiled = indicator_engine::compile(
+            r#"
+                language(1)
+                indicator("Stored", id = "catalog.stored")
+                format(precision = "base_ticker_min_tick")
+                bull = input.color(theme.success, "Bull")
+                length = input.int(5, "Length", min = 1, max = 100)
+                plot(chart.close, id = "value")
+            "#,
+            "stored.ind",
+        )
+        .expect("source should compile");
+        let registration =
+            registration(compiled, PackageOrigin::Installed).expect("source should register");
+        let empty = serde_json::Value::Object(serde_json::Map::new());
+        assert_eq!(registration.default_config().value(), &empty);
+
+        let changed = registration
+            .with_setting(
+                registration.default_config(),
+                "length",
+                IndicatorSettingValue::I64(9),
+            )
+            .expect("length should be accepted");
+        assert_eq!(changed.value(), &serde_json::json!({ "length": 9 }));
+        let back = registration
+            .with_setting(changed, "length", IndicatorSettingValue::I64(5))
+            .expect("length should be accepted");
+        assert_eq!(back.value(), &empty);
+
+        // A config saved before only changes were stored keeps the real
+        // change and drops values equal to today's defaults.
+        let theme = indicator_engine::Color::theme(indicator_engine::ThemeColor::Success).0;
+        let saved = IndicatorConfig::from_value(serde_json::json!({ "bull": theme, "length": 7 }));
+        assert_eq!(
+            registration.normalize_config(saved).value(),
+            &serde_json::json!({ "length": 7 })
+        );
+    }
+
+    #[test]
     fn visible_inputs_are_filtered_without_dropping_persisted_values() {
         let compiled = indicator_engine::compile(
             r#"
@@ -1955,6 +2004,36 @@ mark(title = "Bars", source = "value", kind = "histogram", color_slot = "bars")
             text: None,
             border_style: Default::default(),
         }
+    }
+
+    #[test]
+    fn na_plot_values_are_not_retained() {
+        let plot = |value| indicator_engine::PlotOutput {
+            id: "value".to_owned(),
+            value,
+            color: None,
+        };
+        let frame = |index, value| FrameOutput {
+            index,
+            plots: vec![plot(value)].into(),
+            ..FrameOutput::default()
+        };
+        let mut store = IndicatorOutputStore::default();
+        store
+            .apply_output(frame(0, Value::Float(1.0)), false)
+            .unwrap();
+        let one = store.budget.bytes;
+        for index in 1..100 {
+            store.apply_output(frame(index, Value::Na), false).unwrap();
+        }
+        assert_eq!(store.budget.bytes, one);
+        assert!(store.series_value("value", 50).is_none());
+        assert_eq!(store.series_value("value", 0), Some(&Value::Float(1.0)));
+
+        // A value replaced by `na` on the same bar gives its bytes back.
+        store.apply_output(frame(0, Value::Na), false).unwrap();
+        assert!(store.series_value("value", 0).is_none());
+        assert!(store.budget.bytes < one);
     }
 
     #[test]

@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// RSI divergence: RSI in its own panel, plus a "Bull" or "Bear" label on the
+// price chart where price and RSI disagree at two confirmed swing points.
+// Bullish: price makes a lower low while RSI makes a higher low. Bearish:
+// price makes a higher high while RSI makes a lower high. A swing point is
+// confirmed `right` bars after it happened, so labels appear late but never
+// move or vanish.
+//
+// Shows: ta.pivotlow / ta.pivothigh and ta.previous_when for "compare with the
+// previous swing", history access with an input offset (needs
+// max_bars_back), persistent labels on the price chart (region with
+// persistent = true), and alert = true conditions.
+
+language(1)
+indicator("RSI Divergence", id = "example.rsi-divergence", max_bars_back = 60,
+    description = "RSI with regular divergence labels and alerts.")
+display(attachment = "panel")
+format(precision = "fixed_step:0.1", max_decimals = 1)
+
+length = input.int(14, "RSI length", min = 2, max = 100)
+left = input.int(5, "Swing bars left", min = 1, max = 30)
+right = input.int(3, "Swing bars right", min = 1, max = 30,
+    tooltip = "Bars that must follow a swing point before it counts. Fewer bars react sooner but find more false swings.")
+max_gap = input.int(60, "Max bars between swings", min = 5, max = 500)
+
+rsi = ta.rsi(chart.close, length)
+
+// Pivots on price. The result is the pivot's price, `right` bars ago, or na.
+// Like all ta.* calls they run every bar at top level.
+swing_low = ta.pivotlow(chart.low, left, right)
+swing_high = ta.pivothigh(chart.high, left, right)
+is_low = !na(swing_low)
+is_high = !na(swing_high)
+
+// RSI and bar index at the swing point (`right` bars back). An input as the
+// offset is a dynamic offset, which is why max_bars_back is set above.
+rsi_at_swing = rsi[right]
+swing_bar = bar_index - right
+
+// ta.previous_when returns the value saved at the previous true condition,
+// then saves the current one: exactly "the swing before this one".
+prev_low_price = ta.previous_when(is_low, swing_low)
+prev_low_rsi = ta.previous_when(is_low, rsi_at_swing)
+prev_low_bar = ta.previous_when(is_low, swing_bar)
+prev_high_price = ta.previous_when(is_high, swing_high)
+prev_high_rsi = ta.previous_when(is_high, rsi_at_swing)
+prev_high_bar = ta.previous_when(is_high, swing_bar)
+
+bullish = is_low && swing_bar - prev_low_bar <= max_gap &&
+    swing_low < prev_low_price && rsi_at_swing > prev_low_rsi
+bearish = is_high && swing_bar - prev_high_bar <= max_gap &&
+    swing_high > prev_high_price && rsi_at_swing < prev_high_rsi
+// Comparisons with na give na; treat that as "no divergence".
+bullish_signal = coalesce(bullish, false)
+bearish_signal = coalesce(bearish, false)
+
+plot(rsi, id = "rsi", title = "RSI", precision = "decimals:1", color_slot = "main", width = 1.2)
+plot(70, id = "upper", title = "Overbought", color_slot = "level", layer_title = "70")
+plot(30, id = "lower", title = "Oversold", color_slot = "level", layer_title = "30")
+fill(upper = "upper", lower = "lower", color_slot = "fill", opacity = 0.08)
+
+// Alert conditions: a notification when a divergence is confirmed.
+plot(bullish_signal, id = "bullish", title = "Bullish divergence", alert = true)
+plot(bearish_signal, id = "bearish", title = "Bearish divergence", alert = true)
+
+// Labels on the price chart at the swing point. A region whose edges and
+// sides coincide is a point label; persistent = true keeps it after this bar,
+// and the key (the swing's bar index) makes each label its own entry. Regions
+// may sit inside an `if`, so a label is only emitted when there is one.
+if bullish_signal {
+    region(key = swing_bar, upper = swing_low, lower = swing_low,
+        left_index = swing_bar, right_index = swing_bar,
+        id = "bull-labels", persistent = true,
+        text = "Bull", text_position = "below", fill_color = theme.success)
+}
+if bearish_signal {
+    region(key = swing_bar, upper = swing_high, lower = swing_high,
+        left_index = swing_bar, right_index = swing_bar,
+        id = "bear-labels", persistent = true,
+        text = "Bear", text_position = "above", fill_color = theme.danger)
+}
+
+style("main", title = "RSI", role = "primary")
+style("level", title = "Levels", role = "secondary", shade = "soft")
+style("fill", title = "Band fill", role = "primary", shade = "faint")

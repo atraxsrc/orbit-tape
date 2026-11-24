@@ -30,7 +30,7 @@ pub use scene::{
     PresentationColumnColor, PresentationDataKind, PresentationFill, PresentationGeometry,
     PresentationInputSource, PresentationLabelMode, PresentationLayer, PresentationMark,
     PresentationMarkKind, PresentationPrecision, PresentationReadout, PresentationScale,
-    PresentationSegment, PresentationStyle, PresentationViewKind, ReadoutBehavior,
+    PresentationSegment, PresentationStyle, PresentationViewKind, ReadoutBehavior, ThemeColor,
 };
 pub use types::{
     ArrayValue, IndicatorAuthor, IndicatorConfig, IndicatorDescriptor, IndicatorId,
@@ -697,6 +697,88 @@ mod tests {
     }
 
     #[test]
+    fn regions_take_runtime_width_style_and_text_size() {
+        let source = r#"
+            language(1)
+            indicator("Levels", id = "test.levels")
+            display(view = "primary_overlay")
+            plot(na, id = "anchor", display = "none", pane = "main", layer = true)
+            size = input.string("Medium", "Line width", options = ["Small", "Medium", "Large"])
+            style_name = input.string("Dashed", "Line style", options = ["Solid", "Dashed", "Dotted"])
+            text_size = input.string("large", "Text size", options = ["small", "normal", "large"])
+            width = switch size { "Medium" => 2, "Large" => 3, default => 1 }
+            region(key = 0, upper = chart.open, lower = chart.open,
+                   left_index = 0, right_index = bar_index + 30,
+                   id = "open", border_color = color.white, width = width,
+                   border_style = style_name, text = "Daily Open",
+                   text_position = "right", text_size = text_size)
+            region(key = 1, upper = chart.low, lower = chart.low,
+                   left_index = 0, right_index = bar_index,
+                   id = "fixed", border_color = color.white, width = 4,
+                   border_style = "dotted")
+        "#;
+        let compiled = compile(source, "levels.ind").expect("levels source should compile");
+        let mut instance = compiled
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let output = instance
+            .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.0))
+            .expect("bar should evaluate");
+        let find = |id: &str| {
+            output
+                .regions
+                .iter()
+                .find(|region| region.id == id)
+                .expect("region should be emitted")
+        };
+        let open = find("open");
+        assert_eq!(open.width, 2.0);
+        assert_eq!(open.border_style, RegionBorderStyle::Dashed);
+        assert_eq!(open.right_index, 30);
+        let text = open.text.as_ref().expect("open should carry text");
+        assert_eq!(text.position, RegionTextPosition::Right);
+        assert_eq!(text.size, Some(InfoTextSize::Large));
+        let fixed = find("fixed");
+        assert_eq!(fixed.width, 4.0);
+        assert_eq!(fixed.border_style, RegionBorderStyle::Dotted);
+
+        let error = compile(
+            &source.replace("text_size = text_size)", "text_size = 3)"),
+            "levels.ind",
+        )
+        .expect_err("a numeric text_size should not compile");
+        assert!(
+            error
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("text_size"))
+        );
+    }
+
+    #[test]
+    fn reading_collections_in_loops_does_not_rescan_every_local() {
+        // 200 string locals make a full resource scan expensive; reading an
+        // array inside a 40 x 40 loop must not trigger one per iteration.
+        let mut source = String::from(
+            "language(1)\nindicator(\"Loops\", id = \"test.loops\")\nformat(precision = \"base_ticker_min_tick\")\n",
+        );
+        for index in 0..200 {
+            source.push_str(&format!("name{index} = \"label number {index}\"\n"));
+        }
+        source.push_str(
+            "values = array.new()\nfor k = 0 to 39 {\n    values := array.push(values, chart.close + k)\n}\n\
+             hits = 0\nfor i = 0 to 39 {\n    for j = 0 to 39 {\n        if array.get(values, j) == array.get(values, i) {\n            hits := hits + 1\n        }\n    }\n}\nplot(hits, id = \"hits\")\n",
+        );
+        let mut instance = compile(&source, "loops.ind")
+            .expect("loop source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let output = instance
+            .evaluate_closed(hourly(0, 0, 1.0, 1.0, 1.0, 1.0))
+            .expect("the loops should fit the per-bar budget");
+        assert_eq!(float_plot(&output, "hits"), Some(40.0));
+    }
+
+    #[test]
     fn info_rows_build_a_panel_from_strings() {
         let source = r##"
             language(1)
@@ -731,6 +813,94 @@ mod tests {
         assert!(rows[1].right_color.is_some());
         assert_eq!(rows[1].position, None);
         assert_eq!((rows[2].row, rows[2].right.as_str()), (2, ""));
+    }
+
+    #[test]
+    fn theme_colors_carry_their_role_through_inputs_and_color_new() {
+        let source = r##"
+            language(1)
+            indicator("Theme", id = "test.theme")
+            display(view = "primary_overlay")
+            bull = input.color(theme.success, "Bull")
+            fill = input.color(color.new(theme.danger, 80), "Fill")
+            plot(na, id = "anchor", display = "none", pane = "main", layer = true)
+            info_row("Bias", "up", right_color = select(chart.close > chart.open, bull, theme.danger),
+                     background = color.new(bull, 75), panel_color = theme.panel)
+            info_row("Fill", "x", right_color = fill, left_color = color.rgb(1, 2, 3))
+        "##;
+        let compiled = compile(source, "theme.ind").expect("theme source should compile");
+        let defaults: Vec<_> = compiled
+            .descriptor
+            .inputs
+            .iter()
+            .map(|input| input.default.clone())
+            .collect();
+        assert_eq!(
+            defaults[0],
+            InputValue::Color(Color::theme(ThemeColor::Success).0)
+        );
+        assert_eq!(
+            defaults[1],
+            InputValue::Color(Color::theme(ThemeColor::Danger).with_alpha(51).0)
+        );
+        let mut instance = compiled
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let output = instance
+            .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.5))
+            .expect("bar should evaluate");
+
+        let rows = &output.info_rows;
+        let bias = rows[0].right_color.expect("bias color");
+        assert_eq!(bias.theme_role(), Some(ThemeColor::Success));
+        assert_eq!(bias.alpha(), 0xff);
+        let background = rows[0].background.expect("row background");
+        assert_eq!(background.theme_role(), Some(ThemeColor::Success));
+        assert_eq!(background.alpha(), 64);
+        assert_eq!(
+            rows[0].panel_color.and_then(Color::theme_role),
+            Some(ThemeColor::Panel)
+        );
+        assert_eq!(
+            rows[1]
+                .right_color
+                .map(|color| color.to_string())
+                .as_deref(),
+            Some("theme.danger@33")
+        );
+        let literal = rows[1].left_color.expect("literal color");
+        assert_eq!(literal.theme_role(), None);
+        assert_eq!(literal.argb_bits(), 0xff01_0203);
+        assert_eq!(literal.to_string(), "#ff010203");
+    }
+
+    #[test]
+    fn hidden_plots_are_outputs_but_not_drawn() {
+        let source = r##"
+            language(1)
+            indicator("Hidden", id = "test.hidden")
+            display(view = "primary_overlay")
+            format(precision = "base_ticker_min_tick")
+            plot(chart.close, id = "shown", pane = "main")
+            plot(chart.high, id = "debug", display = "none")
+            plot(chart.low, id = "forced", display = "none", layer = true)
+        "##;
+        let compiled = compile(source, "hidden.ind").expect("hidden source should compile");
+        let layers: Vec<_> = compiled
+            .descriptor
+            .presentation
+            .layers
+            .iter()
+            .map(|layer| layer.channel.as_str())
+            .collect();
+        assert_eq!(layers, ["shown", "forced"]);
+        assert!(
+            compiled
+                .descriptor
+                .plots
+                .iter()
+                .any(|plot| plot.id == "debug")
+        );
     }
 
     #[test]

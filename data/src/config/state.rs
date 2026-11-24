@@ -43,6 +43,9 @@ pub struct State {
     pub custom_theme: Option<Theme>,
     pub theme_source: ThemeSource,
     pub glass: Glass,
+    /// Accent colors set by hand in the theme editor, as `#rrggbb` hex. An
+    /// empty slot keeps the COSMIC palette's or the generated color.
+    pub accent_colors: [Option<String>; super::theme::ACCENT_COUNT],
     pub main_window: Option<WindowSpec>,
     pub timezone: UserTimezone,
     pub sidebar: Sidebar,
@@ -52,6 +55,9 @@ pub struct State {
     pub network: Network,
     pub size_in_quote_ccy: exchange::SizeUnit,
     pub cache_market_metadata: bool,
+    /// Address of the indicator catalog's `catalog.json`; empty means the
+    /// `ORBIT_TAPE_CATALOG_URL` variable or the built-in placeholder.
+    pub indicator_catalog_url: String,
     #[serde(flatten)]
     pub boot: BootSettings,
 }
@@ -80,6 +86,7 @@ impl State {
             custom_theme: custom_theme.map(|t| Theme(t.0)),
             theme_source,
             glass,
+            accent_colors: Default::default(),
             main_window,
             timezone,
             sidebar,
@@ -89,6 +96,7 @@ impl State {
             network,
             size_in_quote_ccy: volume_size_unit,
             cache_market_metadata,
+            indicator_catalog_url: String::new(),
             boot,
         }
     }

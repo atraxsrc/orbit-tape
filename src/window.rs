@@ -187,14 +187,8 @@ pub fn settings() -> Settings {
             application_id: crate::APP_ID.into(),
             ..Default::default()
         },
-        // Window icon for X11; on Wayland the compositor takes the icon from
-        // the .desktop entry matching the app_id.
-        icon: window::icon::from_rgba(
-            include_bytes!("../assets/app-icon/window-64.rgba").to_vec(),
-            64,
-            64,
-        )
-        .ok(),
+        // No window icon: on Wayland the compositor takes it from the
+        // .desktop entry matching the app_id.
         min_size: Some(Size::new(800.0, 600.0)),
         // Glass: the surface can be see-through, and the compositor is asked to
         // blur what is behind it (org_kde_kwin_blur, which COSMIC supports).

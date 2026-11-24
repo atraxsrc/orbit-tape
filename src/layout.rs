@@ -57,11 +57,12 @@ impl SharedChartResources {
         &mut self,
         message: CatalogMessage,
         catalog_http: &reqwest::Client,
+        catalog_url: &str,
     ) -> Task<CatalogMessage> {
         let fetch = |started: bool| {
             if started {
                 Task::perform(
-                    catalog::fetch(catalog_http.clone()),
+                    catalog::fetch(catalog_url.to_owned(), catalog_http.clone()),
                     CatalogMessage::Fetched,
                 )
             } else {
@@ -127,11 +128,14 @@ pub struct SavedState {
     pub custom_theme: Option<data::Theme>,
     pub theme_source: data::config::cosmic::ThemeSource,
     pub glass: data::config::glass::Glass,
+    /// Hand-set accent colors; `None` keeps the palette's.
+    pub accent_colors: crate::theme::AccentOverrides,
     pub audio_cfg: data::AudioStream,
     pub alerts: data::config::alerts::Alerts,
     pub volume_size_unit: exchange::SizeUnit,
     pub network: data::Network,
     pub cache_market_metadata: bool,
+    pub indicator_catalog_url: String,
 }
 
 impl SavedState {
@@ -160,11 +164,13 @@ impl Default for SavedState {
             custom_theme: None,
             theme_source: data::config::cosmic::ThemeSource::default(),
             glass: data::config::glass::Glass::default(),
+            accent_colors: Default::default(),
             audio_cfg: data::AudioStream::default(),
             alerts: data::config::alerts::Alerts::default(),
             volume_size_unit: exchange::SizeUnit::default(),
             network: data::Network::default(),
             cache_market_metadata: false,
+            indicator_catalog_url: String::new(),
         }
     }
 }
@@ -410,6 +416,9 @@ pub fn load_saved_state() -> SavedState {
                 custom_theme: state.custom_theme,
                 theme_source: state.theme_source,
                 glass: state.glass,
+                accent_colors: state
+                    .accent_colors
+                    .map(|hex| hex.as_deref().and_then(data::config::theme::hex_to_color)),
                 layout_manager,
                 main_window: state.main_window,
                 timezone: state.timezone,
@@ -420,6 +429,7 @@ pub fn load_saved_state() -> SavedState {
                 volume_size_unit: state.size_in_quote_ccy,
                 network,
                 cache_market_metadata: state.cache_market_metadata,
+                indicator_catalog_url: state.indicator_catalog_url,
             }
         }
         Err(e) => {

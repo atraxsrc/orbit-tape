@@ -70,19 +70,21 @@ tblPosIn = input.string("Top right", "Table position",
 tblSizeIn = input.string("Normal", "Table text size", options = ["Small", "Normal", "Large", "Huge"],
     group = "4 | Visuals")
 
-cObBullBd = input.color(color.rgb(38, 166, 154, 255), "Bull OB border", group = "5 | Colors")
-cObBullBg = input.color(color.rgb(38, 166, 154, 38), "Bull OB fill", group = "5 | Colors")
-cObBearBd = input.color(color.rgb(239, 83, 80, 255), "Bear OB border", group = "5 | Colors")
-cObBearBg = input.color(color.rgb(239, 83, 80, 38), "Bear OB fill", group = "5 | Colors")
-cBrBullBd = input.color(color.rgb(41, 98, 255, 255), "Bull breaker border", group = "5 | Colors")
-cBrBullBg = input.color(color.rgb(41, 98, 255, 31), "Bull breaker fill", group = "5 | Colors")
-cBrBearBd = input.color(color.rgb(255, 152, 0, 255), "Bear breaker border", group = "5 | Colors")
-cBrBearBg = input.color(color.rgb(255, 152, 0, 31), "Bear breaker fill", group = "5 | Colors")
-cFib = input.color(color.rgb(179, 157, 219, 255), "50% fib line", group = "5 | Colors")
-cUp = input.color(color.rgb(38, 166, 154, 255), "Bullish text/label", group = "5 | Colors")
-cDn = input.color(color.rgb(239, 83, 80, 255), "Bearish text/label", group = "5 | Colors")
-cTblBg = input.color(color.rgb(30, 34, 45, 230), "Table background", group = "5 | Colors")
-cTblTx = input.color(color.rgb(209, 212, 220, 255), "Table text", group = "5 | Colors")
+cObBullBd = input.color(theme.success, "Bull OB border", group = "5 | Colors")
+cObBullBg = input.color(color.new(theme.success, 85), "Bull OB fill", group = "5 | Colors")
+cObBearBd = input.color(theme.danger, "Bear OB border", group = "5 | Colors")
+cObBearBg = input.color(color.new(theme.danger, 85), "Bear OB fill", group = "5 | Colors")
+cBrBullBd = input.color(theme.primary, "Bull breaker border", group = "5 | Colors")
+cBrBullBg = input.color(color.new(theme.primary, 88), "Bull breaker fill", group = "5 | Colors")
+cBrBearBd = input.color(theme.warning, "Bear breaker border", group = "5 | Colors")
+cBrBearBg = input.color(color.new(theme.warning, 88), "Bear breaker fill", group = "5 | Colors")
+cFib = input.color(theme.secondary, "50% fib line", group = "5 | Colors")
+cUp = input.color(theme.success, "Bullish text/label", group = "5 | Colors")
+cDn = input.color(theme.danger, "Bearish text/label", group = "5 | Colors")
+cTblBg = input.color(color.new(theme.panel, 10), "Table background", group = "5 | Colors")
+cTblTx = input.color(theme.text, "Table text", group = "5 | Colors")
+// muted text for rows that are off or empty
+cMuted = color.new(cTblTx, 50)
 
 thinBody = input.float(0.25, "Thin body -> use wick (body < x HTF ATR)   0 = off", min = 0.0, step = 0.05,
     group = "6 | Retest & counter-trend (rev 6)",
@@ -93,7 +95,7 @@ brkTap = input.bool(true, "Retest of broken level counts as a zone tap", group =
     tooltip = "A retest counts once price has first moved at least one LTF ATR(14) away from the level after the break. Lets the MSS filter arm on the retest, which after a fast break is usually much closer than the OB.")
 ctMode = input.bool(false, "Counter-trend MSS after an opposite HTF SFP", group = "6 | Retest & counter-trend (rev 6)",
     tooltip = "Off = only bias-aligned trades (the original rules). On = an HTF SFP AGAINST the bias (e.g. a sweep of a low and close back above it in a bearish bias) arms an LTF MSS in the SFP direction for 'Setup window' bars, labelled 'MSS CT'. Counter-trend: trade it smaller.")
-cBrk = input.color(color.rgb(120, 123, 134, 255), "Broken level line", group = "6 | Retest & counter-trend (rev 6)")
+cBrk = input.color(color.new(theme.neutral, 50), "Broken level line", group = "6 | Retest & counter-trend (rev 6)")
 showFlip = input.bool(true, "Show next HTF MSS levels (bias flip lines)", group = "6 | Retest & counter-trend (rev 6)",
     tooltip = "Lines at the HTF swing high and low that are still intact. An HTF candle CLOSE above the upper one is the next bullish MSS, a close below the lower one the next bearish MSS. In a bearish bias the upper line is the bias flip, in a bullish bias the lower one is.")
 
@@ -766,11 +768,11 @@ fibPlot = select(showFib && !(evBull || evBear), fib50, na)
 plot(fibPlot, id = "fib50", title = "HTF 50% Fib", color = cFib, width = 1)
 brkPlot = select(showBrk && !(evBull || evBear), brkLvl, na)
 plot(brkPlot, id = "broken_level", title = "Broken HTF level", color = cBrk, width = 2)
-// next HTF MSS levels, broken where the level moves so no diagonal is drawn
+// next HTF MSS levels as dots, like plot.style_circles in the Pine original
 upFlipPlot = select(showFlip && !htfClosed, upFlip, na)
 dnFlipPlot = select(showFlip && !htfClosed, dnFlip, na)
-plot(upFlipPlot, id = "up_flip", title = "Next bullish HTF MSS above", color = color.new(cUp, 40))
-plot(dnFlipPlot, id = "dn_flip", title = "Next bearish HTF MSS below", color = color.new(cDn, 40))
+plot(upFlipPlot, id = "up_flip", title = "Next bullish HTF MSS above", color = color.new(cUp, 40), mark = "point")
+plot(dnFlipPlot, id = "dn_flip", title = "Next bearish HTF MSS below", color = color.new(cDn, 40), mark = "point")
 
 marker(low - nz(ltfAtr, 0.0) * 0.3, id = "htf_mss_up", visible = showHtfMk && evBull, color = cUp)
 marker(high + nz(ltfAtr, 0.0) * 0.3, id = "htf_mss_down", visible = showHtfMk && evBear, color = cDn)
@@ -792,16 +794,16 @@ region(key = 4, upper = sTop2, lower = sBot2, left_index = sIdx2, right_index = 
 
 region(key = 0, upper = sfpLblY, lower = sfpLblY, left_index = sfpLblIdx, right_index = sfpLblIdx,
        id = "sfp_up", visible = sfpLblOn && sfpLblBull, text = "SFP", text_position = "below",
-       text_color = color.white, fill_color = color.new(cUp, 20))
+       text_color = cTblTx, fill_color = color.new(cUp, 20))
 region(key = 0, upper = sfpLblY, lower = sfpLblY, left_index = sfpLblIdx, right_index = sfpLblIdx,
        id = "sfp_down", visible = sfpLblOn && !sfpLblBull, text = "SFP", text_position = "above",
-       text_color = color.white, fill_color = color.new(cDn, 20))
+       text_color = cTblTx, fill_color = color.new(cDn, 20))
 region(key = 0, upper = ctLblY, lower = ctLblY, left_index = ctLblIdx, right_index = ctLblIdx,
        id = "sfp_ct_up", visible = ctLblOn && ctLblBull, text = "SFP CT", text_position = "below",
-       text_color = color.white, fill_color = color.new(cUp, 50))
+       text_color = cTblTx, fill_color = color.new(cUp, 50))
 region(key = 0, upper = ctLblY, lower = ctLblY, left_index = ctLblIdx, right_index = ctLblIdx,
        id = "sfp_ct_down", visible = ctLblOn && !ctLblBull, text = "SFP CT", text_position = "above",
-       text_color = color.white, fill_color = color.new(cDn, 50))
+       text_color = cTblTx, fill_color = color.new(cDn, 50))
 region(key = 0, upper = mssLblY, lower = mssLblY, left_index = mssLblIdx, right_index = mssLblIdx,
        id = "mss_up", visible = mssLblOn && mssLblUp, text = select(mssLblCt, "MSS CT", "MSS"),
        text_position = "below", text_color = cTblTx,
@@ -864,26 +866,26 @@ armDn = gateDn && (!ltfAlign || bias == -1)
 
 tick = instrument.min_tick
 biasTxt = select(bias == 1, "Bullish", select(bias == -1, "Bearish", "Neutral"))
-biasCol = select(bias == 1, cUp, select(bias == -1, cDn, color.gray))
+biasCol = select(bias == 1, cUp, select(bias == -1, cDn, cMuted))
 sfpTxt = select(na(sfpBar), "None",
     select(sfpDir == 1, "Bullish", "Bearish") + "  " + str.tostring(bar_index - sfpBar) + " bars ago")
-sfpCol = select(na(sfpBar), color.gray, select(sfpDir == 1, cUp, cDn))
+sfpCol = select(na(sfpBar), cMuted, select(sfpDir == 1, cUp, cDn))
 zoneTxt = select(na(nD), "None", select(nD <= 0.0, nN + "   inside",
     nN + "   " + str.tostring(nD, "#.##") + "%" + select(nH, "  (hidden)", "")))
-zoneCol = select(na(nD) || nH, color.gray, cTblTx)
+zoneCol = select(na(nD) || nH, cMuted, cTblTx)
 fibTxt = select(na(fib50), "n/a",
     str.tostring(fib50, tick) + "   " + select(close > fib50, "above", "below"))
 evTxt = select(na(lastEvB), "None yet", str.tostring(bar_index - lastEvB) + " bars ago")
 gateTxt = select(mssGate == "None", "Off", select(armUp && armDn, "Both armed",
     select(armUp, "Long armed", select(armDn, "Short armed", "Waiting"))))
-gateCol = select(mssGate == "None", color.gray, select(armUp && !armDn, cUp,
+gateCol = select(mssGate == "None", cMuted, select(armUp && !armDn, cUp,
     select(armDn && !armUp, cDn, cTblTx)))
 brkDist = select(na(brkLvl), na, math.abs(close - brkLvl) / close * 100.0)
 brkTxt = select(na(brkLvl), "n/a", str.tostring(brkLvl, tick) + "   " + str.tostring(brkDist, "#.##") + "%" +
     select(brkTap, select(brkAway, "   retest counts", "   waiting for move away"), ""))
 ctTxt = select(!ctMode, "Off", select(ctArmUp, "Long CT armed   stop < " + str.tostring(ctWick, tick),
     select(ctArmDn, "Short CT armed   stop > " + str.tostring(ctWick, tick), "Waiting for opposite SFP")))
-ctCol = select(!ctMode, color.gray, select(ctArmUp, cUp, select(ctArmDn, cDn, cTblTx)))
+ctCol = select(!ctMode, cMuted, select(ctArmUp, cUp, select(ctArmDn, cDn, cTblTx)))
 htfName = select(htfTf == "720", "12H", htfTf)
 upTxt = select(na(upFlip), "waiting for a new " + htfName + " swing high",
     htfName + " close > " + str.tostring(upFlip, tick) + "   +" +
@@ -903,7 +905,7 @@ tblSize = switch tblSizeIn {
     default => "normal"
 }
 info_row(select(showTable, "Roman Trade Setup", ""), select(showTable, htfTf + " -> " + chartTf, ""),
-         left_color = cTblTx, right_color = cTblTx, background = color.new(color.gray, 75),
+         left_color = cTblTx, right_color = cTblTx, background = color.new(theme.neutral, 75),
          position = tblPosIn, size = tblSize, panel_color = cTblBg)
 info_row(select(showTable, "Bias", ""), select(showTable, biasTxt, ""), left_color = cTblTx, right_color = biasCol)
 info_row(select(showTable, "SFP", ""), select(showTable, sfpTxt, ""), left_color = cTblTx, right_color = sfpCol)
@@ -913,12 +915,12 @@ info_row(select(showTable, "Zones Bull / Bear", ""), select(showTable, cntTxt, "
 info_row(select(showTable, "Last HTF MSS", ""), select(showTable, evTxt, ""), left_color = cTblTx, right_color = cTblTx)
 info_row(select(showTable, "MSS filter", ""), select(showTable, gateTxt, ""), left_color = cTblTx, right_color = gateCol)
 info_row(select(showTable, "Broken level", ""), select(showTable, brkTxt, ""), left_color = cTblTx,
-         right_color = select(na(brkLvl), color.gray, cBrk))
+         right_color = select(na(brkLvl), cMuted, cBrk))
 info_row(select(showTable, "Counter-trend", ""), select(showTable, ctTxt, ""), left_color = cTblTx, right_color = ctCol)
 info_row(select(showTable, "Bullish MSS", ""), select(showTable, upTxt, ""), left_color = cTblTx,
-         right_color = select(na(upFlip), color.gray, cUp))
+         right_color = select(na(upFlip), cMuted, cUp))
 info_row(select(showTable, "Bearish MSS", ""), select(showTable, dnTxt, ""), left_color = cTblTx,
-         right_color = select(na(dnFlip), color.gray, cDn))
+         right_color = select(na(dnFlip), cMuted, cDn))
 
 // ============================= ALERT OUTPUTS =================================
 plot(evBull, id = "htf_bias_bullish", title = "HTF bias -> Bullish", alert = true)

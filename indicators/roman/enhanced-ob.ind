@@ -40,9 +40,9 @@ extendBars = input.int(499, "Box Extension Bars", min = 0, max = 499, group = "D
 drawLines = input.bool(true, "Draw Price Lines from OBs", group = "Display Settings")
 maxOBs = input.int(20, "Max OBs to Show", min = 1, max = 200, group = "Display Settings",
     tooltip = "When the limit is hit, mitigated blocks are dropped first, then the oldest.")
-cBull = input.color(color.rgb(137, 180, 250), "Bullish color", group = "Display Settings")
-cBear = input.color(color.rgb(250, 179, 135), "Bearish color", group = "Display Settings")
-cLabelTx = input.color(color.rgb(255, 255, 255), "Label text", group = "Display Settings")
+cBull = input.color(theme.success, "Bullish color", group = "Display Settings")
+cBear = input.color(theme.danger, "Bearish color", group = "Display Settings")
+cLabelTx = input.color(theme.text, "Label text", group = "Display Settings")
 
 htf = input.string("", "Higher Timeframe for Confirmation", group = "Multi-Timeframe",
     tooltip = "Empty = off. When set, a bullish OB candle must trade at or below the previous HTF candle's low (a sweep of HTF liquidity), a bearish one at or above its high.")
@@ -191,5 +191,7 @@ for o in obs {
 plot(bullFormed, id = "bull_formed", title = "Bullish OB formed", alert = true)
 plot(bearFormed, id = "bear_formed", title = "Bearish OB formed", alert = true)
 plot(mitigatedNow, id = "mitigated", title = "OB mitigated", alert = true)
+// draws nothing; a price-chart overlay needs one layer to attach the boxes to
+plot(na, id = "anchor", display = "none", pane = "main", layer = true)
 plot(formedLevel, id = "formed_level", title = "Formed OB level", display = "none")
 plot(mitigatedLevel, id = "mitigated_level", title = "Mitigated OB level", display = "none")

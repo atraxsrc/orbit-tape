@@ -50,6 +50,9 @@ work; see [Credits](#credits).
   and "Remove alert" deletes the line; to keep the line, untick "Alert" in its
   toolbar. Any horizontal line can be turned into an alert from its toolbar.
   The same menu can remove all alerts, drawings, indicators or studies at once.
+- **Alert history:** the bell in the sidebar lists the last 500 fired alerts
+  (time, symbol, condition, price) with an unread count, kept across
+  restarts in `alert-history.json`. Click an entry to focus its chart.
 - **Trade sound effects** driven by the live trade stream.
 - **Multi-window:** pop panes out into their own windows.
 - **Pane linking:** panes in the same link group switch ticker together.
@@ -101,7 +104,7 @@ What is COSMIC-specific today:
   is the Wayland app_id and matches the `.desktop` entry, so COSMIC shows the
   right icon and groups the windows in the dock.
 - **Original icon** in the hicolor theme, sized from 16 to 512 px.
-- **Wayland-native** rendering (X11 remains as a fallback).
+- **Wayland-only** rendering (no X11 backend).
 - **COSMIC theme** (Settings → Theme, on by default): the app reads COSMIC's
   theme files and follows its light/dark mode, accent, background, text,
   success/warning/destructive colors and corner radii live. The 8 color
@@ -162,7 +165,8 @@ build. To build the `.deb` yourself: `scripts/package-deb.sh` (installs
 ## Custom indicators
 
 Indicators are `.ind` text files. Put them in
-`~/.local/share/orbit-tape/indicators/`, then restart the app:
+`~/.local/share/orbit-tape/indicators/`; the app picks up new and edited
+files while it runs:
 
 ```sh
 orbit-tape-indicator new ~/.local/share/orbit-tape/indicators/community --id community.example --title "Example"
@@ -176,8 +180,55 @@ Then add it to a candlestick chart from the indicator sidebar (**+**).
 - Language reference: [indicator-engine/LANGUAGE.md](indicator-engine/LANGUAGE.md)
 - Commented examples: [examples/indicators/](examples/indicators/)
 - Optional Roman Setup and Order Block ports: [indicators/](indicators/README.md)
-- Shared indicators: the in-app catalog browser lists the upstream
-  [Flowsurface indicator catalog](https://github.com/flowsurface-rs/indicators).
+- Shared indicators: the in-app catalog browser loads a `catalog.json` from an
+  HTTPS address you set under Settings > Indicator catalog (for example a raw
+  GitHub URL), see [Sharing a collection](docs/custom-indicators.md#sharing-a-collection).
+
+## Headless scan
+
+`orbit-tape scan` runs an indicator over recent candles of USDT perpetuals
+on OKX (default) or Binance without opening a window, and lists every alert plot
+(`plot(..., alert = true)`) that fired on the last closed bar. When anything
+fired it also sends one desktop notification, grouped by signal and bar
+(for example `LTF MSS down Tue 13:00: BTC, BNB, SOL`). By default it runs
+Roman Setup (`roman-setup.ind`, from the indicators folder or the copy the
+.deb ships) on the 1H chart.
+
+The coins come from `~/.local/share/orbit-tape/scan-symbols.txt`, one per
+line (`#` starts a comment), plus an `exchange = okx` or `exchange = binance`
+line (OKX when there is none). The first run creates it with 66 coins; edit
+it to change the list or the exchange, delete it to get the default back. Write coins as `PEPE`;
+`PEPEUSDT`, `1000PEPEUSDT` and `PEPE-USDT-SWAP` work too, and Binance's 1000x
+contracts are found automatically. OKX is slower to fetch (about 3 s per coin
+against 1.5 s on Binance).
+
+```sh
+orbit-tape scan
+orbit-tape scan --symbols BTC,ETH --input ctMode=true --lookback 24
+orbit-tape scan --exchange binance
+orbit-tape scan --symbols-file ~/majors.txt
+orbit-tape scan --indicator ~/.local/share/orbit-tape/indicators/my.ind --timeframe 4h --no-notify
+```
+
+```
+Scanning 66 pairs on OKX, this takes a few minutes for a long list...
+Roman Trade Setup (H12 to H1) on 66 OKX perps, 1h chart, 2000 bars, last 1 closed bar(s)
+SYMBOL         LAST CLOSED BAR     CLOSE  SIGNALS
+BTC-USDT-SWAP  Tue 24 Nov 11:00  61303.9  -
+ADA-USDT-SWAP  Tue 24 Nov 11:00   0.1487  HTF Bearish SFP
+```
+
+The .deb installs a systemd user timer that runs the scan 90 seconds after
+every hour (off until you turn it on):
+
+```sh
+systemctl --user enable --now orbit-tape-scan.timer   # start
+journalctl --user -u orbit-tape-scan                  # past results
+systemctl --user disable --now orbit-tape-scan.timer  # stop
+```
+
+To change the options, run `systemctl --user edit orbit-tape-scan.service` and
+override `ExecStart=` (an empty `ExecStart=` line first, then the new one).
 
 ## Where files are stored
 
@@ -188,6 +239,7 @@ Everything lives in one folder, `~/.local/share/orbit-tape/`
 | --- | --- |
 | Settings, layouts, themes, presets | `~/.local/share/orbit-tape/saved-state.json` |
 | User indicators | `~/.local/share/orbit-tape/indicators/` |
+| Scan symbol list | `~/.local/share/orbit-tape/scan-symbols.txt` |
 | Logs | `~/.local/share/orbit-tape/orbit-tape-current.log` |
 | Market data cache (Binance archives) | `~/.local/share/orbit-tape/market_data/` |
 | Proxy and server credentials | the system keyring (service `orbit-tape.proxy` / `orbit-tape.server`) |
@@ -207,8 +259,6 @@ Stored proxy and server credentials are read from the old keyring entries too.
 - `.deb` releases on GitHub for every version
 - A Flatpak, possibly
 - More example indicators
-- Live reloading of user indicators without a restart
-- An in-app list of fired alerts
 
 ## Contributing and building
 
@@ -255,5 +305,4 @@ Orbit Tape is a fork of [Flowsurface](https://github.com/flowsurface-rs/flowsurf
 |---|---|
 | Application, data crate (`orbit-tape-data`), [bundled indicators](data/indicators/README.md), and [example indicators](examples/indicators/) | [GPL-3.0-or-later](LICENSE) |
 | Indicator engine and CLI (`orbit-tape-indicator-engine`, `orbit-tape-indicator`) | [Apache-2.0](indicator-engine/LICENSE) |
-| [Indicator catalog](https://github.com/flowsurface-rs/indicators) and its documentation | [Apache-2.0](https://github.com/flowsurface-rs/indicators/blob/main/LICENSE) |
 | Exchange adapters (`orbit-tape-exchange`) | [MIT](exchange/LICENSE) |

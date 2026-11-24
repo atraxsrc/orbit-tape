@@ -28,14 +28,16 @@ indicators and desktop alerts. Includes orbit-tape-indicator, the CLI for \
 writing and testing indicator scripts."""
 # $auto finds directly linked libraries (ALSA). Graphics, Wayland and
 # keyboard libraries are loaded at runtime with dlopen, so they are listed
-# here; X11 is only a fallback and therefore recommended.
+# here. Wayland only: there is no X11 backend.
 depends = "$auto, libvulkan1, libwayland-client0, libwayland-egl1, libegl1, libxkbcommon0"
-recommends = "libx11-6, libx11-xcb1, libxcursor1, libxi6, libxkbcommon-x11-0, mesa-vulkan-drivers"
+recommends = "mesa-vulkan-drivers"
 assets = [
     ["target/release/orbit-tape", "usr/bin/", "755"],
     ["target/release/orbit-tape-indicator", "usr/bin/", "755"],
     ["packaging/linux/io.github.atraxsrc.OrbitTape.desktop", "usr/share/applications/", "644"],
     ["packaging/linux/io.github.atraxsrc.OrbitTape.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["packaging/linux/orbit-tape-scan.service", "usr/lib/systemd/user/", "644"],
+    ["packaging/linux/orbit-tape-scan.timer", "usr/lib/systemd/user/", "644"],
     ["assets/app-icon/hicolor/16x16/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/16x16/apps/", "644"],
     ["assets/app-icon/hicolor/24x24/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/24x24/apps/", "644"],
     ["assets/app-icon/hicolor/32x32/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/32x32/apps/", "644"],
@@ -98,7 +100,6 @@ iced = { version = "0.14.0", default-features = false, features = [
     "advanced",
     "unconditional-rendering",
     "crisp",
-    "x11",
     "wayland",
 ] }
 iced_core.workspace = true
@@ -121,6 +122,8 @@ rodio = { version = "0.22.2", default-features = false, features = [ "playback",
 # Desktop notifications for indicator alerts (freedesktop spec over zbus), see
 # src/alerts.rs.
 notify-rust = { version = "4.11", default-features = false, features = ["z"] }
+# Live reload of user indicator files (inotify), see src/indicator_watch.rs.
+notify = { version = "8.2", default-features = false }
 
 bytemuck = "1.25.0"
 iced_wgpu = "0.14.0"

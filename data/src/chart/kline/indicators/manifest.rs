@@ -1,18 +1,55 @@
 use super::{IndicatorId, catalog, language::PackageOrigin};
 use serde::Deserialize;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     time::{Duration, Instant},
 };
 
-/// Indicator sources published by the catalog service, as the host may install them.
+/// The placeholder catalog address. While it is in place, the browser asks
+/// for a real one (Settings > Indicator catalog, or `ORBIT_TAPE_CATALOG_URL`).
+pub const DEFAULT_CATALOG_URL: &str =
+    "https://raw.githubusercontent.com/YOUR-GITHUB-USER/YOUR-REPO/main/catalog.json";
+
+/// Pick the catalog address: the saved setting, then the
+/// `ORBIT_TAPE_CATALOG_URL` environment variable, then the default.
+pub fn resolve_catalog_url(setting: &str) -> String {
+    let setting = setting.trim();
+    if !setting.is_empty() {
+        return setting.to_owned();
+    }
+    std::env::var("ORBIT_TAPE_CATALOG_URL")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_CATALOG_URL.to_owned())
+}
+
+/// Check a catalog address before fetching it: HTTPS only, and not the
+/// placeholder.
+pub fn validate_catalog_url(url: &str) -> Result<url::Url, String> {
+    if url == DEFAULT_CATALOG_URL {
+        return Err(
+            "No indicator catalog is set. Add its catalog.json address under Settings > Indicator catalog."
+                .to_owned(),
+        );
+    }
+    let parsed = url::Url::parse(url).map_err(|error| format!("Invalid catalog URL: {error}"))?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() {
+        return Err("The catalog URL must start with https://".to_owned());
+    }
+    Ok(parsed)
+}
+
+/// A static `catalog.json` as written by `orbit-tape-indicator catalog`.
+/// Entry paths are relative to the catalog file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Catalog {
     schema_version: u32,
     language_version: u32,
-    source_revision: String,
-    source_base_path: String,
     pub indicators: Vec<Entry>,
+    /// Where the catalog was fetched from; sources resolve against it.
+    #[serde(skip)]
+    source_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -101,7 +138,10 @@ pub enum Message {
 pub struct State {
     catalog: Option<Catalog>,
     status: Status,
-    pending: BTreeSet<IndicatorId>,
+    /// Install/remove actions taken from the browser. One is pending while the
+    /// loaded catalog does not reflect it yet; live reload catches up on its
+    /// own, so this is checked against the current catalog every time.
+    changes: BTreeMap<IndicatorId, SourceChange>,
     operation: SourceOperation,
 }
 
@@ -136,8 +176,24 @@ impl Catalog {
         Ok(catalog)
     }
 
-    pub fn source_base_path(&self) -> &str {
-        &self.source_base_path
+    pub fn source_url(&self) -> &str {
+        &self.source_url
+    }
+
+    pub fn set_source_url(&mut self, url: impl Into<String>) {
+        self.source_url = url.into();
+    }
+
+    /// The download address of an entry's source, next to the catalog file.
+    pub fn entry_url(catalog_url: &str, entry: &Entry) -> Result<url::Url, String> {
+        let base = validate_catalog_url(catalog_url)?;
+        let url = base
+            .join(&entry.path)
+            .map_err(|error| format!("Invalid source path for {}: {error}", entry.id.as_str()))?;
+        if url.origin() != base.origin() {
+            return Err(format!("Invalid source path for {}", entry.id.as_str()));
+        }
+        Ok(url)
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -145,16 +201,6 @@ impl Catalog {
             return Err(
                 "This catalog requires an unsupported format or language version".to_owned(),
             );
-        }
-
-        if self.source_revision.len() != 40
-            || !self
-                .source_revision
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-            || self.source_base_path != format!("/v1/sources/{}/", self.source_revision)
-        {
-            return Err("Invalid catalog source revision".to_owned());
         }
 
         let mut ids = BTreeSet::new();
@@ -220,10 +266,10 @@ impl State {
             return Installation::Bundled;
         }
 
-        let pending = self.pending.contains(&entry.id);
-        let present = match origin {
-            Some(_) => !pending,
-            None => pending,
+        let present = match self.changes.get(&entry.id) {
+            Some(SourceChange::Installed) => true,
+            Some(SourceChange::Removed) => false,
+            None => origin.is_some(),
         };
         if present {
             Installation::Installed
@@ -233,11 +279,16 @@ impl State {
     }
 
     pub fn restart_pending(&self) -> bool {
-        !self.pending.is_empty()
+        self.changes.keys().any(|id| self.restart_pending_for(id))
     }
 
     pub fn restart_pending_for(&self, id: &IndicatorId) -> bool {
-        self.pending.contains(id)
+        let loaded = catalog().get(id).is_some();
+        match self.changes.get(id) {
+            Some(SourceChange::Installed) => !loaded,
+            Some(SourceChange::Removed) => loaded,
+            None => false,
+        }
     }
 
     pub fn can_refresh(&self) -> bool {
@@ -275,7 +326,7 @@ impl State {
             .iter()
             .find(|entry| entry.id == *id)?
             .clone();
-        let base = manifest.source_base_path().to_owned();
+        let base = manifest.source_url().to_owned();
 
         let installation = self.installation(&entry);
         if !self.can_toggle(installation) {
@@ -321,15 +372,55 @@ impl State {
     }
 
     fn record_change(&mut self, id: IndicatorId, change: SourceChange) {
-        let loaded = catalog().get(&id).is_some();
-        let pending = match change {
-            SourceChange::Installed => !loaded,
-            SourceChange::Removed => loaded,
-        };
-        if pending {
-            self.pending.insert(id);
-        } else {
-            self.pending.remove(&id);
-        }
+        self.changes.insert(id, change);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shape `orbit-tape-indicator catalog` writes.
+    const CLI_CATALOG: &str = r#"{
+      "generator_version": "0.10.0",
+      "indicators": [{
+        "author": null, "bases": ["time", "tick"], "description": "d",
+        "id": "example.ema-crossover", "name": "EMA Crossover",
+        "path": "example/ema-crossover.ind",
+        "sha256": "a576f182e19160f3dfe4f8654aaa386842bb68cd91808c696fc697ee4dd59e91",
+        "size_bytes": 2031, "source_url": null
+      }],
+      "language_version": 1,
+      "schema_version": 1
+    }"#;
+
+    #[test]
+    fn parses_cli_catalog_and_resolves_sources_next_to_it() {
+        let catalog = Catalog::parse(CLI_CATALOG.as_bytes()).unwrap();
+        let url = "https://raw.githubusercontent.com/someone/indicators/main/catalog.json";
+        let source = Catalog::entry_url(url, &catalog.indicators[0]).unwrap();
+        assert_eq!(
+            source.as_str(),
+            "https://raw.githubusercontent.com/someone/indicators/main/example/ema-crossover.ind"
+        );
+    }
+
+    #[test]
+    fn rejects_placeholder_and_plain_http() {
+        assert!(validate_catalog_url(DEFAULT_CATALOG_URL).is_err());
+        assert!(validate_catalog_url("http://example.com/catalog.json").is_err());
+        assert!(validate_catalog_url("https://example.com/catalog.json").is_ok());
+        assert_eq!(
+            resolve_catalog_url("  https://example.com/c.json "),
+            "https://example.com/c.json"
+        );
+    }
+
+    #[test]
+    fn rejects_paths_that_leave_the_catalog_folder() {
+        let escaped = CLI_CATALOG.replace("example/ema-crossover.ind", "../ema-crossover.ind");
+        assert!(Catalog::parse(escaped.as_bytes()).is_err());
+        let absolute = CLI_CATALOG.replace("example/ema-crossover.ind", "//evil.example/x.ind");
+        assert!(Catalog::parse(absolute.as_bytes()).is_err());
     }
 }

@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Session VWAP: the volume-weighted average price since the start of the
+// day (or week, or month), with bands 1 and 2 standard deviations away.
+// Unlike the rolling "VWAP Bands" example, the average and the deviation are
+// both volume-weighted and restart at every session.
+//
+// Shows: persistent `state` that is reset on a condition, htf.forming as a
+// session clock, and a user function with a bounded loop (the language has no
+// square root, so it is computed with Newton's method).
+
+language(1)
+indicator("Session VWAP", id = "example.session-vwap", max_bars_back = 1, bases = ["time"],
+    description = "Session-anchored VWAP with volume-weighted standard deviation bands.")
+display(view = "plot", attachment = "overlay", layer_name = "Session VWAP")
+format(precision = "base_ticker_min_tick")
+
+session = input.string("D", "Session", options = ["D", "W", "M"],
+    tooltip = "D restarts at 00:00 UTC, W on Monday, M on the 1st")
+inner = input.float(1.0, "Inner band (std. deviations)", min = 0.1, max = 5.0, step = 0.1)
+outer = input.float(2.0, "Outer band (std. deviations)", min = 0.1, max = 5.0, step = 0.1)
+
+// Square root by Newton's method. Functions take and return numbers; the
+// loop is bounded, and 30 steps are plenty for prices and volumes.
+fn sqrt(value) {
+    if na(value) || value <= 0 {
+        return 0.0
+    }
+    guess = math.max(value, 1.0)
+    for step = 1 to 30 {
+        guess := (guess + value / guess) / 2
+    }
+    return guess
+}
+
+// The session the bar belongs to: htf.forming is the unfinished session
+// candle, and its `time` is the session start. (htf.new_bar would miss the
+// first boundary on the chart, because the first, partial candle is dropped.)
+// Like every htf.* call, it runs once per bar at top level.
+forming = htf.forming(session)
+session_start = forming.time
+state previous_start = na
+new_session = !na(previous_start) && session_start != previous_start
+previous_start := session_start
+
+// Running sums for the current session. `state` keeps its value from bar to
+// bar; `:=` updates it.
+state volume_sum = 0.0
+state price_volume = 0.0
+state price2_volume = 0.0
+if new_session {
+    volume_sum := 0.0
+    price_volume := 0.0
+    price2_volume := 0.0
+}
+price = chart.hlc3
+if !na(price) && !na(chart.volume) {
+    volume_sum := volume_sum + chart.volume
+    price_volume := price_volume + price * chart.volume
+    price2_volume := price2_volume + price * price * chart.volume
+}
+
+vwap = select(volume_sum > 0, price_volume / volume_sum, na)
+// Volume-weighted variance: E[p^2] - E[p]^2, never below zero.
+variance = select(volume_sum > 0, math.max(price2_volume / volume_sum - vwap * vwap, 0.0), na)
+sigma = sqrt(variance)
+
+plot(vwap, id = "vwap", title = "VWAP", precision = "instrument", color_slot = "main", layer_title = "VWAP", width = 1.4, pane = "main")
+plot(vwap + sigma * inner, id = "upper1", title = "Upper inner", precision = "instrument", color_slot = "inner", layer_title = "+1", pane = "main")
+plot(vwap - sigma * inner, id = "lower1", title = "Lower inner", precision = "instrument", color_slot = "inner", layer_title = "-1", pane = "main")
+plot(vwap + sigma * outer, id = "upper2", title = "Upper outer", precision = "instrument", color_slot = "outer", layer_title = "+2", pane = "main")
+plot(vwap - sigma * outer, id = "lower2", title = "Lower outer", precision = "instrument", color_slot = "outer", layer_title = "-2", pane = "main")
+
+style("main", title = "VWAP", role = "primary")
+style("inner", title = "Inner bands", role = "secondary")
+style("outer", title = "Outer bands", role = "secondary", shade = "soft")
+style("fill", title = "Band fill", role = "primary", shade = "faint")
+fill(upper = "upper1", lower = "lower1", geometry = "series_band", color_slot = "fill", opacity = 0.10)

@@ -12,7 +12,7 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     String(String),
-    Color(u32),
+    Color(u64),
     Tuple(Vec<Value>),
     Array(Arc<ArrayValue>),
     Record(BTreeMap<String, Value>),
@@ -557,7 +557,7 @@ pub enum InputValue {
     Float(f64),
     Bool(bool),
     String(String),
-    Color(u32),
+    Color(u64),
     Time(i64),
 }
 

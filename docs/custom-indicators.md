@@ -18,9 +18,13 @@ The app reads every `.ind` file below the indicators folder, including
 subfolders. Keep one folder per namespace, for example
 `indicators/community/example.ind` for the ID `community.example`.
 
-Indicators are loaded **once at startup**. After adding or editing a file,
-restart Orbit Tape. A broken file does not stop the app: it is skipped and a
-"quarantined" notice with the error appears.
+Indicators **reload live**: Orbit Tape watches the indicators folder (and
+every `--indicator-path` file) and recompiles a file a moment after you save
+it. Charts that show the indicator recalculate; unchanged indicators are left
+alone. If a save does not compile, the chart keeps the last good version and
+the error appears as a notice and in a red box at the bottom of the
+indicator list, until the file compiles again. A file that has never compiled
+is skipped.
 
 ## 1. Create a file
 
@@ -55,14 +59,26 @@ Open the file in any editor. The language basics:
   more.
 - `plot(...)` outputs a series. `display(...)` picks a separate panel or the
   price chart; `style(...)` declares theme-aware colors.
+- `theme.success`, `theme.danger`, `theme.primary` and the other `theme.*`
+  colors follow your COSMIC theme for boxes, labels and info tables too. Use
+  them instead of fixed `color.rgb(...)` values so an indicator matches the
+  rest of the app in dark and light mode.
 - `plot(condition, alert = true)` on a boolean series turns it into an alert:
   a desktop notification when it is true on a newly closed bar.
 - `htf.bars("720")` reads closed candles of a higher timeframe (here 12H).
 
 The full reference is [LANGUAGE.md](../indicator-engine/LANGUAGE.md). The
-[examples](../examples/indicators/) are commented and cover overlay lines with
-alerts (`ema-crossover.ind`), bands with a fill (`vwap-bands.ind`) and a
-trade-based histogram (`volume-delta.ind`).
+[examples](../examples/indicators/) are commented; each shows a different
+part of the language:
+
+| Example | Shows |
+| --- | --- |
+| `ema-crossover.ind` | Overlay lines and boolean alert plots |
+| `vwap-bands.ind` | Rolling bands with a fill |
+| `volume-delta.ind` | Trade-based histogram colored by a boolean output |
+| `session-vwap.ind` | Session VWAP with σ bands: `state` reset on a session change (`htf.forming`), a user function with a bounded loop |
+| `cvd-candles.ind` | Cumulative volume delta as candles: `plotcandle`, `visible_when`, an `info_row` panel |
+| `rsi-divergence.ind` | RSI divergence: `ta.pivotlow`/`ta.pivothigh`, `ta.previous_when`, input history offsets, persistent `region` labels, alerts |
 
 ## 3. Check and test
 
@@ -92,7 +108,7 @@ every plot.
 
 ## 4. Load it in the app
 
-1. Restart Orbit Tape.
+1. Save the file in the indicators folder (no restart needed).
 2. Open a candlestick chart pane.
 3. In the chart's indicator sidebar, press **+** and pick your indicator from
    the list (your own indicators are listed with the built-in ones).
@@ -108,24 +124,29 @@ orbit-tape --indicator-path ./example.ind
 
 A collection is a folder of `.ind` files under one namespace, for example a
 Git repository with `mytools/*.ind`. Others copy the folder into their
-indicators folder and restart. Before publishing:
+indicators folder. Before publishing:
 
 ```sh
 orbit-tape-indicator test mytools --namespace mytools
-orbit-tape-indicator catalog mytools --output catalog.json --namespace mytools
+orbit-tape-indicator catalog mytools --output mytools/catalog.json --namespace mytools
 ```
 
-`catalog.json` lists every indicator with its checksum, for catalog sites. The
-in-app catalog browser shows the upstream
-[Flowsurface indicator catalog](https://github.com/flowsurface-rs/indicators);
-see its contributing guide to submit indicators there. Pick a license for your
-files; the examples and built-in indicators are GPL-3.0-or-later.
+`catalog.json` lists every indicator with its path (relative to the catalog
+file), size and SHA-256 checksum. To serve it to the in-app catalog browser,
+commit the folder with its `catalog.json` to a GitHub repository and set
+**Settings > Indicator catalog** to the file's raw address, for example
+`https://raw.githubusercontent.com/<user>/<repo>/main/mytools/catalog.json`
+(or set `ORBIT_TAPE_CATALOG_URL`). The browser downloads each source from
+next to the catalog file and refuses it if the size or checksum differs, so
+regenerate `catalog.json` after every edit. Any HTTPS static host works.
+Pick a license for your files; the examples and built-in indicators are
+GPL-3.0-or-later.
 
 ## Troubleshooting
 
 | Problem | What to do |
 | --- | --- |
-| Indicator missing from the list | Restart the app. Check the file ends in `.ind` and is below `~/.local/share/orbit-tape/indicators/`. |
+| Indicator missing from the list | Check the file ends in `.ind`, is below `~/.local/share/orbit-tape/indicators/` and compiles (see the error box in the indicator list). |
 | "Indicator source quarantined" notice | The file failed to load; run `orbit-tape-indicator check` on it for the exact error. |
 | `source filename ... must be ...` error | Rename the file to the part of the ID after the last dot. |
 | Duplicate ID | Two files declare the same ID; IDs must be unique across the folder. |

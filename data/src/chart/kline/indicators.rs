@@ -25,8 +25,10 @@ pub use core::output::{IndicatorOutputRef, OutputChannelSpec, OutputValue, Outpu
 pub use core::runtime::IndicatorHost;
 
 pub use loader::{
-    IndicatorCatalogPaths, initialize_indicator_catalog, initialize_indicator_catalog_with_paths,
-    remove_indicator_source, write_indicator_source,
+    IndicatorCatalogPaths, IndicatorReloadReport, indicator_source_errors,
+    initialize_indicator_catalog, initialize_indicator_catalog_with_paths,
+    reload_indicator_catalog, remove_indicator_source, watched_indicator_paths,
+    write_indicator_source,
 };
 pub(crate) use registry::install_catalog_with_bundled_diagnostics;
 pub use registry::{
@@ -1002,7 +1004,7 @@ pub enum IndicatorSettingValue {
     I64(i64),
     F64(f64),
     Bool(bool),
-    Color(u32),
+    Color(u64),
     Choice(String),
     Text(String),
     TextList(Vec<String>),

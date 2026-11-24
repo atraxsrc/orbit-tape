@@ -12,13 +12,25 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
-static CATALOG: OnceLock<IndicatorCatalog> = OnceLock::new();
+/// The installed catalog. Live reload swaps in a new one; the old catalog is
+/// leaked on purpose because definitions are handed out as `&'static` all
+/// over the app. A reload costs a few kilobytes, and only happens when the
+/// user saves an indicator file.
+static CATALOG: AtomicPtr<IndicatorCatalog> = AtomicPtr::new(std::ptr::null_mut());
 static EMPTY_CATALOG: std::sync::LazyLock<IndicatorCatalog> =
     std::sync::LazyLock::new(|| IndicatorCatalog::from_registrations(Vec::new()));
 
 pub fn catalog() -> &'static IndicatorCatalog {
-    CATALOG.get().unwrap_or(&EMPTY_CATALOG)
+    let current = CATALOG.load(Ordering::Acquire);
+    if current.is_null() {
+        &EMPTY_CATALOG
+    } else {
+        // SAFETY: only leaked `Box<IndicatorCatalog>`s are stored, and they
+        // are never freed.
+        unsafe { &*current }
+    }
 }
 
 /// Stable identity independent of how a source is distributed.
@@ -473,10 +485,43 @@ pub(crate) fn install_catalog_with_bundled_diagnostics(
         log::warn!("indicator catalog: quarantined source: {diagnostic}");
     }
 
-    CATALOG
-        .set(catalog)
-        .map_err(|_| CatalogInstallError::AlreadyInitialized)?;
-    Ok(CATALOG.get().expect("catalog was installed"))
+    let catalog = Box::into_raw(Box::new(catalog));
+    if CATALOG
+        .compare_exchange(
+            std::ptr::null_mut(),
+            catalog,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
+        // SAFETY: `catalog` was never published.
+        drop(unsafe { Box::from_raw(catalog) });
+        return Err(CatalogInstallError::AlreadyInitialized);
+    }
+    Ok(self::catalog())
+}
+
+/// Replace the installed catalog (live reload). Unlike the first install
+/// this never fails: registrations that do not validate are quarantined
+/// into the catalog's diagnostics.
+pub(crate) fn replace_catalog(
+    bundled_registrations: Vec<IndicatorRegistration>,
+    installed_registrations: Vec<IndicatorRegistration>,
+    loader_diagnostics: Vec<String>,
+) -> &'static IndicatorCatalog {
+    let (registrations, loader_diagnostics) = merge_bundled_and_installed(
+        bundled_registrations,
+        installed_registrations,
+        loader_diagnostics,
+    );
+    let catalog: &'static mut IndicatorCatalog = Box::leak(Box::new(
+        IndicatorCatalog::from_registrations_with_diagnostics(registrations, loader_diagnostics),
+    ));
+    // The previous catalog is leaked, not freed: `&'static` borrows of it
+    // may still be alive.
+    CATALOG.store(catalog, Ordering::Release);
+    self::catalog()
 }
 
 fn merge_bundled_and_installed(

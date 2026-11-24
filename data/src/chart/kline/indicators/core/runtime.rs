@@ -8,10 +8,11 @@ use super::{
 use crate::chart::kline::{
     IndicatorInstance, IndicatorInstanceId, IndicatorInstanceStore, SourceBindingProblem,
 };
-use indicator_engine::{IndicatorFrame, SeriesInputValue};
+use indicator_engine::{CompiledIndicator, IndicatorFrame, SeriesInputValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{ControlFlow, Range};
+use std::sync::Arc;
 
 struct IndicatorRuntimeEntry {
     id: IndicatorInstanceId,
@@ -21,6 +22,9 @@ struct IndicatorRuntimeEntry {
     source_bindings: BTreeMap<String, IndicatorOutputRef>,
     base_source_selections: BTreeMap<String, BaseSeriesSource>,
     runtime: ScriptIndicatorRuntime,
+    /// The program this runtime was built from. A live reload installs a new
+    /// one when the source changed, which marks the entry for a rebuild.
+    compiled: Arc<CompiledIndicator>,
     output_indices: Option<OutputIndexMap>,
 }
 
@@ -64,6 +68,7 @@ impl IndicatorRuntimeEntry {
             source_bindings: instance.source_bindings.clone(),
             base_source_selections: instance.base_source_selections.clone(),
             runtime,
+            compiled: registration.compiled.clone(),
             output_indices: None,
         }))
     }
@@ -323,6 +328,11 @@ impl IndicatorHost {
                                 || entry.config != instance.config
                                 || entry.source_bindings != instance.source_bindings
                                 || entry.base_source_selections != instance.base_source_selections
+                                || super::catalog()
+                                    .get(&instance.kind)
+                                    .is_none_or(|registration| {
+                                        !Arc::ptr_eq(&entry.compiled, &registration.compiled)
+                                    })
                         })
                 })
             })

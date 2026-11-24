@@ -5,7 +5,9 @@
 //! TradingView: a rev 5 export (rev 6 additions switched off) and rev 7
 //! exports with every default on, with and without counter-trend mode. The
 //! TRXUSDT export covers HTF pivots with equal highs or lows, which pins down
-//! the pivot tie rule. Enhanced OB is checked against an independent
+//! the pivot tie rule. Two 4H counter-trend exports (3000 bars each) cover
+//! what the 1H windows never hit: counter-trend shorts (ETHUSDT) and HTF
+//! pivots tied with a newer bar (ADAUSDT). Enhanced OB is checked against an independent
 //! re-implementation of its Pine logic.
 
 use orbit_tape_indicator_engine::{
@@ -282,6 +284,24 @@ fn roman_setup_rev7_counter_trend_matches_tradingview() {
             "{export}: {counts:?}"
         );
     }
+}
+
+#[test]
+fn roman_setup_rev7_4h_matches_tradingview() {
+    let config = || IndicatorConfig::default().with("ctMode", InputValue::Bool(true));
+    let eth = check_rev7(
+        "tests/binance-ethusdt-perp-4h-20261124.csv",
+        "tests/tradingview-roman-setup-rev7-eth-4h-ct.csv",
+        config(),
+    );
+    assert!(eth["CT MSS down"] > 0, "{eth:?}");
+    // ADAUSDT has two 12H swing lows tied with a newer bar inside the window.
+    let ada = check_rev7(
+        "tests/binance-adausdt-perp-4h-20261124.csv",
+        "tests/tradingview-roman-setup-rev7-ada-4h-ct.csv",
+        config(),
+    );
+    assert!(ada["HTF MSS down"] > 0, "{ada:?}");
 }
 
 #[test]

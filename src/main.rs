@@ -7,10 +7,12 @@ mod audio;
 mod blur;
 mod connector;
 mod deferred;
+mod indicator_watch;
 mod layout;
 mod logger;
 mod modal;
 mod notify;
+mod scan;
 mod screen;
 mod style;
 mod theme;
@@ -49,6 +51,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 fn main() {
+    // Headless subcommand: no window, no logger, no data migration.
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if arguments.first().is_some_and(|argument| argument == "scan") {
+        std::process::exit(scan::run(&arguments[1..]));
+    }
+
     logger::install_panic_hook();
 
     // Before the logger, which creates the data directory.
@@ -126,6 +134,7 @@ struct OrbitTape {
     theme: ThemeState,
     notifications: Notifications,
     alert_center: alerts::AlertCenter,
+    alert_history: data::config::alert_history::AlertHistory,
     last_alert_poll: std::time::Instant,
     window_scale_factors: window::WindowScaleFactors,
     network: Deferred<data::Network>,
@@ -158,6 +167,10 @@ enum Message {
     AudioStream(modal::audio::Message),
     /// Periodic check for COSMIC theme changes.
     PollCosmicTheme,
+    AlertHistory(modal::alert_history::Message),
+    /// Indicator source files changed on disk (debounced).
+    IndicatorFilesChanged,
+    IndicatorsReloaded(Result<data::chart::kline::indicators::IndicatorReloadReport, String>),
 }
 
 impl OrbitTape {
@@ -191,6 +204,7 @@ impl OrbitTape {
             saved_state.volume_size_unit,
             boot,
             saved_state.alerts,
+            saved_state.indicator_catalog_url,
         );
         let network = Deferred::new(saved_state.network);
 
@@ -207,9 +221,11 @@ impl OrbitTape {
                 saved_state.theme,
                 saved_state.theme_source,
                 saved_state.glass,
-            ),
+            )
+            .with_accent_overrides(saved_state.accent_colors),
             notifications: Notifications::new(),
             alert_center: alerts::AlertCenter::default(),
+            alert_history: data::config::alert_history::AlertHistory::load(),
             last_alert_poll: std::time::Instant::now(),
             network_editor: NetworkEditor::new(&network),
             network,
@@ -575,8 +591,16 @@ impl OrbitTape {
                 self.theme_changed(changed);
                 self.sync_blur();
             }
+            Message::IndicatorFilesChanged => {
+                return Task::perform(
+                    async { data::chart::kline::indicators::reload_indicator_catalog() },
+                    Message::IndicatorsReloaded,
+                );
+            }
+            Message::IndicatorsReloaded(result) => self.indicators_reloaded(result),
+            Message::AlertHistory(message) => return self.update_alert_history(message),
             Message::ThemeEditor(msg) => {
-                let action = self.theme_editor.update(msg, self.theme.current());
+                let action = self.theme_editor.update(msg, &self.theme);
 
                 match action {
                     Some(modal::theme_editor::Action::Exit) => {
@@ -584,6 +608,10 @@ impl OrbitTape {
                     }
                     Some(modal::theme_editor::Action::UpdateTheme(theme)) => {
                         self.select_theme(theme);
+                    }
+                    Some(modal::theme_editor::Action::SetAccent(index, color)) => {
+                        let changed = self.theme.set_accent(index, color);
+                        self.theme_changed(changed);
                     }
                     None => {}
                 }
@@ -596,6 +624,10 @@ impl OrbitTape {
                     Some(Action::ThemeSelected(theme)) => {
                         self.theme_editor.reset_input();
                         self.select_theme(theme);
+                    }
+                    Some(Action::EditAccent(index)) => {
+                        self.theme_editor.focus_accent(index);
+                        self.sidebar.set_menu(Some(sidebar::Menu::ThemeEditor));
                     }
                     Some(Action::SetThemeSource(source)) => {
                         let changed = self.theme.set_source(source);
@@ -686,6 +718,11 @@ impl OrbitTape {
                     Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Network))) => {
                         self.network_editor = NetworkEditor::new(&self.network);
                     }
+                    Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Alerts))) => {
+                        if self.alert_history.mark_read() {
+                            self.alert_history.save();
+                        }
+                    }
                     Some(screen::sidebar::Action::MenuChanged(_)) => {}
                     Some(screen::sidebar::Action::TickerSelected(ticker_info, content)) => {
                         let main_window_id = self.main_window.id;
@@ -725,6 +762,41 @@ impl OrbitTape {
         Task::none()
     }
 
+    /// Live reload finished: refresh every chart and say what happened.
+    fn indicators_reloaded(
+        &mut self,
+        result: Result<data::chart::kline::indicators::IndicatorReloadReport, String>,
+    ) {
+        let report = match result {
+            Ok(report) => report,
+            Err(error) => {
+                self.notifications
+                    .push(Toast::error(format!("Indicator reload failed: {error}")));
+                return;
+            }
+        };
+        if !report.reloaded.is_empty() || !report.removed.is_empty() {
+            for layout in &mut self.layout_manager.layouts {
+                layout.dashboard.indicator_catalog_reloaded();
+            }
+        }
+        if !report.reloaded.is_empty() {
+            self.notifications.push(Toast::info(format!(
+                "Reloaded {}",
+                report.reloaded.join(", ")
+            )));
+        }
+        if !report.removed.is_empty() {
+            self.notifications.push(Toast::info(format!(
+                "Indicator removed: {}",
+                report.removed.join(", ")
+            )));
+        }
+        for error in report.errors {
+            self.notifications.push(Toast::error(error));
+        }
+    }
+
     /// Collects alert conditions from the charts and delivers them. Runs at
     /// most twice a second; bar closes are rarer than that.
     fn poll_alerts(&mut self, now: std::time::Instant) {
@@ -739,8 +811,52 @@ impl OrbitTape {
         if hits.is_empty() {
             return;
         }
-        if let Some(err) = self.alert_center.deliver(hits, &self.settings.alerts) {
+        let (fired, error) = self.alert_center.deliver(hits, &self.settings.alerts);
+        if !fired.is_empty() {
+            for alert in fired {
+                self.alert_history.push(alert);
+            }
+            // The list is open, so the user sees the new entries.
+            if self.sidebar.is_menu_active(sidebar::Menu::Alerts) {
+                self.alert_history.mark_read();
+            }
+            self.alert_history.save();
+        }
+        if let Some(err) = error {
             self.notifications.push(Toast::error(err));
+        }
+    }
+
+    fn update_alert_history(&mut self, message: modal::alert_history::Message) -> Task<Message> {
+        match message {
+            modal::alert_history::Message::Clear => {
+                self.alert_history.clear();
+                self.alert_history.save();
+                Task::none()
+            }
+            modal::alert_history::Message::Focus(index) => {
+                let Some(alert) = self.alert_history.get(index).cloned() else {
+                    return Task::none();
+                };
+                let main_window = self.main_window.id;
+                match self.active_dashboard_mut().focus_chart(
+                    main_window,
+                    alert.ticker,
+                    alert.basis,
+                ) {
+                    Some(window) => {
+                        self.sidebar.set_menu(None);
+                        iced::window::gain_focus(window)
+                    }
+                    None => {
+                        self.notifications.push(Toast::warn(format!(
+                            "No chart for {} is open in this layout",
+                            alert.symbol
+                        )));
+                        Task::none()
+                    }
+                }
+            }
         }
     }
 
@@ -765,7 +881,7 @@ impl OrbitTape {
         let content = if id == self.main_window.id {
             let sidebar_view = self
                 .sidebar
-                .view(self.audio_stream.volume())
+                .view(self.audio_stream.volume(), self.alert_history.unread())
                 .map(Message::Sidebar);
             let dashboard_view = dashboard
                 .view(
@@ -885,6 +1001,9 @@ impl OrbitTape {
             Subscription::none()
         };
 
+        let indicator_files =
+            indicator_watch::subscription().map(|()| Message::IndicatorFilesChanged);
+
         Subscription::batch(vec![
             exchange_streams,
             sidebar,
@@ -892,6 +1011,7 @@ impl OrbitTape {
             tick,
             hotkeys,
             cosmic_theme,
+            indicator_files,
         ])
     }
 
@@ -919,7 +1039,13 @@ impl OrbitTape {
 
     fn update_shared_chart_resources(&mut self, message: manifest::Message) -> Task<Message> {
         self.layout_manager
-            .update_chart_resources(message, &self.data_sources.catalog_http)
+            .update_chart_resources(
+                message,
+                &self.data_sources.catalog_http,
+                &data::chart::kline::indicators::manifest::resolve_catalog_url(
+                    &self.settings.indicator_catalog_url,
+                ),
+            )
             .map(Message::SharedChartResources)
     }
 
@@ -1223,6 +1349,21 @@ impl OrbitTape {
                     align_x,
                 )
             }
+            sidebar::Menu::Alerts => {
+                let (align_x, padding) = match sidebar_pos {
+                    sidebar::Position::Left => (Alignment::Start, padding::left(44).top(108)),
+                    sidebar::Position::Right => (Alignment::End, padding::right(44).top(108)),
+                };
+
+                dashboard_modal(
+                    base,
+                    modal::alert_history::view(&self.alert_history).map(Message::AlertHistory),
+                    Message::Sidebar(screen::sidebar::Message::ToggleSidebarMenu(None)),
+                    padding,
+                    Alignment::Start,
+                    align_x,
+                )
+            }
             sidebar::Menu::ThemeEditor => {
                 let (align_x, padding) = match sidebar_pos {
                     sidebar::Position::Left => (Alignment::Start, padding::left(44).bottom(4)),
@@ -1232,7 +1373,7 @@ impl OrbitTape {
                 dashboard_modal(
                     base,
                     self.theme_editor
-                        .view(self.theme.current())
+                        .view(&self.theme)
                         .map(Message::ThemeEditor),
                     Message::Sidebar(screen::sidebar::Message::ToggleSidebarMenu(None)),
                     padding,
@@ -1317,6 +1458,15 @@ impl OrbitTape {
             self.sidebar.cache_enabled(),
             *self.settings.boot.wanted(),
         );
+
+        let state = data::State {
+            indicator_catalog_url: self.settings.indicator_catalog_url.trim().to_owned(),
+            accent_colors: self
+                .theme
+                .accent_overrides()
+                .map(|color| color.map(data::config::theme::color_to_hex)),
+            ..state
+        };
 
         match serde_json::to_string(&state) {
             Ok(layout_str) => {

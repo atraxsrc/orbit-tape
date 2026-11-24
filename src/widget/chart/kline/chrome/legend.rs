@@ -1492,6 +1492,22 @@ impl<'a> LegendView<'a> {
 
                 let title = self.indicator_title(scene.primary.panel_index, true, row.value_id);
 
+                // An overlay has no panel of its own to show why it is
+                // unavailable, so the reason goes after its name.
+                if let Some(reason) = self.indicator_unavailable_message(Some(row.value_id)) {
+                    let reason_x = label_x + (title.chars().count() + 2) as f32 * CHAR_W;
+                    frame.fill_text(canvas::Text {
+                        content: reason.to_owned(),
+                        position: Point::new(reason_x, label_y),
+                        color: palette.danger.base.color.scale_alpha(0.9 * row_alpha),
+                        size: TEXT_SIZE.into(),
+                        align_x: iced::Alignment::Start.into(),
+                        align_y: iced::Alignment::Center.into(),
+                        font: style::AZERET_MONO,
+                        ..Default::default()
+                    });
+                }
+
                 frame.fill_text(canvas::Text {
                     content: title,
                     position: Point::new(label_x, label_y),

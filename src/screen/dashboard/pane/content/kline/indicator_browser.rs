@@ -92,12 +92,24 @@ impl State {
             Page::Catalog => self.catalog.view(catalog),
         };
 
-        let notice = (self.page == Page::Catalog && catalog.restart_pending()).then(|| {
-            crate::widget::banner(
-                "Restart required.\nChanges will take effect after restart.",
-                crate::widget::BannerKind::Warning,
-            )
-        });
+        let notice = match self.page {
+            Page::Catalog => catalog.restart_pending().then(|| {
+                crate::widget::banner(
+                    "Not loaded yet.\nChanges apply on the next indicator reload or restart.",
+                    crate::widget::BannerKind::Warning,
+                )
+            }),
+            // Compile errors from live reload stay visible here until fixed.
+            Page::Installed => {
+                let errors = data::chart::kline::indicators::indicator_source_errors();
+                (!errors.is_empty()).then(|| {
+                    crate::widget::banner(
+                        format!("Indicator source errors:\n{}", errors.join("\n")),
+                        crate::widget::BannerKind::Error,
+                    )
+                })
+            }
+        };
 
         crate::widget::inspector::panel_page(body, notice)
     }

@@ -1,5 +1,102 @@
+/// A color as the engine passes it around: either a literal ARGB value in the
+/// low 32 bits, or (with [`Color::THEME_FLAG`] set) a theme role that the host
+/// resolves from the desktop theme at draw time. A theme color keeps its own
+/// alpha in bits 24..32, so `color.new(theme.success, 80)` still works.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Color(pub u32);
+pub struct Color(pub u64);
+
+impl Color {
+    pub const THEME_FLAG: u64 = 1 << 32;
+    const ROLE_SHIFT: u32 = 33;
+    const ALPHA_MASK: u64 = 0xff00_0000;
+
+    pub const fn argb(value: u32) -> Self {
+        Self(value as u64)
+    }
+
+    pub const fn theme(role: ThemeColor) -> Self {
+        Self(Self::THEME_FLAG | ((role as u64) << Self::ROLE_SHIFT) | Self::ALPHA_MASK)
+    }
+
+    /// The theme role, or `None` for a literal color.
+    pub fn theme_role(self) -> Option<ThemeColor> {
+        if self.0 & Self::THEME_FLAG == 0 {
+            return None;
+        }
+        ThemeColor::ALL
+            .get(((self.0 >> Self::ROLE_SHIFT) & 0x7) as usize)
+            .copied()
+    }
+
+    /// The ARGB value of a literal color. For a theme color only the alpha
+    /// byte is meaningful.
+    pub const fn argb_bits(self) -> u32 {
+        self.0 as u32
+    }
+
+    pub const fn alpha(self) -> u8 {
+        (self.0 >> 24) as u8
+    }
+
+    pub const fn with_alpha(self, alpha: u8) -> Self {
+        Self((self.0 & !Self::ALPHA_MASK) | ((alpha as u64) << 24))
+    }
+}
+
+impl std::fmt::Display for Color {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.theme_role() {
+            Some(role) if self.alpha() == 0xff => write!(formatter, "theme.{}", role.name()),
+            Some(role) => write!(formatter, "theme.{}@{:02x}", role.name(), self.alpha()),
+            None => write!(formatter, "#{:08x}", self.argb_bits()),
+        }
+    }
+}
+
+/// Theme colors an indicator can use as values (`theme.success`, ...).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ThemeColor {
+    Neutral,
+    Secondary,
+    Primary,
+    Success,
+    Danger,
+    Warning,
+    /// Normal text on the chart background.
+    Text,
+    /// Background for panels drawn over the chart, such as an info table.
+    Panel,
+}
+
+impl ThemeColor {
+    pub const ALL: [Self; 8] = [
+        Self::Neutral,
+        Self::Secondary,
+        Self::Primary,
+        Self::Success,
+        Self::Danger,
+        Self::Warning,
+        Self::Text,
+        Self::Panel,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Neutral => "neutral",
+            Self::Secondary => "secondary",
+            Self::Primary => "primary",
+            Self::Success => "success",
+            Self::Danger => "danger",
+            Self::Warning => "warning",
+            Self::Text => "text",
+            Self::Panel => "panel",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|role| role.name() == name)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaneTarget {

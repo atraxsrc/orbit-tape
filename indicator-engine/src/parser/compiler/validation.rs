@@ -1257,12 +1257,18 @@ impl LoweringContext {
                     extend_right,
                     text,
                     text_color,
+                    text_size,
+                    width_expr,
+                    border_style_expr,
                     ..
                 } => {
                     if let Some(visible) = visible {
                         self.validate_ta_expression(visible, restricted);
                     }
                     for value in [
+                        text_size,
+                        width_expr,
+                        border_style_expr,
                         Some(key),
                         Some(upper),
                         Some(lower),

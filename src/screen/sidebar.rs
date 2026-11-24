@@ -97,7 +97,7 @@ impl Sidebar {
         (Task::none(), None)
     }
 
-    pub fn view(&self, audio_volume: Option<f32>) -> Element<'_, Message> {
+    pub fn view(&self, audio_volume: Option<f32>, unread_alerts: usize) -> Element<'_, Message> {
         let state = &self.state;
 
         let tooltip_position = if state.position == sidebar::Position::Left {
@@ -108,7 +108,8 @@ impl Sidebar {
 
         let is_table_open = self.tickers_table.is_shown;
 
-        let nav_buttons = self.nav_buttons(is_table_open, audio_volume, tooltip_position);
+        let nav_buttons =
+            self.nav_buttons(is_table_open, audio_volume, unread_alerts, tooltip_position);
 
         let tickers_table = if is_table_open {
             column![responsive(move |size| self
@@ -136,6 +137,7 @@ impl Sidebar {
         &self,
         is_table_open: bool,
         audio_volume: Option<f32>,
+        unread_alerts: usize,
         tooltip_position: TooltipPosition,
     ) -> iced::widget::Column<'_, Message> {
         let settings_modal_button = {
@@ -200,10 +202,22 @@ impl Sidebar {
             )
         };
 
+        let alerts_btn = {
+            let is_active = self.is_menu_active(sidebar::Menu::Alerts);
+            button_with_tooltip(
+                crate::widget::bell::bell(unread_alerts),
+                Message::ToggleSidebarMenu(Some(sidebar::Menu::Alerts)),
+                None,
+                tooltip_position,
+                move |theme, status| crate::style::button::transparent(theme, status, is_active),
+            )
+        };
+
         column![
             ticker_search_button,
             layout_modal_button,
             audio_btn,
+            alerts_btn,
             space::vertical(),
             settings_modal_button,
         ]

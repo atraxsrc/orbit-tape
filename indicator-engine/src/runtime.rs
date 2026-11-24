@@ -1158,10 +1158,13 @@ impl IndicatorInstance {
                 extend_right,
                 persistent,
                 width,
+                width_expr,
                 text,
                 text_color,
                 text_position,
+                text_size,
                 border_style,
+                border_style_expr,
             } => {
                 let visible = self.output_visibility(visible, &id, "visible", true)?;
                 if !visible {
@@ -1222,13 +1225,27 @@ impl IndicatorInstance {
                         "extend_right",
                         false,
                     )?,
-                    width,
+                    width: match width_expr {
+                        // Runtime widths are clamped to the literal range.
+                        Some(expression) => self
+                            .output_value(expression, &id, "width", ValueType::Float)?
+                            .as_float()
+                            .filter(|value| value.is_finite())
+                            .map_or(width, |value| value.clamp(1.0, 64.0) as f32),
+                        None => width,
+                    },
                     text: match text {
                         Some(text) => match self.evaluate_expression(text)? {
                             Value::String(content) => Some(crate::frame::RegionText {
                                 content,
                                 color: self.evaluate_color(text_color, &id, "text_color")?,
                                 position: text_position,
+                                size: match text_size {
+                                    Some(size) => crate::frame::InfoTextSize::parse(
+                                        &self.info_text(size, &id, "text_size")?,
+                                    ),
+                                    None => None,
+                                },
                             }),
                             Value::Na => None,
                             other => {
@@ -1242,7 +1259,16 @@ impl IndicatorInstance {
                         },
                         None => None,
                     },
-                    border_style,
+                    border_style: match border_style_expr {
+                        Some(style) => crate::frame::RegionBorderStyle::parse(
+                            &self
+                                .info_text(style, &id, "border_style")?
+                                .trim()
+                                .to_ascii_lowercase(),
+                        )
+                        .unwrap_or_default(),
+                        None => border_style,
+                    },
                 };
                 if persistent {
                     self.charge_by(output.region_updates.len())?;
@@ -1602,6 +1628,18 @@ impl IndicatorInstance {
         }
         .map_or(0, Value::copy_work);
         self.charge_by(copy_work)?;
+        // Reading a value that already lives in a local, state, input or
+        // constant allocates nothing new, so it needn't trigger a resource
+        // rescan; only values an expression creates (an array.push result, a
+        // concatenated string) do. Without this, every array read in a loop
+        // rescanned every local at the next checkpoint.
+        let resident = matches!(
+            expression.kind,
+            ExpressionKind::Constant(_)
+                | ExpressionKind::LoadLocal(_)
+                | ExpressionKind::LoadInput(_)
+                | ExpressionKind::LoadState(_)
+        );
         let value = match expression.kind {
             ExpressionKind::Constant(constant) => self
                 .compiled
@@ -2004,7 +2042,7 @@ impl IndicatorInstance {
             }
         };
         let value = value.normalize_nonfinite();
-        self.enforce_value_limits(&value)?;
+        self.check_value_limits(&value, !resident)?;
         if let Some(slot) = expression.series_slot
             && let Some(current) = self.working.current_series.get_mut(slot.0)
         {
@@ -2185,6 +2223,12 @@ impl IndicatorInstance {
     }
 
     fn enforce_value_limits(&mut self, value: &Value) -> Result<(), RuntimeError> {
+        self.check_value_limits(value, true)
+    }
+
+    /// Checks one value against the limits. `fresh` values are new
+    /// allocations and mark the next checkpoint for a full resource scan.
+    fn check_value_limits(&mut self, value: &Value, fresh: bool) -> Result<(), RuntimeError> {
         if value.nesting_depth() > MAX_COLLECTION_NESTING {
             return Err(RuntimeError::ResourceLimitExceeded("collection nesting"));
         }
@@ -2193,7 +2237,7 @@ impl IndicatorInstance {
             return Err(RuntimeError::ResourceLimitExceeded("string bytes"));
         }
         let (collections, heap_bytes) = value.resource_usage();
-        if !matches!(value, Value::Tuple(_)) && (collections > 0 || heap_bytes > 0) {
+        if fresh && !matches!(value, Value::Tuple(_)) && (collections > 0 || heap_bytes > 0) {
             self.resource_check_dirty = true;
         }
         if collections > self.limits.max_collection_elements {

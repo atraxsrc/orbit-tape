@@ -30,13 +30,15 @@ pub(crate) enum Period {
     Days { ms: i64 },
     /// Weeks starting Monday 00:00 UTC.
     Week,
-    /// Calendar months.
-    Month,
+    /// Calendar months grouped `count` at a time, aligned to January (UTC):
+    /// 1 is a month, 3 a quarter, 12 a year. `count` divides 12.
+    Months { count: u32 },
 }
 
 impl Period {
-    /// Parses `"<minutes>"`, `"<n>H"`, `"D"`/`"<n>D"`, `"W"`/`"1W"` and
-    /// `"M"`/`"1M"`, case-insensitively.
+    /// Parses `"<minutes>"`, `"<n>H"`, `"D"`/`"<n>D"`, `"W"`/`"1W"`, and
+    /// `"M"`/`"<n>M"` where `n` divides 12 (`"3M"` quarters, `"12M"` years),
+    /// case-insensitively.
     pub(crate) fn parse(text: &str) -> Option<Self> {
         let text = text.trim().to_ascii_uppercase();
         let (count, unit) = match text.find(|c: char| !c.is_ascii_digit()) {
@@ -54,7 +56,9 @@ impl Period {
                 ms: count.checked_mul(DAY)?,
             }),
             "W" if count == 1 => Some(Self::Week),
-            "M" if count == 1 => Some(Self::Month),
+            "M" if 12 % count == 0 => Some(Self::Months {
+                count: count as u32,
+            }),
             _ => None,
         }
     }
@@ -79,9 +83,11 @@ impl Period {
             }
             Self::Days { ms } => Some(time.div_euclid(ms) * ms),
             Self::Week => Some((time - FIRST_MONDAY).div_euclid(WEEK) * WEEK + FIRST_MONDAY),
-            Self::Month => {
+            Self::Months { count } => {
                 let date = Utc.timestamp_millis_opt(time).single()?.date_naive();
-                let first = date.with_day(1)?.and_hms_opt(0, 0, 0)?;
+                let month0 = date.month0() / count * count;
+                let first = chrono::NaiveDate::from_ymd_opt(date.year(), month0 + 1, 1)?
+                    .and_hms_opt(0, 0, 0)?;
                 Some(first.and_utc().timestamp_millis())
             }
         }
@@ -347,8 +353,14 @@ mod tests {
         assert_eq!(Period::parse("3D"), Some(Period::Days { ms: 3 * DAY }));
         assert_eq!(Period::parse("W"), Some(Period::Week));
         assert_eq!(Period::parse("1w"), Some(Period::Week));
-        assert_eq!(Period::parse("M"), Some(Period::Month));
-        for bad in ["", "0", "-5", "2W", "2M", "1500", "abc", "12X"] {
+        assert_eq!(Period::parse("M"), Some(Period::Months { count: 1 }));
+        assert_eq!(Period::parse("1M"), Some(Period::Months { count: 1 }));
+        assert_eq!(Period::parse("3M"), Some(Period::Months { count: 3 }));
+        assert_eq!(Period::parse("6m"), Some(Period::Months { count: 6 }));
+        assert_eq!(Period::parse("12M"), Some(Period::Months { count: 12 }));
+        for bad in [
+            "", "0", "-5", "2W", "5M", "7M", "24M", "0M", "1500", "abc", "12X",
+        ] {
             assert_eq!(Period::parse(bad), None, "{bad:?}");
         }
     }
@@ -387,7 +399,10 @@ mod tests {
 
         // 2024-02-15 -> 2024-02-01.
         let feb_1 = JAN_1_2024 + 31 * DAY;
-        assert_eq!(Period::Month.bucket_start(feb_1 + 14 * DAY), Some(feb_1));
+        let month = Period::Months { count: 1 };
+        assert_eq!(month.bucket_start(feb_1 + 14 * DAY), Some(feb_1));
+        // The last millisecond of January is still January.
+        assert_eq!(month.bucket_start(feb_1 - 1), Some(JAN_1_2024));
 
         // Before the epoch still floors downwards.
         assert_eq!(Period::Days { ms: DAY }.bucket_start(-1), Some(-DAY));
@@ -404,8 +419,98 @@ mod tests {
         );
         let mar_1 = JAN_1_2024 + 60 * DAY; // 2024 is a leap year
         assert_eq!(
-            Period::Month.history_start(mar_1 + DAY, 2),
+            Period::Months { count: 1 }.history_start(mar_1 + DAY, 2),
             Some(JAN_1_2024)
         );
+        // Two quarters before the one holding 2024-03-02: Q3 2023.
+        assert_eq!(
+            Period::parse("3M").unwrap().history_start(mar_1 + DAY, 2),
+            Some(utc(2023, 7, 1))
+        );
+        assert_eq!(
+            Period::parse("12M").unwrap().history_start(mar_1 + DAY, 1),
+            Some(utc(2023, 1, 1))
+        );
+    }
+
+    fn utc(year: i32, month: u32, day: u32) -> i64 {
+        Utc.with_ymd_and_hms(year, month, day, 0, 0, 0)
+            .single()
+            .expect("valid date")
+            .timestamp_millis()
+    }
+
+    #[test]
+    fn quarters_and_years_follow_the_utc_calendar() {
+        let quarter = Period::parse("3M").unwrap();
+        let cases = [
+            (utc(2024, 1, 1), utc(2024, 1, 1)),
+            (utc(2024, 3, 31) + 23 * HOUR, utc(2024, 1, 1)),
+            (utc(2024, 4, 1), utc(2024, 4, 1)),
+            (utc(2024, 4, 1) - 1, utc(2024, 1, 1)),
+            (utc(2024, 8, 15), utc(2024, 7, 1)),
+            (utc(2024, 12, 31) + 23 * HOUR, utc(2024, 10, 1)),
+            (utc(2025, 1, 1), utc(2025, 1, 1)),
+            (utc(1969, 11, 5), utc(1969, 10, 1)),
+        ];
+        for (time, start) in cases {
+            assert_eq!(quarter.bucket_start(time), Some(start), "{time}");
+        }
+
+        let half = Period::parse("6M").unwrap();
+        assert_eq!(half.bucket_start(utc(2024, 6, 30)), Some(utc(2024, 1, 1)));
+        assert_eq!(half.bucket_start(utc(2024, 7, 1)), Some(utc(2024, 7, 1)));
+
+        let year = Period::parse("12M").unwrap();
+        assert_eq!(year.bucket_start(utc(2024, 1, 1)), Some(utc(2024, 1, 1)));
+        assert_eq!(
+            year.bucket_start(utc(2025, 1, 1) - 1),
+            Some(utc(2024, 1, 1))
+        );
+        assert_eq!(year.bucket_start(utc(2025, 1, 1)), Some(utc(2025, 1, 1)));
+        assert_eq!(
+            year.bucket_start(utc(2024, 2, 29) + HOUR),
+            Some(utc(2024, 1, 1))
+        );
+    }
+
+    #[test]
+    fn quarter_candles_aggregate_across_a_boundary() {
+        let mut state = HtfState::new(Period::parse("3M").unwrap());
+        state.capacity = 2;
+        // Daily bars from 2024-01-01 to 2024-07-02: Q1 and Q2 close, Q3 forms.
+        let mut time = utc(2024, 1, 1);
+        let mut index = 0;
+        while time <= utc(2024, 7, 2) {
+            let price = index as f64;
+            state.update(Bar {
+                index,
+                time,
+                ohlcv: [
+                    Some(price),
+                    Some(price + 0.5),
+                    Some(price - 0.5),
+                    Some(price),
+                    Some(1.0),
+                ],
+            });
+            time += DAY;
+            index += 1;
+        }
+        let q2 = state.closed[0];
+        let q1 = state.closed[1];
+        assert_eq!(q1.time, utc(2024, 1, 1));
+        assert_eq!(q1.open, 0.0);
+        // 2024 is a leap year: Q1 has 91 days, Q2 91.
+        assert_eq!(q1.close, 90.0);
+        assert_eq!(q1.high, 90.5);
+        assert_eq!(q1.volume, 91.0);
+        assert_eq!(q2.time, utc(2024, 4, 1));
+        assert_eq!(q2.open, 91.0);
+        assert_eq!(q2.low, 90.5);
+        assert_eq!(q2.close, 181.0);
+        let forming = state.forming.expect("Q3 is forming");
+        assert_eq!(forming.time, utc(2024, 7, 1));
+        assert_eq!(forming.open, 182.0);
     }
 }

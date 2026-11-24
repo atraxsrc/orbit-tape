@@ -121,10 +121,8 @@ pub fn calc_search_rank(ticker: &Ticker, query: &str) -> Option<SearchRank> {
             (1_u8, 0_usize) // prefix
         } else if cand.ends_with(query) {
             (2_u8, 0_usize) // suffix
-        } else if let Some(p) = cand.find(query) {
-            (3_u8, p) // substring
         } else {
-            return None;
+            (3_u8, cand.find(query)?) // substring
         };
 
         Some(SearchRank {

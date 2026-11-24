@@ -306,12 +306,12 @@ without visual layers; readouts default to hidden.
 | `pane` | `indicator` (`main` in primary overlays); also `named:<number>` |
 | `scale` | `price`; also `independent` |
 | `style` | `line`; also `step`, `histogram`, `area` |
-| `display` | `value` (`none` for booleans) |
+| `display` | `value` (`none` for booleans); `none` hides the plot from the legend and the chart, like Pine's `display.none`, but keeps it as an output |
 | `precision` | Optional: `instrument`, `decimals:<0–18>`, `step:<positive number>` |
 | `width`, `offset` | `1`, `0`; width is positive and at most 64, offset is a signed 32-bit integer |
 | `color_slot`, `color` | Static style slot or runtime color |
 | `style_by` | Boolean output ID; requires `true_color_slot` and `false_color_slot` |
-| `layer_title`, `overlay`, `layer` | Plot title, `true`, `true` |
+| `layer_title`, `overlay`, `layer` | Plot title, `true`, `true` (`false` with `display = "none"`; `layer = true` draws a hidden plot anyway) |
 | `data_kind` | Inferred; `scalar`, `histogram`, `ohlc`, `range` |
 | `mark`, `axis` | Inferred; axis is `primary` or `secondary` |
 | `alert` | `false`; boolean literal, only for boolean plots |
@@ -433,8 +433,9 @@ region(key = bar_index, upper = chart.high, lower = chart.low,
 ```
 
 Regions are non-interactive price overlays. Geometry, integer key, `visible`,
-and `extend_right` are runtime expressions; ID, positive `width` (default `1`,
-maximum `64`), and `persistent` (default `false`) are literal metadata.
+and `extend_right` are runtime expressions; ID and `persistent` (default
+`false`) are literal metadata. `width` (default `1`, maximum `64`) is a literal
+or a runtime number such as an input; runtime widths are clamped to 1-64.
 Color each edge with runtime `border_color` / `fill_color` or declared
 `border_color_slot` / `fill_color_slot`, never both for the same edge.
 Alternatively, a boolean `style_by` expression with paired true/false slots
@@ -447,9 +448,15 @@ Regions can carry text and a border style:
 - `text_position` (literal): `"inside"` (default) centers the text in the
   region when it fits; `"above"` and `"below"` draw a filled label tag above
   the upper edge or below the lower edge, colored with the region's fill (or
-  border) color. A region with `upper == lower` and `left_index ==
-  right_index` is a plain point label, like Pine's `label.new`.
-- `border_style` (literal): `"solid"` (default), `"dashed"` or `"dotted"`.
+  border) color; `"right"` draws plain text just right of the right end,
+  vertically centered (Pine's `label.style_none` at the end of a line),
+  in `text_color` or the border color. A region with `upper == lower` and
+  `left_index == right_index` is a plain point label, like Pine's `label.new`.
+- `text_size` (runtime string): `tiny`, `small`, `normal`, `large`, `huge`,
+  as for info panels; unknown names use the default size.
+- `border_style`: `"solid"` (default), `"dashed"` or `"dotted"`, as a literal
+  or a runtime string such as an input (any case; unknown names draw solid).
+- A flat region (`upper == lower`) with a border draws a horizontal line.
 - `right_index` may lie past the last bar; the host extends the bar spacing.
 
 ```text
@@ -503,6 +510,7 @@ This example emits a snapshot region; a persistent region instead uses
 | `"1440"`, `"D"`, `"3D"` | Whole days from the Unix epoch |
 | `"W"`, `"1W"` | Weeks from Monday 00:00 UTC |
 | `"M"`, `"1M"` | Calendar months |
+| `"3M"`, `"6M"`, `"12M"` (any count that divides 12) | Quarters, half years, years: calendar months grouped from January |
 
 | Signature | Result |
 | --- | --- |
@@ -661,8 +669,19 @@ Colors also have constants `color.red`, `color.green`, `color.blue`,
 `color.silver`, `color.orange`, `color.yellow`, `color.lime`, `color.teal`,
 `color.aqua`, `color.navy`, `color.purple`, `color.fuchsia`, `color.maroon`
 and `color.olive`. Strings join with `+`; both sides must be strings. `color.rgb(...)` with positional literal
-components can supply input defaults; runtime color expressions can style
-outputs. Invalid runtime components fail rather than being clamped. Collection
+components, or `color.new(...)` of a constant color and a literal
+transparency, can supply input defaults; runtime color expressions can style
+outputs.
+
+Theme colors follow the app's theme (on COSMIC, the desktop theme) and are
+looked up each time the chart is drawn, so a theme change shows at once:
+`theme.success`, `theme.danger`, `theme.warning`, `theme.primary` (the
+accent), `theme.secondary`, `theme.neutral`, `theme.text` (normal text) and
+`theme.panel` (background for panels over the chart). They work anywhere a
+color does, including input defaults, `select(...)` and `color.new(...)`,
+which keeps the role and sets the transparency. In a color setting or with
+`--input` they are written `theme.success`, or `theme.success@80` with a hex
+alpha. Invalid runtime components fail rather than being clamped. Collection
 operations remain subject to heap, nesting, element-count, and weighted
 copy-work limits.
 

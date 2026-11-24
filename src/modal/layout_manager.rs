@@ -178,8 +178,10 @@ impl LayoutManager {
         &mut self,
         message: manifest::Message,
         catalog_http: &reqwest::Client,
+        catalog_url: &str,
     ) -> iced::Task<manifest::Message> {
-        self.chart_resources.update(message, catalog_http)
+        self.chart_resources
+            .update(message, catalog_http, catalog_url)
     }
 
     pub fn apply_preset_command(

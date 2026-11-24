@@ -336,6 +336,7 @@ impl LoweringContext {
                 "text",
                 "text_color",
                 "text_position",
+                "text_size",
                 "border_style",
             ],
         );
@@ -494,12 +495,52 @@ impl LoweringContext {
             Some(value) => crate::frame::RegionTextPosition::parse(&value).unwrap_or_else(|| {
                 self.error(
                     call.span,
-                    "region text_position must be \"inside\", \"above\" or \"below\"",
+                    "region text_position must be \"inside\", \"above\", \"below\" or \"right\"",
                 );
                 crate::frame::RegionTextPosition::default()
             }),
         };
-        let border_style = match self.static_named_string(call, "border_style") {
+        let text_size = compile_optional(self, "text_size");
+        if let Some(text_size) = text_size
+            && !matches!(
+                self.ir.program.expressions[text_size.0].ty.value,
+                ValueType::String | ValueType::Any
+            )
+        {
+            self.error(call.span, "region text_size must be a string");
+        }
+        // `width` and `border_style` are literal metadata, or runtime values
+        // (typically inputs) when the argument isn't a constant.
+        let runtime_argument = |compiler: &mut Self, name: &str| {
+            call.arguments
+                .iter()
+                .find(|argument| argument.name.as_deref() == Some(name))
+                .filter(|argument| constant_value(&argument.expression).is_none())
+                .map(|argument| compiler.compile_expression(&argument.expression))
+        };
+        let border_style_expr = runtime_argument(self, "border_style");
+        if let Some(expression) = border_style_expr
+            && !matches!(
+                self.ir.program.expressions[expression.0].ty.value,
+                ValueType::String | ValueType::Any
+            )
+        {
+            self.error(call.span, "region border_style must be a string");
+        }
+        let width_expr = runtime_argument(self, "width");
+        if let Some(expression) = width_expr
+            && !matches!(
+                self.ir.program.expressions[expression.0].ty.value,
+                ValueType::Int | ValueType::Float | ValueType::Any
+            )
+        {
+            self.error(call.span, "region width must be numeric");
+        }
+        let border_style = match border_style_expr
+            .is_none()
+            .then(|| self.static_named_string(call, "border_style"))
+            .flatten()
+        {
             None => crate::frame::RegionBorderStyle::default(),
             Some(value) => crate::frame::RegionBorderStyle::parse(&value).unwrap_or_else(|| {
                 self.error(
@@ -520,7 +561,11 @@ impl LoweringContext {
             }
             None => false,
         };
-        let width = self.presentation_float(call, "width", 1.0);
+        let width = if width_expr.is_some() {
+            1.0
+        } else {
+            self.presentation_float(call, "width", 1.0)
+        };
         let valid_width = width.is_finite() && (0.0..=64.0).contains(&width) && width > 0.0;
         if !valid_width {
             self.error(call.span, "region width must be a positive number up to 64");
@@ -544,10 +589,13 @@ impl LoweringContext {
                 extend_right,
                 persistent,
                 width: if valid_width { width } else { 1.0 },
+                width_expr,
                 text,
                 text_color,
                 text_position,
+                text_size,
                 border_style,
+                border_style_expr,
             },
         }))
     }
@@ -1067,7 +1115,9 @@ impl LoweringContext {
                     self.error(call.span, "plot layer must be a boolean literal");
                     true
                 }
-                None => true,
+                // Like Pine's display.none: a hidden plot is still an output
+                // (alerts, the CLI, fills, other declarations) but not drawn.
+                None => self.static_named_string(call, "display").as_deref() != Some("none"),
             },
             alert: alert && value_type == PlotValueType::Boolean,
         }

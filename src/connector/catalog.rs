@@ -1,21 +1,20 @@
 use data::chart::kline::indicators::{
     self, IndicatorId,
-    manifest::{Catalog, Entry, FetchError},
+    manifest::{self, Catalog, Entry, FetchError},
 };
 use std::time::Duration;
 
-const API_ORIGIN: &str = "https://api.flowsurface.com";
 const MAX_CATALOG_BYTES: usize = 4 << 20;
 
-pub async fn fetch(client: reqwest::Client) -> Result<Catalog, FetchError> {
-    let bytes = download(
-        format!("{API_ORIGIN}/v1/indicators"),
-        MAX_CATALOG_BYTES,
-        client,
-    )
-    .await?;
+/// Fetch the static `catalog.json` at `catalog_url` (see
+/// `manifest::resolve_catalog_url`).
+pub async fn fetch(catalog_url: String, client: reqwest::Client) -> Result<Catalog, FetchError> {
+    let url = manifest::validate_catalog_url(&catalog_url)?;
+    let bytes = download(url.into(), MAX_CATALOG_BYTES, client).await?;
 
-    Catalog::parse(&bytes).map_err(FetchError::from)
+    let mut catalog = Catalog::parse(&bytes)?;
+    catalog.set_source_url(catalog_url);
+    Ok(catalog)
 }
 
 pub async fn install(
@@ -23,13 +22,7 @@ pub async fn install(
     base: String,
     client: reqwest::Client,
 ) -> Result<(), FetchError> {
-    let mut url = url::Url::parse(API_ORIGIN).map_err(|error| error.to_string())?;
-    url.set_path(&base);
-    url.path_segments_mut()
-        .map_err(|()| "Invalid source URL".to_owned())?
-        .pop_if_empty()
-        .extend(entry.path.split('/'));
-
+    let url = Catalog::entry_url(&base, &entry)?;
     let bytes = download(url.into(), entry.size_bytes, client).await?;
 
     let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
@@ -99,7 +92,7 @@ async fn download(
     }
 
     if !response.status().is_success() {
-        return Err(format!("Indicator server returned {}", response.status()).into());
+        return Err(format!("Catalog host returned {}", response.status()).into());
     }
 
     if response
