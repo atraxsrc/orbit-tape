@@ -517,13 +517,18 @@ impl Settings {
         let content = scrollable::Scrollable::with_direction(
             column_content,
             scrollable::Direction::Vertical(
-                scrollable::Scrollbar::new().width(8).scroller_width(6),
+                scrollable::Scrollbar::new()
+                    .width(8)
+                    .scroller_width(6)
+                    .spacing(8),
             ),
         );
 
+        // Wide enough for the longest rows (accent squares, alert names,
+        // sliders with their value) so nothing is cut at the right edge.
         container(content)
             .align_x(Alignment::Start)
-            .max_width(240)
+            .max_width(360)
             .padding(24)
             .style(style::dashboard_modal)
             .into()
