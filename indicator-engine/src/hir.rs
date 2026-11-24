@@ -204,10 +204,15 @@ pub enum StatementKind {
         extend_right: Option<ExprId>,
         persistent: bool,
         width: f32,
+        /// Runtime width (an input), used instead of `width` when set.
+        width_expr: Option<ExprId>,
         text: Option<ExprId>,
         text_color: Option<ExprId>,
         text_position: RegionTextPosition,
+        text_size: Option<ExprId>,
         border_style: RegionBorderStyle,
+        /// Runtime border style (an input), used instead of `border_style`.
+        border_style_expr: Option<ExprId>,
     },
     RegionRemove {
         id: String,

@@ -433,8 +433,9 @@ region(key = bar_index, upper = chart.high, lower = chart.low,
 ```
 
 Regions are non-interactive price overlays. Geometry, integer key, `visible`,
-and `extend_right` are runtime expressions; ID, positive `width` (default `1`,
-maximum `64`), and `persistent` (default `false`) are literal metadata.
+and `extend_right` are runtime expressions; ID and `persistent` (default
+`false`) are literal metadata. `width` (default `1`, maximum `64`) is a literal
+or a runtime number such as an input; runtime widths are clamped to 1-64.
 Color each edge with runtime `border_color` / `fill_color` or declared
 `border_color_slot` / `fill_color_slot`, never both for the same edge.
 Alternatively, a boolean `style_by` expression with paired true/false slots
@@ -447,9 +448,15 @@ Regions can carry text and a border style:
 - `text_position` (literal): `"inside"` (default) centers the text in the
   region when it fits; `"above"` and `"below"` draw a filled label tag above
   the upper edge or below the lower edge, colored with the region's fill (or
-  border) color. A region with `upper == lower` and `left_index ==
-  right_index` is a plain point label, like Pine's `label.new`.
-- `border_style` (literal): `"solid"` (default), `"dashed"` or `"dotted"`.
+  border) color; `"right"` draws plain text just right of the right end,
+  vertically centered (Pine's `label.style_none` at the end of a line),
+  in `text_color` or the border color. A region with `upper == lower` and
+  `left_index == right_index` is a plain point label, like Pine's `label.new`.
+- `text_size` (runtime string): `tiny`, `small`, `normal`, `large`, `huge`,
+  as for info panels; unknown names use the default size.
+- `border_style`: `"solid"` (default), `"dashed"` or `"dotted"`, as a literal
+  or a runtime string such as an input (any case; unknown names draw solid).
+- A flat region (`upper == lower`) with a border draws a horizontal line.
 - `right_index` may lie past the last bar; the host extends the bar spacing.
 
 ```text
@@ -503,6 +510,7 @@ This example emits a snapshot region; a persistent region instead uses
 | `"1440"`, `"D"`, `"3D"` | Whole days from the Unix epoch |
 | `"W"`, `"1W"` | Weeks from Monday 00:00 UTC |
 | `"M"`, `"1M"` | Calendar months |
+| `"3M"`, `"6M"`, `"12M"` (any count that divides 12) | Quarters, half years, years: calendar months grouped from January |
 
 | Signature | Result |
 | --- | --- |

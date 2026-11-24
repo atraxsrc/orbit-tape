@@ -2157,14 +2157,51 @@ fn draw_region_text(
     if content.is_empty() {
         return;
     }
-    let text_width = content.chars().count() as f32 * REGION_TEXT_SIZE_PX * MONO_CHAR_WIDTH_RATIO;
+    let text_size = text.size.map_or(REGION_TEXT_SIZE_PX, |size| match size {
+        indicator_engine::InfoTextSize::Tiny => 8.0,
+        indicator_engine::InfoTextSize::Small => 10.0,
+        indicator_engine::InfoTextSize::Normal => 11.0,
+        indicator_engine::InfoTextSize::Large => 13.0,
+        indicator_engine::InfoTextSize::Huge => 16.0,
+    });
+    let text_width = content.chars().count() as f32 * text_size * MONO_CHAR_WIDTH_RATIO;
+
+    if text.position == RegionTextPosition::Right {
+        let x = geometry.right_x + REGION_TAG_GAP_PX;
+        let y = (geometry.upper_y + geometry.lower_y) / 2.0;
+        if !x.is_finite()
+            || !y.is_finite()
+            || x > plot.x + plot.width
+            || x + text_width < plot.x
+            || y < plot.y
+            || y > plot.y + plot.height
+        {
+            return;
+        }
+        let color = text
+            .color
+            .map(|color| painting::resolve_indicator_color(color, palette))
+            .unwrap_or(inside_color);
+        frame.fill_text(canvas::Text {
+            content: content.to_owned(),
+            position: Point::new(x, y),
+            color,
+            size: text_size.into(),
+            align_x: iced::Alignment::Start.into(),
+            align_y: iced::Alignment::Center.into(),
+            font: style::AZERET_MONO,
+            ..Default::default()
+        });
+        return;
+    }
 
     let (center, color, background) = match text.position {
+        RegionTextPosition::Right => return,
         RegionTextPosition::Inside => {
             let Some(rect) = geometry.rect else {
                 return;
             };
-            if rect.width < text_width || rect.height < REGION_TEXT_SIZE_PX {
+            if rect.width < text_width || rect.height < text_size {
                 return;
             }
             let color = text
@@ -2176,7 +2213,7 @@ fn draw_region_text(
         RegionTextPosition::Above | RegionTextPosition::Below => {
             let x = (geometry.left_x + geometry.right_x) / 2.0;
             let width = text_width + 2.0 * REGION_TAG_PADDING_PX;
-            let height = REGION_TEXT_SIZE_PX + 2.0 * REGION_TAG_PADDING_PX;
+            let height = text_size + 2.0 * REGION_TAG_PADDING_PX;
             let top = if text.position == RegionTextPosition::Above {
                 geometry.upper_y - REGION_TAG_GAP_PX - height
             } else {
@@ -2220,7 +2257,7 @@ fn draw_region_text(
         content: content.to_owned(),
         position: center,
         color,
-        size: REGION_TEXT_SIZE_PX.into(),
+        size: text_size.into(),
         align_x: iced::Alignment::Center.into(),
         align_y: iced::Alignment::Center.into(),
         font: style::AZERET_MONO,

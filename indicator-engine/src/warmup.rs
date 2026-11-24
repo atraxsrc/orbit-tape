@@ -301,8 +301,14 @@ impl<'a> Evaluator<'a> {
                 extend_right,
                 text,
                 text_color,
+                text_size,
+                width_expr,
+                border_style_expr,
                 ..
             } => self.warmup_all([
+                *text_size,
+                *width_expr,
+                *border_style_expr,
                 Some(*key),
                 Some(*upper),
                 Some(*lower),

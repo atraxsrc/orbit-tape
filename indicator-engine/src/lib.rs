@@ -697,6 +697,88 @@ mod tests {
     }
 
     #[test]
+    fn regions_take_runtime_width_style_and_text_size() {
+        let source = r#"
+            language(1)
+            indicator("Levels", id = "test.levels")
+            display(view = "primary_overlay")
+            plot(na, id = "anchor", display = "none", pane = "main", layer = true)
+            size = input.string("Medium", "Line width", options = ["Small", "Medium", "Large"])
+            style_name = input.string("Dashed", "Line style", options = ["Solid", "Dashed", "Dotted"])
+            text_size = input.string("large", "Text size", options = ["small", "normal", "large"])
+            width = switch size { "Medium" => 2, "Large" => 3, default => 1 }
+            region(key = 0, upper = chart.open, lower = chart.open,
+                   left_index = 0, right_index = bar_index + 30,
+                   id = "open", border_color = color.white, width = width,
+                   border_style = style_name, text = "Daily Open",
+                   text_position = "right", text_size = text_size)
+            region(key = 1, upper = chart.low, lower = chart.low,
+                   left_index = 0, right_index = bar_index,
+                   id = "fixed", border_color = color.white, width = 4,
+                   border_style = "dotted")
+        "#;
+        let compiled = compile(source, "levels.ind").expect("levels source should compile");
+        let mut instance = compiled
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let output = instance
+            .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.0))
+            .expect("bar should evaluate");
+        let find = |id: &str| {
+            output
+                .regions
+                .iter()
+                .find(|region| region.id == id)
+                .expect("region should be emitted")
+        };
+        let open = find("open");
+        assert_eq!(open.width, 2.0);
+        assert_eq!(open.border_style, RegionBorderStyle::Dashed);
+        assert_eq!(open.right_index, 30);
+        let text = open.text.as_ref().expect("open should carry text");
+        assert_eq!(text.position, RegionTextPosition::Right);
+        assert_eq!(text.size, Some(InfoTextSize::Large));
+        let fixed = find("fixed");
+        assert_eq!(fixed.width, 4.0);
+        assert_eq!(fixed.border_style, RegionBorderStyle::Dotted);
+
+        let error = compile(
+            &source.replace("text_size = text_size)", "text_size = 3)"),
+            "levels.ind",
+        )
+        .expect_err("a numeric text_size should not compile");
+        assert!(
+            error
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("text_size"))
+        );
+    }
+
+    #[test]
+    fn reading_collections_in_loops_does_not_rescan_every_local() {
+        // 200 string locals make a full resource scan expensive; reading an
+        // array inside a 40 x 40 loop must not trigger one per iteration.
+        let mut source = String::from(
+            "language(1)\nindicator(\"Loops\", id = \"test.loops\")\nformat(precision = \"base_ticker_min_tick\")\n",
+        );
+        for index in 0..200 {
+            source.push_str(&format!("name{index} = \"label number {index}\"\n"));
+        }
+        source.push_str(
+            "values = array.new()\nfor k = 0 to 39 {\n    values := array.push(values, chart.close + k)\n}\n\
+             hits = 0\nfor i = 0 to 39 {\n    for j = 0 to 39 {\n        if array.get(values, j) == array.get(values, i) {\n            hits := hits + 1\n        }\n    }\n}\nplot(hits, id = \"hits\")\n",
+        );
+        let mut instance = compile(&source, "loops.ind")
+            .expect("loop source should compile")
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let output = instance
+            .evaluate_closed(hourly(0, 0, 1.0, 1.0, 1.0, 1.0))
+            .expect("the loops should fit the per-bar budget");
+        assert_eq!(float_plot(&output, "hits"), Some(40.0));
+    }
+
+    #[test]
     fn info_rows_build_a_panel_from_strings() {
         let source = r##"
             language(1)

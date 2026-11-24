@@ -414,6 +414,9 @@ pub enum RegionTextPosition {
     Above,
     /// A label tag below the region's lower edge, pointing up at it.
     Below,
+    /// Plain text just right of the region's right end, vertically centered,
+    /// like a Pine `label.style_none` label at the end of a line.
+    Right,
 }
 
 impl RegionTextPosition {
@@ -422,6 +425,7 @@ impl RegionTextPosition {
             "inside" => Some(Self::Inside),
             "above" => Some(Self::Above),
             "below" => Some(Self::Below),
+            "right" => Some(Self::Right),
             _ => None,
         }
     }
@@ -452,6 +456,8 @@ pub struct RegionText {
     /// Text color; the host picks a readable default when `None`.
     pub color: Option<Color>,
     pub position: RegionTextPosition,
+    /// Text size; the host's region text size when `None`.
+    pub size: Option<InfoTextSize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
