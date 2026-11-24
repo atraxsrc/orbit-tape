@@ -14,17 +14,92 @@ use indicator_engine::{
 };
 use std::path::{Path, PathBuf};
 
+/// Written to the symbols file the first time the scan runs without one.
 const DEFAULT_SYMBOLS: &[&str] = &[
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT",
-    "LINKUSDT", "LTCUSDT", "AVAXUSDT", "DOTUSDT", "BCHUSDT", "NEARUSDT", "SUIUSDT",
+    "AAVEUSDT",
+    "ADAUSDT",
+    "AIXBTUSDT",
+    "ALGOUSDT",
+    "APTUSDT",
+    "ARBUSDT",
+    "ASTERUSDT",
+    "ATOMUSDT",
+    "AVAXUSDT",
+    "BCHUSDT",
+    "BNBUSDT",
+    "1000BONKUSDT",
+    "BTCUSDT",
+    "CRVUSDT",
+    "DOGEUSDT",
+    "DOTUSDT",
+    "ENAUSDT",
+    "ETCUSDT",
+    "ETHUSDT",
+    "ETHFIUSDT",
+    "FARTCOINUSDT",
+    "FILUSDT",
+    "1000FLOKIUSDT",
+    "GRASSUSDT",
+    "HBARUSDT",
+    "HYPEUSDT",
+    "ICPUSDT",
+    "INJUSDT",
+    "JTOUSDT",
+    "JUPUSDT",
+    "KAITOUSDT",
+    "LDOUSDT",
+    "LITUSDT",
+    "LINKUSDT",
+    "LTCUSDT",
+    "MONUSDT",
+    "MOODENGUSDT",
+    "NEARUSDT",
+    "ONDOUSDT",
+    "OPUSDT",
+    "PENDLEUSDT",
+    "PENGUUSDT",
+    "1000PEPEUSDT",
+    "PNUTUSDT",
+    "POLUSDT",
+    "POPCATUSDT",
+    "PUMPUSDT",
+    "RENDERUSDT",
+    "SUSDT",
+    "1000SHIBUSDT",
+    "SOLUSDT",
+    "STXUSDT",
+    "SUIUSDT",
+    "TAOUSDT",
+    "TIAUSDT",
+    "TRUMPUSDT",
+    "TRXUSDT",
+    "UNIUSDT",
+    "VIRTUALUSDT",
+    "WIFUSDT",
+    "WLDUSDT",
+    "XLMUSDT",
+    "XPLUSDT",
+    "XRPUSDT",
+    "ZECUSDT",
+    "ZROUSDT",
 ];
+const SYMBOLS_FILE: &str = "scan-symbols.txt";
+const SYMBOLS_FILE_HEADER: &str = "\
+# Symbols for `orbit-tape scan` (Binance USDT perpetuals), one per line.
+# Lines starting with # are ignored. Some coins trade per 1000 units on
+# Binance, e.g. 1000PEPEUSDT. Delete this file to get the default list back.
+";
+/// Notification lines before the rest is summed up as "and n more".
+const NOTIFY_MAX_LINES: usize = 10;
+/// Symbols per notification line before "+n".
+const NOTIFY_MAX_SYMBOLS: usize = 12;
 const DEFAULT_INDICATOR: &str = "roman-setup.ind";
 const DEFAULT_BARS: usize = 2000;
 const MAX_BARS: usize = 20_000;
 
 pub const USAGE: &str = "\
-usage: orbit-tape scan [--indicator <file.ind>] [--symbols <A,B,...>] [--timeframe <tf>]
-                       [--bars <n>] [--lookback <n>] [--input <id>=<value> ...] [--no-notify]
+usage: orbit-tape scan [--indicator <file.ind>] [--symbols <A,B,...>] [--symbols-file <file>]
+                       [--timeframe <tf>] [--bars <n>] [--lookback <n>] [--input <id>=<value> ...] [--no-notify]
 
 Fetches candles for Binance USDT perpetuals, runs the indicator over them as
 closed bars and lists the alert plots (plot(..., alert = true)) that fired on
@@ -33,7 +108,11 @@ the last closed bar. Sends one desktop notification when anything fired.
   --indicator   .ind file to run. Default: roman-setup.ind from the installed
                 indicators folder, /usr/share/doc/orbit-tape/indicators/roman
                 or ./indicators/roman
-  --symbols     comma separated, e.g. BTCUSDT,ETHUSDT (default: 15 majors)
+  --symbols     comma separated, e.g. BTCUSDT,ETHUSDT
+  --symbols-file
+                file with one symbol per line (# for comments). Default:
+                scan-symbols.txt in the data folder, created with 66 pairs
+                on the first run
   --timeframe   1m 3m 5m 15m 30m 1h 2h 4h 12h 1d (default 1h)
   --bars        candles of history per symbol (default 2000)
   --lookback    report alerts from the last n closed bars (default 1)
@@ -44,7 +123,9 @@ Exit status: 0 when the scan ran (with or without signals), 1 on errors.";
 
 struct Arguments {
     indicator: Option<PathBuf>,
-    symbols: Vec<String>,
+    /// From `--symbols`; otherwise the symbols file is read.
+    symbols: Option<Vec<String>>,
+    symbols_file: Option<PathBuf>,
     timeframe: Timeframe,
     bars: usize,
     lookback: usize,
@@ -56,7 +137,6 @@ struct Arguments {
 struct Signal {
     symbol: String,
     bar_time: i64,
-    close: f64,
     title: String,
 }
 
@@ -87,6 +167,10 @@ fn scan(arguments: &[String]) -> Result<(), String> {
         })?,
     };
     let indicator = compile(&path)?;
+    let symbols = match &arguments.symbols {
+        Some(symbols) => symbols.clone(),
+        None => symbols_from_file(arguments.symbols_file.as_deref())?,
+    };
     let config = indicator_config(&indicator, &arguments.inputs)?;
     let alert_plots = indicator
         .descriptor
@@ -106,11 +190,15 @@ fn scan(arguments: &[String]) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|error| format!("could not start the network runtime: {error}"))?;
-    let rows = runtime.block_on(fetch_all(&arguments))?;
+    let rows = runtime.block_on(fetch_all(&arguments, &symbols))?;
 
     println!(
-        "{} on {} Binance perps, {} bars, last {} closed bar(s)",
-        indicator.descriptor.title, arguments.timeframe, arguments.bars, arguments.lookback
+        "{} on {} Binance perps, {} chart, {} bars, last {} closed bar(s)",
+        indicator.descriptor.title,
+        symbols.len(),
+        arguments.timeframe,
+        arguments.bars,
+        arguments.lookback
     );
     let mut signals = Vec::new();
     let mut failures = 0;
@@ -191,7 +279,8 @@ fn scan(arguments: &[String]) -> Result<(), String> {
 fn parse_arguments(arguments: &[String]) -> Result<Arguments, String> {
     let mut parsed = Arguments {
         indicator: None,
-        symbols: DEFAULT_SYMBOLS.iter().map(|&s| s.to_owned()).collect(),
+        symbols: None,
+        symbols_file: None,
         timeframe: Timeframe::H1,
         bars: DEFAULT_BARS,
         lookback: 1,
@@ -212,15 +301,13 @@ fn parse_arguments(arguments: &[String]) -> Result<Arguments, String> {
         match argument {
             "--indicator" => parsed.indicator = Some(PathBuf::from(value)),
             "--symbols" => {
-                parsed.symbols = value
-                    .split(',')
-                    .map(|symbol| symbol.trim().to_uppercase())
-                    .filter(|symbol| !symbol.is_empty())
-                    .collect();
-                if parsed.symbols.is_empty() {
+                let symbols = parse_symbols(value);
+                if symbols.is_empty() {
                     return Err("--symbols is empty".to_owned());
                 }
+                parsed.symbols = Some(symbols);
             }
+            "--symbols-file" => parsed.symbols_file = Some(PathBuf::from(value)),
             "--timeframe" => {
                 parsed.timeframe = Timeframe::KLINE
                     .iter()
@@ -255,10 +342,67 @@ fn parse_arguments(arguments: &[String]) -> Result<Arguments, String> {
         }
         index += 2;
     }
+    if parsed.symbols.is_some() && parsed.symbols_file.is_some() {
+        return Err("use either --symbols or --symbols-file".to_owned());
+    }
     if parsed.lookback > parsed.bars {
         return Err("--lookback can't be larger than --bars".to_owned());
     }
     Ok(parsed)
+}
+
+/// Symbols separated by commas, spaces or new lines, `#` starting a comment.
+/// Upper-cased, duplicates dropped, order kept.
+fn parse_symbols(text: &str) -> Vec<String> {
+    let mut symbols = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or_default();
+        for symbol in line.split(|c: char| c == ',' || c.is_whitespace()) {
+            let symbol = symbol.trim().to_uppercase();
+            if !symbol.is_empty() && !symbols.contains(&symbol) {
+                symbols.push(symbol);
+            }
+        }
+    }
+    symbols
+}
+
+/// Reads the symbols file. The default one is created with [`DEFAULT_SYMBOLS`]
+/// when it does not exist yet; a file passed with `--symbols-file` must exist.
+fn symbols_from_file(explicit: Option<&Path>) -> Result<Vec<String>, String> {
+    let path = explicit.map_or_else(|| data::data_path(Some(SYMBOLS_FILE)), Path::to_path_buf);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            let symbols = parse_symbols(&text);
+            if symbols.is_empty() {
+                return Err(format!("{} lists no symbols", path.display()));
+            }
+            Ok(symbols)
+        }
+        Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
+            let text = format!("{SYMBOLS_FILE_HEADER}{}\n", DEFAULT_SYMBOLS.join("\n"));
+            let written = path
+                .parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| std::fs::write(&path, text));
+            match written {
+                Ok(()) => println!(
+                    "Created {} with {} symbols, edit it to change the list.",
+                    path.display(),
+                    DEFAULT_SYMBOLS.len()
+                ),
+                Err(error) => eprintln!(
+                    "orbit-tape scan: could not create {}: {error}",
+                    path.display()
+                ),
+            }
+            Ok(DEFAULT_SYMBOLS
+                .iter()
+                .map(|&symbol| symbol.to_owned())
+                .collect())
+        }
+        Err(error) => Err(format!("could not read {}: {error}", path.display())),
+    }
 }
 
 /// The bundled Roman Setup script: the installed copy first, then the one the
@@ -356,7 +500,10 @@ fn parse_input(value_type: ValueType, text: &str) -> Option<InputValue> {
 
 type Fetched = Result<(TickerInfo, Vec<Kline>), String>;
 
-async fn fetch_all(arguments: &Arguments) -> Result<Vec<(String, Fetched)>, String> {
+async fn fetch_all(
+    arguments: &Arguments,
+    symbols: &[String],
+) -> Result<Vec<(String, Fetched)>, String> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(30))
@@ -374,7 +521,7 @@ async fn fetch_all(arguments: &Arguments) -> Result<Vec<(String, Fetched)>, Stri
     let from = forming.saturating_sub(interval * arguments.bars as u64);
 
     let mut rows = Vec::new();
-    for symbol in &arguments.symbols {
+    for symbol in symbols {
         let ticker = Ticker::new(symbol, Exchange::BinanceLinear);
         let fetched = match metadata.get(&ticker).copied().flatten() {
             None => Err("not a Binance USDT perpetual".to_owned()),
@@ -475,7 +622,6 @@ fn evaluate(
                 signals.push(Signal {
                     symbol: symbol.to_owned(),
                     bar_time: time,
-                    close,
                     title: title.clone(),
                 });
             }
@@ -523,30 +669,74 @@ fn print_table(rows: &[[String; 4]]) {
     }
 }
 
-/// One notification for the whole scan, one line per signal.
-fn notify(indicator: &str, signals: &[Signal]) {
-    let summary = format!("Orbit Tape scan: {} signal(s)", signals.len());
-    let mut body = signals
+/// Summary and body of the scan notification: one line per signal type and
+/// bar, newest bar first, e.g. "LTF MSS down Tue 13:00: BTC, BNB, SOL".
+fn notification_text(indicator: &str, signals: &[Signal]) -> (String, String) {
+    let mut groups: Vec<(i64, &str, Vec<&str>)> = Vec::new();
+    for signal in signals {
+        let short = signal
+            .symbol
+            .strip_suffix("USDT")
+            .filter(|base| !base.is_empty())
+            .unwrap_or(&signal.symbol);
+        match groups
+            .iter_mut()
+            .find(|(time, title, _)| *time == signal.bar_time && *title == signal.title)
+        {
+            Some((_, _, symbols)) => symbols.push(short),
+            None => groups.push((signal.bar_time, &signal.title, vec![short])),
+        }
+    }
+    // Newest bar first; the sort is stable, so titles keep the indicator's order.
+    groups.sort_by_key(|(time, _, _)| std::cmp::Reverse(*time));
+
+    let mut lines = groups
         .iter()
-        .take(8)
-        .map(|signal| {
-            format!(
-                "{} {} at {} ({})",
-                signal.symbol,
-                signal.title,
-                format_price(signal.close),
-                local_time(signal.bar_time)
-            )
+        .take(NOTIFY_MAX_LINES)
+        .map(|(time, title, symbols)| {
+            let mut names = symbols
+                .iter()
+                .take(NOTIFY_MAX_SYMBOLS)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if symbols.len() > NOTIFY_MAX_SYMBOLS {
+                names.push_str(&format!(" +{}", symbols.len() - NOTIFY_MAX_SYMBOLS));
+            }
+            format!("{title} {}: {names}", short_time(*time))
         })
         .collect::<Vec<_>>();
-    if signals.len() > 8 {
-        body.push(format!("and {} more", signals.len() - 8));
+    if groups.len() > NOTIFY_MAX_LINES {
+        let rest = groups[NOTIFY_MAX_LINES..]
+            .iter()
+            .map(|(_, _, symbols)| symbols.len())
+            .sum::<usize>();
+        lines.push(format!("and {rest} more, see the terminal or journal"));
     }
-    body.push(indicator.to_owned());
+    lines.push(indicator.to_owned());
+    (
+        format!("Orbit Tape scan: {} signal(s)", signals.len()),
+        lines.join("\n"),
+    )
+}
+
+fn short_time(time_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(time_ms)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%a %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// One desktop notification for the whole scan.
+fn notify(indicator: &str, signals: &[Signal]) {
+    let (summary, body) = notification_text(indicator, signals);
     if let Err(error) = notify_rust::Notification::new()
         .appname("Orbit Tape")
         .summary(&summary)
-        .body(&body.join("\n"))
+        .body(&body)
         .icon("appointment-soon")
         .timeout(notify_rust::Timeout::Milliseconds(30_000))
         .show()
@@ -569,14 +759,17 @@ mod tests {
             "--symbols btcusdt,ETHUSDT --timeframe 4h --bars 500 --lookback 3 --input ctMode=true --no-notify",
         ))
         .unwrap();
-        assert_eq!(parsed.symbols, ["BTCUSDT", "ETHUSDT"]);
+        assert_eq!(
+            parsed.symbols.as_deref(),
+            Some(&["BTCUSDT".to_owned(), "ETHUSDT".to_owned()][..])
+        );
         assert_eq!(parsed.timeframe, Timeframe::H4);
         assert_eq!((parsed.bars, parsed.lookback), (500, 3));
         assert_eq!(parsed.inputs, [("ctMode".to_owned(), "true".to_owned())]);
         assert!(!parsed.notify);
 
         let defaults = parse_arguments(&[]).unwrap();
-        assert_eq!(defaults.symbols.len(), DEFAULT_SYMBOLS.len());
+        assert!(defaults.symbols.is_none() && defaults.symbols_file.is_none());
         assert_eq!(defaults.timeframe, Timeframe::H1);
         assert!(defaults.notify);
 
@@ -589,9 +782,64 @@ mod tests {
             "--bogus 1",
             "--bars",
             "--bars 10 --lookback 11",
+            "--symbols BTCUSDT --symbols-file list.txt",
         ] {
             assert!(parse_arguments(&args(bad)).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn reads_symbol_lists() {
+        assert_eq!(
+            parse_symbols("# header\nbtcusdt\n ETHUSDT, solusdt # majors\n\nBTCUSDT\n"),
+            ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        );
+        assert_eq!(DEFAULT_SYMBOLS.len(), 66);
+        let written = format!("{SYMBOLS_FILE_HEADER}{}\n", DEFAULT_SYMBOLS.join("\n"));
+        assert_eq!(parse_symbols(&written), DEFAULT_SYMBOLS);
+    }
+
+    #[test]
+    fn groups_the_notification_by_signal_and_bar() {
+        let signal = |symbol: &str, hour: i64, title: &str| Signal {
+            symbol: symbol.to_owned(),
+            bar_time: hour * 3_600_000,
+            title: title.to_owned(),
+        };
+        let signals = [
+            signal("BTCUSDT", 13, "LTF MSS down"),
+            signal("ETHUSDT", 9, "LTF MSS down"),
+            signal("SOLUSDT", 11, "HTF Bearish SFP"),
+            signal("SOLUSDT", 13, "LTF MSS down"),
+            signal("1000PEPEUSDT", 13, "LTF MSS down"),
+        ];
+        let (summary, body) = notification_text("Roman", &signals);
+        assert_eq!(summary, "Orbit Tape scan: 5 signal(s)");
+        let lines = body.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 4, "{body}");
+        assert!(
+            lines[0].starts_with("LTF MSS down ") && lines[0].ends_with(": BTC, SOL, 1000PEPE")
+        );
+        assert!(lines[1].starts_with("HTF Bearish SFP ") && lines[1].ends_with(": SOL"));
+        assert!(lines[2].ends_with(": ETH"));
+        assert_eq!(lines[3], "Roman");
+
+        let many = (0..20)
+            .map(|index| signal(&format!("C{index}USDT"), index, "MSS"))
+            .chain((0..15).map(|index| signal(&format!("D{index}USDT"), 100, "SFP")))
+            .collect::<Vec<_>>();
+        let (_, body) = notification_text("Roman", &many);
+        let lines = body.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), NOTIFY_MAX_LINES + 2);
+        assert!(
+            lines[0].starts_with("SFP ") && lines[0].ends_with("D11 +3"),
+            "{}",
+            lines[0]
+        );
+        assert_eq!(
+            lines[NOTIFY_MAX_LINES],
+            "and 11 more, see the terminal or journal"
+        );
     }
 
     #[test]

@@ -189,18 +189,26 @@ Then add it to a candlestick chart from the indicator sidebar (**+**).
 `orbit-tape scan` runs an indicator over recent candles of Binance USDT
 perpetuals without opening a window, and lists every alert plot
 (`plot(..., alert = true)`) that fired on the last closed bar. When anything
-fired it also sends one desktop notification. By default it runs Roman Setup
-(`roman-setup.ind`, from the indicators folder or the copy the .deb ships) on
-the 1H chart of 15 large perps:
+fired it also sends one desktop notification, grouped by signal and bar
+(for example `LTF MSS down Tue 13:00: BTC, BNB, SOL`). By default it runs
+Roman Setup (`roman-setup.ind`, from the indicators folder or the copy the
+.deb ships) on the 1H chart.
+
+The pairs come from `~/.local/share/orbit-tape/scan-symbols.txt`, one per
+line (`#` starts a comment). The first run creates it with 66 USDT perps;
+edit it to change the list, delete it to get the default back. Some coins
+trade per 1000 units on Binance (`1000PEPEUSDT`, `1000SHIBUSDT`,
+`1000BONKUSDT`, `1000FLOKIUSDT`).
 
 ```sh
 orbit-tape scan
 orbit-tape scan --symbols BTCUSDT,ETHUSDT --input ctMode=true --lookback 24
+orbit-tape scan --symbols-file ~/majors.txt
 orbit-tape scan --indicator ~/.local/share/orbit-tape/indicators/my.ind --timeframe 4h --no-notify
 ```
 
 ```
-Roman Trade Setup (H12 to H1) on 1h Binance perps, 2000 bars, last 1 closed bar(s)
+Roman Trade Setup (H12 to H1) on 66 Binance perps, 1h chart, 2000 bars, last 1 closed bar(s)
 SYMBOL    LAST CLOSED BAR     CLOSE  SIGNALS
 BTCUSDT   Tue 24 Nov 11:00  61303.9  -
 ADAUSDT   Tue 24 Nov 11:00   0.1487  HTF Bearish SFP
@@ -227,6 +235,7 @@ Everything lives in one folder, `~/.local/share/orbit-tape/`
 | --- | --- |
 | Settings, layouts, themes, presets | `~/.local/share/orbit-tape/saved-state.json` |
 | User indicators | `~/.local/share/orbit-tape/indicators/` |
+| Scan symbol list | `~/.local/share/orbit-tape/scan-symbols.txt` |
 | Logs | `~/.local/share/orbit-tape/orbit-tape-current.log` |
 | Market data cache (Binance archives) | `~/.local/share/orbit-tape/market_data/` |
 | Proxy and server credentials | the system keyring (service `orbit-tape.proxy` / `orbit-tape.server`) |
