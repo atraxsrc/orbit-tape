@@ -1284,23 +1284,19 @@ pub fn registration(
 }
 
 impl IndicatorRegistration {
+    /// A chart only stores the inputs the user changed. Inputs left at their
+    /// default follow the script, so a new default (such as a theme color)
+    /// reaches charts saved earlier.
     pub fn default_config(&self) -> IndicatorConfig {
-        let values = self
-            .compiled
-            .descriptor
-            .inputs
-            .iter()
-            .map(|input| (input.id.clone(), input_value_to_json(&input.default)))
-            .collect();
-        IndicatorConfig::from_value(serde_json::Value::Object(values))
+        IndicatorConfig::from_value(serde_json::Value::Object(serde_json::Map::new()))
     }
 
     pub fn normalize_config(&self, config: IndicatorConfig) -> IndicatorConfig {
         let mut values = config.value().as_object().cloned().unwrap_or_default();
         for input in &self.compiled.descriptor.inputs {
-            values
-                .entry(input.id.clone())
-                .or_insert_with(|| input_value_to_json(&input.default));
+            if values.get(&input.id) == Some(&input_value_to_json(&input.default)) {
+                values.remove(&input.id);
+            }
         }
         IndicatorConfig::from_value(serde_json::Value::Object(values))
     }
@@ -1333,7 +1329,11 @@ impl IndicatorRegistration {
             .iter()
             .find(|input| input.id == id)?;
         let value = setting_value_to_json(input, value)?;
-        object.insert(id.to_owned(), value);
+        if value == input_value_to_json(&input.default) {
+            object.remove(id);
+        } else {
+            object.insert(id.to_owned(), value);
+        }
         Some(IndicatorConfig::from_value(serde_json::Value::Object(
             object,
         )))
@@ -1793,6 +1793,48 @@ mark(title = "Bars", source = "value", kind = "histogram", color_slot = "bars")
         assert_eq!(
             registration.definition.source.as_deref(),
             Some("https://example.com/source")
+        );
+    }
+
+    #[test]
+    fn charts_store_only_changed_inputs() {
+        let compiled = indicator_engine::compile(
+            r#"
+                language(1)
+                indicator("Stored", id = "catalog.stored")
+                format(precision = "base_ticker_min_tick")
+                bull = input.color(theme.success, "Bull")
+                length = input.int(5, "Length", min = 1, max = 100)
+                plot(chart.close, id = "value")
+            "#,
+            "stored.ind",
+        )
+        .expect("source should compile");
+        let registration =
+            registration(compiled, PackageOrigin::Installed).expect("source should register");
+        let empty = serde_json::Value::Object(serde_json::Map::new());
+        assert_eq!(registration.default_config().value(), &empty);
+
+        let changed = registration
+            .with_setting(
+                registration.default_config(),
+                "length",
+                IndicatorSettingValue::I64(9),
+            )
+            .expect("length should be accepted");
+        assert_eq!(changed.value(), &serde_json::json!({ "length": 9 }));
+        let back = registration
+            .with_setting(changed, "length", IndicatorSettingValue::I64(5))
+            .expect("length should be accepted");
+        assert_eq!(back.value(), &empty);
+
+        // A config saved before only changes were stored keeps the real
+        // change and drops values equal to today's defaults.
+        let theme = indicator_engine::Color::theme(indicator_engine::ThemeColor::Success).0;
+        let saved = IndicatorConfig::from_value(serde_json::json!({ "bull": theme, "length": 7 }));
+        assert_eq!(
+            registration.normalize_config(saved).value(),
+            &serde_json::json!({ "length": 7 })
         );
     }
 
