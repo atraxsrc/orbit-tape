@@ -60,7 +60,7 @@ plotcandle(open_value, math.max(open_value, total), math.min(open_value, total),
 day_volume = day_buy + day_sell
 buy_share = select(day_volume > 0, day_buy / day_volume * 100, na)
 info_row(select(show_panel, "CVD", ""), select(show_panel, str.tostring(total, "#,###.##"), ""),
-    right_color = select(total >= 0, color.teal, color.red), position = panel_position, size = "small")
+    right_color = select(total >= 0, theme.success, theme.danger), position = panel_position, size = "small")
 info_row(select(show_panel, "Buy share today", ""),
     select(show_panel && !na(buy_share), str.tostring(buy_share, "0.0") + "%", ""),
-    right_color = select(nz(buy_share, 50) >= 50, color.teal, color.red))
+    right_color = select(nz(buy_share, 50) >= 50, theme.success, theme.danger))

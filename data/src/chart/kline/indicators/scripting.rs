@@ -1613,7 +1613,7 @@ fn input_value_from_json(value_type: &ValueType, value: &serde_json::Value) -> O
             .map(|value| InputValue::String(value.to_owned())),
         ValueType::Color => value
             .as_i64()
-            .and_then(|value| u32::try_from(value).ok())
+            .and_then(|value| u64::try_from(value).ok())
             .map(InputValue::Color),
         ValueType::Time => value.as_i64().map(InputValue::Time),
         _ => None,

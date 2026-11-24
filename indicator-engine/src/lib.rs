@@ -30,7 +30,7 @@ pub use scene::{
     PresentationColumnColor, PresentationDataKind, PresentationFill, PresentationGeometry,
     PresentationInputSource, PresentationLabelMode, PresentationLayer, PresentationMark,
     PresentationMarkKind, PresentationPrecision, PresentationReadout, PresentationScale,
-    PresentationSegment, PresentationStyle, PresentationViewKind, ReadoutBehavior,
+    PresentationSegment, PresentationStyle, PresentationViewKind, ReadoutBehavior, ThemeColor,
 };
 pub use types::{
     ArrayValue, IndicatorAuthor, IndicatorConfig, IndicatorDescriptor, IndicatorId,
@@ -731,6 +731,65 @@ mod tests {
         assert!(rows[1].right_color.is_some());
         assert_eq!(rows[1].position, None);
         assert_eq!((rows[2].row, rows[2].right.as_str()), (2, ""));
+    }
+
+    #[test]
+    fn theme_colors_carry_their_role_through_inputs_and_color_new() {
+        let source = r##"
+            language(1)
+            indicator("Theme", id = "test.theme")
+            display(view = "primary_overlay")
+            bull = input.color(theme.success, "Bull")
+            fill = input.color(color.new(theme.danger, 80), "Fill")
+            plot(na, id = "anchor", display = "none", pane = "main", layer = true)
+            info_row("Bias", "up", right_color = select(chart.close > chart.open, bull, theme.danger),
+                     background = color.new(bull, 75), panel_color = theme.panel)
+            info_row("Fill", "x", right_color = fill, left_color = color.rgb(1, 2, 3))
+        "##;
+        let compiled = compile(source, "theme.ind").expect("theme source should compile");
+        let defaults: Vec<_> = compiled
+            .descriptor
+            .inputs
+            .iter()
+            .map(|input| input.default.clone())
+            .collect();
+        assert_eq!(
+            defaults[0],
+            InputValue::Color(Color::theme(ThemeColor::Success).0)
+        );
+        assert_eq!(
+            defaults[1],
+            InputValue::Color(Color::theme(ThemeColor::Danger).with_alpha(51).0)
+        );
+        let mut instance = compiled
+            .instantiate(IndicatorConfig::default())
+            .expect("inputs should bind");
+        let output = instance
+            .evaluate_closed(hourly(0, 0, 1.0, 3.0, 0.5, 2.5))
+            .expect("bar should evaluate");
+
+        let rows = &output.info_rows;
+        let bias = rows[0].right_color.expect("bias color");
+        assert_eq!(bias.theme_role(), Some(ThemeColor::Success));
+        assert_eq!(bias.alpha(), 0xff);
+        let background = rows[0].background.expect("row background");
+        assert_eq!(background.theme_role(), Some(ThemeColor::Success));
+        assert_eq!(background.alpha(), 64);
+        assert_eq!(
+            rows[0].panel_color.and_then(Color::theme_role),
+            Some(ThemeColor::Panel)
+        );
+        assert_eq!(
+            rows[1]
+                .right_color
+                .map(|color| color.to_string())
+                .as_deref(),
+            Some("theme.danger@33")
+        );
+        let literal = rows[1].left_color.expect("literal color");
+        assert_eq!(literal.theme_role(), None);
+        assert_eq!(literal.argb_bits(), 0xff01_0203);
+        assert_eq!(literal.to_string(), "#ff010203");
     }
 
     #[test]

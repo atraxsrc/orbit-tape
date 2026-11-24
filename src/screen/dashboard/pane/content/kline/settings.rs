@@ -1002,15 +1002,33 @@ fn input_limits_placeholder<T: Display>(min: Option<T>, max: Option<T>) -> Strin
     }
 }
 
-fn format_indicator_color(value: u32) -> String {
-    format!("#{value:08X}")
+/// `#AARRGGBB` for a fixed color, `theme.<role>` (with `@AA` when not opaque)
+/// for a color that follows the COSMIC theme.
+fn format_indicator_color(value: u64) -> String {
+    let color = indicator_engine::Color(value);
+    if color.theme_role().is_some() {
+        color.to_string()
+    } else {
+        format!("#{:08X}", color.argb_bits())
+    }
 }
 
-fn parse_indicator_color(value: &str) -> Option<u32> {
+fn parse_indicator_color(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if let Some(theme) = value.strip_prefix("theme.") {
+        let (role, alpha) = match theme.split_once('@') {
+            Some((role, alpha)) if alpha.len() == 2 => (role, u8::from_str_radix(alpha, 16).ok()?),
+            Some(_) => return None,
+            None => (theme, 0xff),
+        };
+        let role = indicator_engine::ThemeColor::from_name(role)?;
+        return Some(indicator_engine::Color::theme(role).with_alpha(alpha).0);
+    }
     let value = value.strip_prefix('#').unwrap_or(value);
     (value.len() == 8)
         .then(|| u32::from_str_radix(value, 16).ok())
         .flatten()
+        .map(u64::from)
 }
 
 fn setting_choice_value(
@@ -2141,5 +2159,25 @@ impl InspectorState {
         }
 
         InspectorEffect::None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_indicator_color, parse_indicator_color};
+
+    #[test]
+    fn color_setting_round_trips_fixed_and_theme_colors() {
+        for text in ["#FF26A69A", "theme.success", "theme.panel@e6"] {
+            let value = parse_indicator_color(text).expect("color should parse");
+            assert_eq!(format_indicator_color(value), text);
+        }
+        assert_eq!(
+            parse_indicator_color(" theme.danger "),
+            parse_indicator_color("theme.danger")
+        );
+        assert_eq!(parse_indicator_color("theme.nope"), None);
+        assert_eq!(parse_indicator_color("theme.success@1"), None);
+        assert_eq!(parse_indicator_color("#FFF"), None);
     }
 }

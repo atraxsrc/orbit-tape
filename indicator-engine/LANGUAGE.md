@@ -661,8 +661,19 @@ Colors also have constants `color.red`, `color.green`, `color.blue`,
 `color.silver`, `color.orange`, `color.yellow`, `color.lime`, `color.teal`,
 `color.aqua`, `color.navy`, `color.purple`, `color.fuchsia`, `color.maroon`
 and `color.olive`. Strings join with `+`; both sides must be strings. `color.rgb(...)` with positional literal
-components can supply input defaults; runtime color expressions can style
-outputs. Invalid runtime components fail rather than being clamped. Collection
+components, or `color.new(...)` of a constant color and a literal
+transparency, can supply input defaults; runtime color expressions can style
+outputs.
+
+Theme colors follow the app's theme (on COSMIC, the desktop theme) and are
+looked up each time the chart is drawn, so a theme change shows at once:
+`theme.success`, `theme.danger`, `theme.warning`, `theme.primary` (the
+accent), `theme.secondary`, `theme.neutral`, `theme.text` (normal text) and
+`theme.panel` (background for panels over the chart). They work anywhere a
+color does, including input defaults, `select(...)` and `color.new(...)`,
+which keeps the role and sets the transparency. In a color setting or with
+`--input` they are written `theme.success`, or `theme.success@80` with a hex
+alpha. Invalid runtime components fail rather than being clamped. Collection
 operations remain subject to heap, nesting, element-count, and weighted
 copy-work limits.
 

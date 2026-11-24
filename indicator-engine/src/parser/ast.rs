@@ -341,28 +341,33 @@ pub(super) fn validate_ast_limits(
     }
 }
 
-pub(super) fn named_color(name: &str) -> Option<u32> {
-    match name {
-        "color.red" => Some(0xffff_0000),
-        "color.green" => Some(0xff00_ff00),
-        "color.blue" => Some(0xff00_00ff),
-        "color.white" => Some(0xffff_ffff),
-        "color.black" => Some(0xff00_0000),
-        // Pine Script's palette.
-        "color.gray" => Some(0xff78_7b86),
-        "color.silver" => Some(0xffb2_b5be),
-        "color.orange" => Some(0xffff_9800),
-        "color.yellow" => Some(0xffff_eb3b),
-        "color.lime" => Some(0xff00_e676),
-        "color.teal" => Some(0xff08_9981),
-        "color.aqua" => Some(0xff00_bcd4),
-        "color.navy" => Some(0xff31_1b92),
-        "color.purple" => Some(0xff9c_27b0),
-        "color.fuchsia" => Some(0xffe0_40fb),
-        "color.maroon" => Some(0xff88_0e4f),
-        "color.olive" => Some(0xff80_8000),
-        _ => None,
+pub(super) fn named_color(name: &str) -> Option<u64> {
+    if let Some(role) = name.strip_prefix("theme.") {
+        return crate::scene::ThemeColor::from_name(role)
+            .map(|role| crate::scene::Color::theme(role).0);
     }
+    let argb: u32 = match name {
+        "color.red" => 0xffff_0000,
+        "color.green" => 0xff00_ff00,
+        "color.blue" => 0xff00_00ff,
+        "color.white" => 0xffff_ffff,
+        "color.black" => 0xff00_0000,
+        // Pine Script's palette.
+        "color.gray" => 0xff78_7b86,
+        "color.silver" => 0xffb2_b5be,
+        "color.orange" => 0xffff_9800,
+        "color.yellow" => 0xffff_eb3b,
+        "color.lime" => 0xff00_e676,
+        "color.teal" => 0xff08_9981,
+        "color.aqua" => 0xff00_bcd4,
+        "color.navy" => 0xff31_1b92,
+        "color.purple" => 0xff9c_27b0,
+        "color.fuchsia" => 0xffe0_40fb,
+        "color.maroon" => 0xff88_0e4f,
+        "color.olive" => 0xff80_8000,
+        _ => return None,
+    };
+    Some(u64::from(argb))
 }
 
 pub(super) enum NumericLiteralError {
@@ -411,6 +416,29 @@ pub(super) fn constant_value(expression: &AstExpression) -> Option<Value> {
         AstExpression::Boolean(value, _) => Some(Value::Bool(*value)),
         AstExpression::Na(_) => Some(Value::Na),
         AstExpression::Identifier(path, _) => named_color(&path.join(".")).map(Value::Color),
+        AstExpression::Call(call) if call.path.join(".") == "color.new" => {
+            if call
+                .arguments
+                .iter()
+                .any(|argument| argument.name.is_some())
+                || call.arguments.len() != 2
+            {
+                return None;
+            }
+            let Value::Color(color) = constant_value(&call.arguments[0].expression)? else {
+                return None;
+            };
+            let transp = match constant_value(&call.arguments[1].expression)? {
+                Value::Int(value) => value as f64,
+                Value::Float(value) => value,
+                _ => return None,
+            };
+            if !(0.0..=100.0).contains(&transp) {
+                return None;
+            }
+            let alpha = (255.0 * (1.0 - transp / 100.0)).round() as u8;
+            Some(Value::Color(crate::scene::Color(color).with_alpha(alpha).0))
+        }
         AstExpression::Call(call) if call.path.join(".") == "color.rgb" => {
             if call
                 .arguments
@@ -420,7 +448,7 @@ pub(super) fn constant_value(expression: &AstExpression) -> Option<Value> {
             {
                 return None;
             }
-            let mut components = [0_u32; 4];
+            let mut components = [0_u64; 4];
             for (index, argument) in call.arguments.iter().enumerate() {
                 let Value::Int(value) = constant_value(&argument.expression)? else {
                     return None;
@@ -428,7 +456,7 @@ pub(super) fn constant_value(expression: &AstExpression) -> Option<Value> {
                 if !(0..=255).contains(&value) {
                     return None;
                 }
-                components[index] = value as u32;
+                components[index] = value as u64;
             }
             if call.arguments.len() == 3 {
                 components[3] = 255;

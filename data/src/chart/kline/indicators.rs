@@ -1004,7 +1004,7 @@ pub enum IndicatorSettingValue {
     I64(i64),
     F64(f64),
     Bool(bool),
-    Color(u32),
+    Color(u64),
     Choice(String),
     Text(String),
     TextList(Vec<String>),

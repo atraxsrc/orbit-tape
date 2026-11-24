@@ -1447,7 +1447,7 @@ impl<'a> IndicatorView<'a> {
                     .output_color_for(output_instance_id, output_channel, source_index)
             })
         {
-            return super::painting::resolve_indicator_color(color);
+            return super::painting::resolve_indicator_color(color, palette);
         }
         let style_by = channel.style_by.or_else(|| {
             self.indicator_output_spec_for_channel(output_instance_id, output_channel)

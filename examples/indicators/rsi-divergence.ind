@@ -72,13 +72,13 @@ if bullish_signal {
     region(key = swing_bar, upper = swing_low, lower = swing_low,
         left_index = swing_bar, right_index = swing_bar,
         id = "bull-labels", persistent = true,
-        text = "Bull", text_position = "below", fill_color = color.teal)
+        text = "Bull", text_position = "below", fill_color = theme.success)
 }
 if bearish_signal {
     region(key = swing_bar, upper = swing_high, lower = swing_high,
         left_index = swing_bar, right_index = swing_bar,
         id = "bear-labels", persistent = true,
-        text = "Bear", text_position = "above", fill_color = color.red)
+        text = "Bear", text_position = "above", fill_color = theme.danger)
 }
 
 style("main", title = "RSI", role = "primary")

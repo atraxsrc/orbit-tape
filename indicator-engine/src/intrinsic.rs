@@ -967,7 +967,7 @@ fn eval_tostring(
         Value::Float(value) => value.to_string(),
         Value::Bool(value) => value.to_string(),
         Value::String(value) => value,
-        Value::Color(value) => format!("#{:08x}", value),
+        Value::Color(value) => crate::scene::Color(value).to_string(),
         Value::Tuple(values) => format!("({} values)", values.len()),
         Value::Array(values) => format!("[{} values]", values.len()),
         Value::Record(values) => format!("{{{} fields}}", values.len()),
@@ -1055,15 +1055,15 @@ fn eval_color_rgb(
             .filter(|value| (0..=255).contains(value))
             .ok_or(IntrinsicError::InvalidArguments(name))
     };
-    let red = component(0, "color.rgb red must be between 0 and 255")? as u32;
-    let green = component(1, "color.rgb green must be between 0 and 255")? as u32;
-    let blue = component(2, "color.rgb blue must be between 0 and 255")? as u32;
+    let red = component(0, "color.rgb red must be between 0 and 255")? as u64;
+    let green = component(1, "color.rgb green must be between 0 and 255")? as u64;
+    let blue = component(2, "color.rgb blue must be between 0 and 255")? as u64;
     let alpha = args
         .get(3)
         .filter(|value| !value.is_na())
         .map(|_| component(3, "color.rgb alpha must be between 0 and 255"))
         .transpose()?
-        .unwrap_or(255) as u32;
+        .unwrap_or(255) as u64;
     Ok(Value::Color(
         (alpha << 24) | (red << 16) | (green << 8) | blue,
     ))
@@ -1086,8 +1086,10 @@ fn eval_color_new(
             "color.new transp must be between 0 and 100",
         ));
     }
-    let alpha = (255.0 * (1.0 - transp / 100.0)).round() as u32;
-    Ok(Value::Color((alpha << 24) | (color & 0x00ff_ffff)))
+    let alpha = (255.0 * (1.0 - transp / 100.0)).round() as u8;
+    Ok(Value::Color(
+        crate::scene::Color(*color).with_alpha(alpha).0,
+    ))
 }
 
 fn eval_array_new(

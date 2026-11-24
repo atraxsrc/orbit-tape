@@ -302,13 +302,19 @@ fn parse_input_value(value_type: ValueType, text: &str) -> Option<InputValue> {
         }),
         ValueType::String => InputValue::String(text.to_owned()),
         ValueType::Color => {
+            if let Some(role) = text.strip_prefix("theme.") {
+                let role = orbit_tape_indicator_engine::ThemeColor::from_name(role)?;
+                return Some(InputValue::Color(
+                    orbit_tape_indicator_engine::Color::theme(role).0,
+                ));
+            }
             let hex = text.strip_prefix('#')?;
             let rgba = u32::from_str_radix(hex, 16).ok()?;
-            InputValue::Color(match hex.len() {
+            InputValue::Color(u64::from(match hex.len() {
                 6 => 0xff00_0000 | rgba,
                 8 => rgba.rotate_right(8),
                 _ => return None,
-            })
+            }))
         }
         _ => return None,
     })
@@ -321,7 +327,7 @@ fn csv_value(value: &Value) -> String {
         Value::Float(value) => value.to_string(),
         Value::Bool(value) => value.to_string(),
         Value::String(value) => csv_text(value),
-        Value::Color(value) => format!("#{value:08x}"),
+        Value::Color(value) => orbit_tape_indicator_engine::Color(*value).to_string(),
         other => csv_text(&format!("{other:?}")),
     }
 }

@@ -561,8 +561,27 @@ impl PixelGeometry {
     }
 }
 
-pub(super) fn resolve_indicator_color(color: indicator_engine::Color) -> iced::Color {
-    indicator_color_from_argb(color.0)
+/// A fixed color as is; a theme color (`theme.success`, ...) from the current
+/// palette, which follows the COSMIC theme, keeping the indicator's alpha.
+pub(super) fn resolve_indicator_color(
+    color: indicator_engine::Color,
+    palette: &Extended,
+) -> iced::Color {
+    use indicator_engine::ThemeColor;
+    let Some(role) = color.theme_role() else {
+        return indicator_color_from_argb(color.argb_bits());
+    };
+    let base = match role {
+        ThemeColor::Neutral => palette.background.base.text,
+        ThemeColor::Secondary => palette.secondary.strong.color,
+        ThemeColor::Primary => palette.primary.base.color,
+        ThemeColor::Success => palette.success.base.color,
+        ThemeColor::Danger => palette.danger.base.color,
+        ThemeColor::Warning => palette.warning.base.color,
+        ThemeColor::Text => palette.background.base.text,
+        ThemeColor::Panel => palette.background.weak.color,
+    };
+    base.scale_alpha(f32::from(color.alpha()) / 255.0)
 }
 
 fn indicator_color_from_argb(value: u32) -> iced::Color {

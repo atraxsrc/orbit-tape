@@ -59,6 +59,10 @@ Open the file in any editor. The language basics:
   more.
 - `plot(...)` outputs a series. `display(...)` picks a separate panel or the
   price chart; `style(...)` declares theme-aware colors.
+- `theme.success`, `theme.danger`, `theme.primary` and the other `theme.*`
+  colors follow your COSMIC theme for boxes, labels and info tables too. Use
+  them instead of fixed `color.rgb(...)` values so an indicator matches the
+  rest of the app in dark and light mode.
 - `plot(condition, alert = true)` on a boolean series turns it into an alert:
   a desktop notification when it is true on a newly closed bar.
 - `htf.bars("720")` reads closed candles of a higher timeframe (here 12H).
