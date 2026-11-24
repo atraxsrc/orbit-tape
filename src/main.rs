@@ -728,9 +728,9 @@ impl OrbitTape {
                         self.network_editor.reopen(&self.network);
                     }
                     Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Alerts)))
-                        if self.alert_history.mark_read() =>
+                        if self.alert_history.unread() > 0 =>
                     {
-                        self.alert_history.save();
+                        self.mark_alerts_read();
                     }
                     Some(screen::sidebar::Action::MenuChanged(_)) => {}
                     Some(screen::sidebar::Action::TickerSelected(ticker_info, content)) => {
@@ -820,19 +820,24 @@ impl OrbitTape {
         if hits.is_empty() {
             return;
         }
-        let (fired, error) = self.alert_center.deliver(hits, &self.settings.alerts);
-        if !fired.is_empty() {
-            for alert in fired {
-                self.alert_history.push(alert);
-            }
-            // The list is open, so the user sees the new entries.
-            if self.sidebar.is_menu_active(sidebar::Menu::Alerts) {
-                self.alert_history.mark_read();
-            }
-            self.alert_history.save();
+        let delivery = self.alert_center.deliver(hits, &self.settings.alerts);
+        if let Some(history) = delivery.history {
+            self.alert_history = history;
         }
-        if let Some(err) = error {
+        // The list is open, so the user sees the new entries.
+        if !delivery.fired.is_empty() && self.sidebar.is_menu_active(sidebar::Menu::Alerts) {
+            self.mark_alerts_read();
+        }
+        if let Some(err) = delivery.error {
             self.notifications.push(Toast::error(err));
+        }
+    }
+
+    fn mark_alerts_read(&mut self) {
+        self.alert_history.mark_read();
+        match data::config::alert_history::AlertHistory::mark_read_saved() {
+            Ok(history) => self.alert_history = history,
+            Err(error) => log::warn!("could not save the alert history: {error}"),
         }
     }
 
@@ -840,7 +845,10 @@ impl OrbitTape {
         match message {
             modal::alert_history::Message::Clear => {
                 self.alert_history.clear();
-                self.alert_history.save();
+                match data::config::alert_history::AlertHistory::clear_saved() {
+                    Ok(history) => self.alert_history = history,
+                    Err(error) => log::warn!("could not save the alert history: {error}"),
+                }
                 Task::none()
             }
             modal::alert_history::Message::Focus(index) => {

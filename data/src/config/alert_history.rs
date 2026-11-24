@@ -1,10 +1,17 @@
 //! History of fired alerts, shown in the sidebar's alert list and kept in
 //! `alert-history.json` next to the saved state.
+//!
+//! The app and `orbit-tape watch` both add to it, under the file lock of
+//! [`shared_file`]. It doubles as the record of what was delivered, so a
+//! restart or a second program does not deliver the same bar again.
 
+use super::shared_file;
 use crate::chart::Basis;
 use exchange::Ticker;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::io;
+use std::path::{Path, PathBuf};
 
 pub const ALERT_HISTORY_PATH: &str = "alert-history.json";
 /// Oldest entries are dropped beyond this.
@@ -52,48 +59,79 @@ pub struct AlertHistory {
 }
 
 impl AlertHistory {
+    pub fn path() -> PathBuf {
+        crate::data_path(Some(ALERT_HISTORY_PATH))
+    }
+
     /// Reads the history file; a missing or broken file gives an empty
     /// history.
     pub fn load() -> Self {
-        let path = crate::data_path(Some(ALERT_HISTORY_PATH));
-        match std::fs::read_to_string(&path) {
-            Ok(json) => match serde_json::from_str::<Self>(&json) {
-                Ok(mut history) => {
-                    history.enforce_capacity();
-                    history
-                }
-                Err(error) => {
-                    log::warn!("ignoring unreadable {}: {error}", path.display());
-                    Self::default()
-                }
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),
+        Self::load_from(&Self::path())
+    }
+
+    pub fn load_from(path: &Path) -> Self {
+        match shared_file::read::<Self>(path) {
+            Ok(mut history) => {
+                history.enforce_capacity();
+                history
+            }
             Err(error) => {
-                log::warn!("could not read {}: {error}", path.display());
+                log::warn!("ignoring unreadable alert history: {error}");
                 Self::default()
             }
         }
     }
 
-    /// Writes the history file on a worker thread.
-    pub fn save(&self) {
-        let json = match serde_json::to_string(self) {
-            Ok(json) => json,
-            Err(error) => {
-                log::error!("could not serialize alert history: {error}");
-                return;
-            }
-        };
-        let spawned = std::thread::Builder::new()
-            .name("alert-history-save".to_owned())
-            .spawn(move || {
-                if let Err(error) = crate::write_json_to_file(&json, ALERT_HISTORY_PATH) {
-                    log::error!("could not save alert history: {error}");
+    /// Saves the alerts that were not delivered before, by this or another
+    /// program, and returns them with the saved history. Deliver only what
+    /// this returns: two programs that see the same signal both ask, and
+    /// only the first one gets it.
+    pub fn claim(alerts: Vec<FiredAlert>) -> io::Result<(Vec<FiredAlert>, Self)> {
+        Self::claim_in(&Self::path(), alerts)
+    }
+
+    pub fn claim_in(path: &Path, alerts: Vec<FiredAlert>) -> io::Result<(Vec<FiredAlert>, Self)> {
+        shared_file::update(path, |history: &mut Self| {
+            let mut claimed = Vec::new();
+            for alert in alerts {
+                if history.was_delivered(&alert) {
+                    continue;
                 }
-            });
-        if let Err(error) = spawned {
-            log::error!("could not start alert history save: {error}");
-        }
+                history.push(alert.clone());
+                claimed.push(alert);
+            }
+            (claimed, history.clone())
+        })
+    }
+
+    /// Marks the saved history as read and returns it.
+    pub fn mark_read_saved() -> io::Result<Self> {
+        shared_file::update(&Self::path(), |history: &mut Self| {
+            history.mark_read();
+            history.clone()
+        })
+    }
+
+    /// Empties the saved history.
+    pub fn clear_saved() -> io::Result<Self> {
+        shared_file::update(&Self::path(), |history: &mut Self| {
+            history.clear();
+            history.clone()
+        })
+    }
+
+    /// Whether the same condition already fired on the same bar of the same
+    /// chart. Entries saved by older versions have no key and never match.
+    pub fn was_delivered(&self, alert: &FiredAlert) -> bool {
+        let (Some(key), Some(bar_time)) = (&alert.condition_key, alert.bar_time) else {
+            return false;
+        };
+        self.entries.iter().any(|entry| {
+            entry.bar_time == Some(bar_time)
+                && entry.condition_key.as_ref() == Some(key)
+                && entry.ticker == alert.ticker
+                && entry.basis == alert.basis
+        })
     }
 
     pub fn push(&mut self, alert: FiredAlert) {
@@ -201,5 +239,31 @@ mod tests {
         assert_eq!(entry.bar_time, None);
         assert_eq!(entry.condition_key, None);
         assert!(!entry.missed);
+    }
+
+    #[test]
+    fn a_claim_is_granted_once() {
+        let dir = std::env::temp_dir().join(format!("orbit-tape-history-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(ALERT_HISTORY_PATH);
+        let (claimed, history) = AlertHistory::claim_in(&path, vec![alert(1), alert(2)]).unwrap();
+        assert_eq!(claimed.len(), 2);
+        assert_eq!(history.unread(), 2);
+        // Another program saw the same bar 2 and a new bar 3.
+        let again = FiredAlert {
+            fired_at: 99,
+            ..alert(2)
+        };
+        let (claimed, history) = AlertHistory::claim_in(&path, vec![again, alert(3)]).unwrap();
+        assert_eq!(claimed, vec![alert(3)]);
+        assert_eq!(history.len(), 3);
+        assert_eq!(AlertHistory::load_from(&path), history);
+        // Old entries without a key are never treated as delivered.
+        let old = FiredAlert {
+            condition_key: None,
+            ..alert(1)
+        };
+        assert!(!history.was_delivered(&old));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -12,6 +12,7 @@ use data::config::alerts::Alerts;
 use exchange::{Ticker, UnixMs};
 use rodio::Source;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// Recently delivered alerts remembered for de-duplication.
@@ -22,9 +23,19 @@ pub const MISSED_LABEL: &str = "missed while closed";
 
 pub struct AlertCenter {
     recent: VecDeque<String>,
+    history_path: PathBuf,
     /// When this run started: bars that closed before it were missed.
     launched_at: UnixMs,
     chime: Option<rodio::MixerDeviceSink>,
+}
+
+/// The outcome of [`AlertCenter::deliver`].
+#[derive(Debug, Default)]
+pub struct Delivery {
+    pub fired: Vec<FiredAlert>,
+    /// The saved history after the new alerts were added.
+    pub history: Option<AlertHistory>,
+    pub error: Option<String>,
 }
 
 /// One delivered condition on one bar of one chart.
@@ -37,6 +48,14 @@ impl AlertCenter {
     /// restarting before the next bar closes does not deliver one again.
     /// Entries saved by older versions (no bar time or key) are ignored.
     pub fn new(history: &AlertHistory, launched_at: UnixMs) -> Self {
+        Self::with_history_path(history, launched_at, AlertHistory::path())
+    }
+
+    pub fn with_history_path(
+        history: &AlertHistory,
+        launched_at: UnixMs,
+        history_path: PathBuf,
+    ) -> Self {
         let mut recent = history
             .entries()
             .filter_map(|alert| {
@@ -53,21 +72,21 @@ impl AlertCenter {
         recent.make_contiguous().reverse();
         Self {
             recent,
+            history_path,
             launched_at,
             chime: None,
         }
     }
 
-    /// Delivers new hits. Returns the hits that were delivered (for the
-    /// alert history) and an error message for the user when the chime could
-    /// not be played.
-    pub fn deliver(
-        &mut self,
-        hits: Vec<AlertHit>,
-        settings: &Alerts,
-    ) -> (Vec<FiredAlert>, Option<String>) {
+    /// Delivers new hits: claims them in the saved alert history (so a hit
+    /// another program or an earlier run already delivered is dropped),
+    /// then notifies. Returns what was delivered, the saved history when it
+    /// changed, and an error message for the user when the chime could not
+    /// be played.
+    pub fn deliver(&mut self, hits: Vec<AlertHit>, settings: &Alerts) -> Delivery {
+        let mut delivery = Delivery::default();
         if !settings.enabled {
-            return (Vec::new(), None);
+            return delivery;
         }
         let mut fresh = Vec::new();
         for hit in hits {
@@ -90,31 +109,61 @@ impl AlertCenter {
             fresh.push(hit);
         }
         if fresh.is_empty() {
-            return (Vec::new(), None);
+            return delivery;
         }
 
-        let mut fired = Vec::with_capacity(fresh.len());
-        for hit in &fresh {
-            let missed = self.missed(hit);
+        let candidates = fresh
+            .iter()
+            .map(|hit| fired_alert(hit, self.missed(hit)))
+            .collect();
+        let claimed = match AlertHistory::claim_in(&self.history_path, candidates) {
+            Ok((claimed, history)) => {
+                delivery.history = Some(history);
+                claimed
+            }
+            Err(error) => {
+                // Better a possible duplicate than a lost alert.
+                log::warn!("could not save the alert history: {error}");
+                fresh
+                    .iter()
+                    .map(|hit| fired_alert(hit, self.missed(hit)))
+                    .collect()
+            }
+        };
+        if claimed.is_empty() {
+            return delivery;
+        }
+
+        for alert in &claimed {
+            let Some(hit) = fresh.iter().find(|hit| {
+                Some(hit.condition_key()) == alert.condition_key
+                    && Some(hit.bar_time.as_u64()) == alert.bar_time
+                    && hit.ticker_info.ticker == alert.ticker
+                    && hit.basis == alert.basis
+            }) else {
+                continue;
+            };
             log::info!(
                 "alert: {} {} {} ({}){}",
                 symbol(hit),
                 hit.basis,
                 hit.title,
                 hit.condition_key(),
-                if missed { ", missed while closed" } else { "" }
+                if alert.missed {
+                    ", missed while closed"
+                } else {
+                    ""
+                }
             );
             if settings.notification {
-                notify(summary(hit, missed), body(hit));
+                notify(summary(hit, alert.missed), body(hit));
             }
-            fired.push(fired_alert(hit, missed));
         }
-        let error = if settings.sound {
-            self.play_chime(settings.volume).err()
-        } else {
-            None
-        };
-        (fired, error)
+        if settings.sound {
+            delivery.error = self.play_chime(settings.volume).err();
+        }
+        delivery.fired = claimed;
+        delivery
     }
 
     /// Whether the hit's bar closed before this run started. Price alerts
@@ -268,6 +317,7 @@ mod tests {
     use exchange::adapter::Exchange;
     use exchange::unit::price::Price;
     use exchange::{TickerInfo, Timeframe};
+    use std::path::Path;
 
     const HOUR: u64 = 3_600_000;
     const BAR: u64 = 1_768_514_400_000;
@@ -301,50 +351,77 @@ mod tests {
         }
     }
 
-    /// Saves and loads the history, as quitting and starting again does.
-    fn restart(history: &AlertHistory) -> AlertHistory {
-        serde_json::from_str(&serde_json::to_string(history).unwrap()).unwrap()
+    /// A fresh history file for one test.
+    fn history_file(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("orbit-tape-alerts-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir.join("alert-history.json")
+    }
+
+    fn center(path: &Path, launched_at: u64) -> AlertCenter {
+        let history = AlertHistory::load_from(path);
+        AlertCenter::with_history_path(&history, UnixMs(launched_at), path.to_owned())
     }
 
     #[test]
     fn a_restart_does_not_deliver_the_same_bar_again() {
-        let mut center = AlertCenter::new(&AlertHistory::default(), UnixMs(BAR));
-        let (fired, _) = center.deliver(vec![hit(BAR)], &quiet());
+        let path = history_file("restart");
+        let mut first = center(&path, BAR);
+        let fired = first.deliver(vec![hit(BAR)], &quiet()).fired;
         assert_eq!(fired.len(), 1);
         assert!(!fired[0].missed);
-        let mut history = AlertHistory::default();
-        for alert in fired {
-            history.push(alert);
-        }
 
         // Restarted before the next bar closed: the chart catches up on the
         // same bar, which was already delivered.
-        let history = restart(&history);
-        let mut center = AlertCenter::new(&history, UnixMs(BAR + HOUR + 60_000));
-        let (fired, _) = center.deliver(vec![hit(BAR)], &quiet());
-        assert!(fired.is_empty(), "{fired:?}");
+        let mut restarted = center(&path, BAR + HOUR + 60_000);
+        assert!(restarted.deliver(vec![hit(BAR)], &quiet()).fired.is_empty());
         // The next bar still fires.
-        let (fired, _) = center.deliver(vec![hit(BAR + HOUR)], &quiet());
-        assert_eq!(fired.len(), 1);
+        assert_eq!(
+            restarted
+                .deliver(vec![hit(BAR + HOUR)], &quiet())
+                .fired
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn another_program_that_delivered_first_wins() {
+        let path = history_file("two-programs");
+        // Both started before either delivered anything.
+        let mut app = center(&path, BAR);
+        let mut watcher = center(&path, BAR);
+        assert_eq!(watcher.deliver(vec![hit(BAR)], &quiet()).fired.len(), 1);
+        let delivery = app.deliver(vec![hit(BAR)], &quiet());
+        assert!(delivery.fired.is_empty());
+        // The app still learns the saved history, with the watcher's entry.
+        assert_eq!(delivery.history.unwrap().len(), 1);
     }
 
     #[test]
     fn entries_without_a_key_do_not_block_alerts() {
-        let mut history = AlertHistory::default();
-        history.push(FiredAlert {
-            condition_key: None,
-            ..fired_alert(&hit(BAR), false)
-        });
-        let mut center = AlertCenter::new(&restart(&history), UnixMs(BAR + 2 * HOUR));
-        assert_eq!(center.deliver(vec![hit(BAR)], &quiet()).0.len(), 1);
+        let path = history_file("old-entries");
+        AlertHistory::claim_in(
+            &path,
+            vec![FiredAlert {
+                condition_key: None,
+                ..fired_alert(&hit(BAR), false)
+            }],
+        )
+        .unwrap();
+        let mut center = center(&path, BAR + 2 * HOUR);
+        assert_eq!(center.deliver(vec![hit(BAR)], &quiet()).fired.len(), 1);
     }
 
     #[test]
     fn bars_that_closed_before_launch_are_marked_missed() {
         // Launched 30 minutes after the bar closed.
-        let launched = UnixMs(BAR + HOUR + HOUR / 2);
-        let mut center = AlertCenter::new(&AlertHistory::default(), launched);
-        let (fired, _) = center.deliver(vec![hit(BAR), hit(BAR + HOUR)], &quiet());
+        let path = history_file("missed");
+        let mut center = center(&path, BAR + HOUR + HOUR / 2);
+        let fired = center
+            .deliver(vec![hit(BAR), hit(BAR + HOUR)], &quiet())
+            .fired;
         assert_eq!(
             fired.iter().map(|alert| alert.missed).collect::<Vec<_>>(),
             [true, false]
