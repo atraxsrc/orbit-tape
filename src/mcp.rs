@@ -442,13 +442,14 @@ impl OrbitTapeMcp {
             "exchange": exchange_id(exchange),
             "timeframe": timeframe.to_string(),
             "volume_unit": "USDT",
+            "history_note": history_note(limit, &series),
             "columns": ["time_utc", "open", "high", "low", "close", "volume"],
             "candles": rows,
         }))
     }
 
     #[tool(
-        description = "Run an indicator over closed candles and return its plot values, markers, alerts and info panel for the last N bars."
+        description = "Run an indicator over closed candles and return its plot values (every plot, hidden ones too, by title; plot_ids maps titles to IDs), last_values for the newest closed bar, markers, alerts and info panel for the last N bars. Inputs by ID or label. history_note says when the exchange had fewer bars than asked for."
     )]
     pub async fn run_indicator(
         &self,
@@ -480,7 +481,9 @@ impl OrbitTapeMcp {
             "symbol": series.instrument,
             "exchange": exchange_id(exchange),
             "timeframe": timeframe.to_string(),
+            "bars_requested": bars,
             "bars_run": series.klines.len(),
+            "history_note": history_note(bars, &series),
             "report": report,
         }))
     }
@@ -931,19 +934,69 @@ fn indicator_report(
             }
         },
     )?;
+    // Plots by title (hidden ones too); a missing or repeated title falls
+    // back to the plot ID.
+    let names = plot_names(plots);
     let mut columns = vec!["time_utc".to_owned(), "close".to_owned()];
-    columns.extend(plots.iter().map(|plot| plot.id.clone()));
+    columns.extend(names.iter().cloned());
+    let last_values: serde_json::Map<String, Json> = match rows.last() {
+        Some(Json::Array(row)) => names
+            .iter()
+            .cloned()
+            .zip(row.iter().skip(2).cloned())
+            .collect(),
+        _ => serde_json::Map::new(),
+    };
     Ok(json!({
         "columns": columns,
-        "plot_titles": plots
+        "last_values": last_values,
+        "plot_ids": names
             .iter()
-            .map(|plot| (plot.id.clone(), plot.label.clone()))
+            .zip(plots)
+            .map(|(name, plot)| (name.clone(), plot.id.clone()))
             .collect::<BTreeMap<_, _>>(),
         "rows": rows,
         "markers": markers,
         "alerts": alerts,
         "info_panel": info,
     }))
+}
+
+/// Each plot's name in reports: its title, or its ID when the title is
+/// missing or used by another plot too.
+fn plot_names(plots: &[indicator_engine::PlotDescriptor]) -> Vec<String> {
+    let title = |plot: &indicator_engine::PlotDescriptor| {
+        let label = plot.label.trim();
+        (!label.is_empty()).then(|| label.to_owned())
+    };
+    plots
+        .iter()
+        .map(|plot| match title(plot) {
+            Some(label)
+                if plots
+                    .iter()
+                    .filter(|other| title(other).as_deref() == Some(label.as_str()))
+                    .count()
+                    == 1 =>
+            {
+                label
+            }
+            _ => plot.id.clone(),
+        })
+        .collect()
+}
+
+/// Says when the exchange had less history than asked for (a coin listed
+/// recently, or the exchange's own limit).
+fn history_note(requested: usize, series: &Series) -> Option<String> {
+    let got = series.klines.len();
+    (got < requested).then(|| {
+        let since = series.klines.first().map_or_else(
+            || "none".to_owned(),
+            |kline| utc(kline.time.as_u64() as i64),
+        );
+        format!("asked for {requested} bars, the exchange has {got} (oldest {since})")
+    })
 }
 
 /// 1H bars back to the start of the previous quarter or the year, whichever
@@ -1529,8 +1582,12 @@ mod tests {
         let columns = report["columns"].as_array().unwrap();
         assert_eq!(
             columns[..3],
-            [json!("time_utc"), json!("close"), json!("sma1")]
+            [json!("time_utc"), json!("close"), json!("SMA 1")]
         );
+        assert_eq!(report["plot_ids"]["SMA 1"], "sma1");
+        assert!(report["last_values"]["SMA 1"].is_f64());
+        assert_eq!(out["bars_requested"], 500);
+        assert_eq!(out["history_note"], Json::Null);
         let rows = report["rows"].as_array().unwrap();
         assert_eq!(rows.len(), 3);
         assert!(rows[2][2].is_f64(), "{:?}", rows[2]);
@@ -1550,8 +1607,8 @@ mod tests {
         let markers = roman["report"]["markers"].as_array().unwrap();
         assert!(markers.len() < 200, "{} markers", markers.len());
         assert!(markers.iter().all(|marker| marker["price"].is_f64()));
-        // The setup values carry the TradingView titles.
-        let titles = &roman["report"]["plot_titles"];
+        // The setup values carry the TradingView titles, hidden or not.
+        let last_values = &roman["report"]["last_values"];
         for title in [
             "x_bias",
             "x_tapUpAgo",
@@ -1560,8 +1617,26 @@ mod tests {
             "x_ctArm",
             "x_bullFlip",
         ] {
-            assert_eq!(titles[title], title);
+            assert_eq!(roman["report"]["plot_ids"][title], title);
+            assert!(last_values.get(title).is_some(), "{title} missing");
         }
+        assert!(last_values["x_bias"].is_number());
+
+        // More history than the exchange has: run on what there is, and say so.
+        let long = parse(block_on(server().run_indicator(Parameters(RunParams {
+            indicator: "market.sma".into(),
+            symbol: "BTC".into(),
+            timeframe: None,
+            exchange: None,
+            inputs: None,
+            last: Some(1),
+            bars: Some(MAX_BARS),
+        }))));
+        let note = long["history_note"].as_str().expect("a history note");
+        assert!(
+            note.starts_with(&format!("asked for {MAX_BARS} bars, the exchange has ")),
+            "{note}"
+        );
 
         let error = block_on(server().run_indicator(Parameters(RunParams {
             indicator: "market.sma".into(),

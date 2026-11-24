@@ -72,7 +72,7 @@ a desktop theme role such as `theme.danger` (`theme.text@f0` with alpha).
 | --- | --- | --- |
 | `scan` | Runs an indicator over many coins and lists the alerts that fired on the last closed bar(s). Default: Roman Trade Setup on 1h over your `scan-symbols.txt`. | `indicator`, `timeframe`, `exchange`, `symbols` (at most 100), `lookback` (1 to 50), `inputs` |
 | `get_candles` | Closed OHLCV candles, oldest first. | `symbol`, `timeframe`, `exchange`, `limit` (default 100, at most 500) |
-| `run_indicator` | Runs one indicator on one coin: every plot value, markers, fired alerts and the info panel for the last N bars. | `indicator`, `symbol`, `timeframe`, `exchange`, `inputs`, `last` (default 20, at most 200), `bars` (default 2000, at most 20000) |
+| `run_indicator` | Runs one indicator on one coin: every plot value (hidden ones too, columns named by plot title, `plot_ids` maps titles to IDs, `last_values` holds the newest closed bar), markers the script showed, fired alerts and the info panel for the last N bars. `history_note` says when the exchange had fewer bars than asked for. | `indicator`, `symbol`, `timeframe`, `exchange`, `inputs`, `last` (default 20, at most 200), `bars` (default 2000, at most 20000) |
 | `key_levels` | Current Key Levels sorted by price, each marked above or below the last close. By default the levels `key-levels.ind` shows with its own settings (4H off; daily open; Monday range and mid; weekly and monthly open, high, low and mid; quarterly open and mid; yearly open and mid). Runs on 1h candles back to the start of the year or the previous quarter. | `symbol`, `exchange`, `levels` (groups `4h daily monday weekly monthly quarterly yearly`, or level IDs such as `w_open`, `d_prev_high`) |
 | `check_indicator` | Same as `orbit-tape-indicator check`. | `path` (a `.ind` file or folder), `namespace` |
 | `test_indicator` | Same as `orbit-tape-indicator test`: check, then run on synthetic bars. | `path`, `namespace` |
@@ -94,6 +94,10 @@ take values as text by input ID or label, for example `{"ctMode": "true"}`;
 sources: a path must be a folder (scanned for `.ind` files, links skipped) or
 a regular `.ind` file. A link named `.ind` that points at any other file is
 refused.
+
+`get_candles` and `run_indicator` also return `history_note` when the
+exchange had fewer bars than asked for (a coin listed recently, or the
+exchange's own limit); it is null otherwise.
 
 Errors (unknown symbols, timeframes, indicators or inputs, and network
 failures) come back as tool errors with a short message; the server keeps
