@@ -1,5 +1,5 @@
 [Unit]
-Description=Orbit Tape indicator scan (Roman Setup on Binance perps)
+Description=Orbit Tape indicator scan (Roman Setup on OKX perps)
 Documentation=file:///usr/share/doc/orbit-tape/README.md
 After=network-online.target
 

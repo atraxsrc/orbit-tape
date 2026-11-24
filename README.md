@@ -187,7 +187,7 @@ Then add it to a candlestick chart from the indicator sidebar (**+**).
 ## Headless scan
 
 `orbit-tape scan` runs an indicator over recent candles of USDT perpetuals
-on Binance or OKX without opening a window, and lists every alert plot
+on OKX (default) or Binance without opening a window, and lists every alert plot
 (`plot(..., alert = true)`) that fired on the last closed bar. When anything
 fired it also sends one desktop notification, grouped by signal and bar
 (for example `LTF MSS down Tue 13:00: BTC, BNB, SOL`). By default it runs
@@ -195,9 +195,9 @@ Roman Setup (`roman-setup.ind`, from the indicators folder or the copy the
 .deb ships) on the 1H chart.
 
 The coins come from `~/.local/share/orbit-tape/scan-symbols.txt`, one per
-line (`#` starts a comment), plus an `exchange = binance` or `exchange = okx`
-line. The first run creates it with 66 coins; edit it to change the list or
-the exchange, delete it to get the default back. Write coins as `PEPE`;
+line (`#` starts a comment), plus an `exchange = okx` or `exchange = binance`
+line (OKX when there is none). The first run creates it with 66 coins; edit
+it to change the list or the exchange, delete it to get the default back. Write coins as `PEPE`;
 `PEPEUSDT`, `1000PEPEUSDT` and `PEPE-USDT-SWAP` work too, and Binance's 1000x
 contracts are found automatically. OKX is slower to fetch (about 3 s per coin
 against 1.5 s on Binance).
@@ -205,17 +205,17 @@ against 1.5 s on Binance).
 ```sh
 orbit-tape scan
 orbit-tape scan --symbols BTC,ETH --input ctMode=true --lookback 24
-orbit-tape scan --exchange okx
+orbit-tape scan --exchange binance
 orbit-tape scan --symbols-file ~/majors.txt
 orbit-tape scan --indicator ~/.local/share/orbit-tape/indicators/my.ind --timeframe 4h --no-notify
 ```
 
 ```
-Scanning 66 pairs on Binance, this takes a few minutes for a long list...
-Roman Trade Setup (H12 to H1) on 66 Binance perps, 1h chart, 2000 bars, last 1 closed bar(s)
-SYMBOL    LAST CLOSED BAR     CLOSE  SIGNALS
-BTCUSDT   Tue 24 Nov 11:00  61303.9  -
-ADAUSDT   Tue 24 Nov 11:00   0.1487  HTF Bearish SFP
+Scanning 66 pairs on OKX, this takes a few minutes for a long list...
+Roman Trade Setup (H12 to H1) on 66 OKX perps, 1h chart, 2000 bars, last 1 closed bar(s)
+SYMBOL         LAST CLOSED BAR     CLOSE  SIGNALS
+BTC-USDT-SWAP  Tue 24 Nov 11:00  61303.9  -
+ADA-USDT-SWAP  Tue 24 Nov 11:00   0.1487  HTF Bearish SFP
 ```
 
 The .deb installs a systemd user timer that runs the scan 90 seconds after

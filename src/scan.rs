@@ -29,7 +29,7 @@ const SYMBOLS_FILE_HEADER: &str = "\
 # Lines starting with # are ignored. Exchange: binance or okx.
 # Binance's 1000x contracts (1000PEPEUSDT) are found automatically.
 # Delete this file to get the default list back.
-exchange = binance
+exchange = okx
 ";
 /// Notification lines before the rest is summed up as "and n more".
 const NOTIFY_MAX_LINES: usize = 10;
@@ -51,7 +51,7 @@ the last closed bar. Sends one desktop notification when anything fired.
                 indicators folder, /usr/share/doc/orbit-tape/indicators/roman
                 or ./indicators/roman
   --exchange    binance or okx. Default: the `exchange =` line of the
-                symbols file, else binance
+                symbols file, else okx
   --symbols     coins, comma separated, e.g. BTC,ETH (BTCUSDT and
                 BTC-USDT-SWAP work too)
   --symbols-file
@@ -190,7 +190,7 @@ fn scan(arguments: &[String]) -> Result<(), String> {
     let exchange = arguments
         .exchange
         .or(file_exchange)
-        .unwrap_or(ScanExchange::Binance);
+        .unwrap_or(ScanExchange::Okx);
     let config = indicator_config(&indicator, &arguments.inputs)?;
     let alert_plots = indicator
         .descriptor
@@ -900,7 +900,7 @@ mod tests {
         assert_eq!(
             parse_symbols(&written).unwrap(),
             (
-                Some(ScanExchange::Binance),
+                Some(ScanExchange::Okx),
                 DEFAULT_SYMBOLS.iter().map(|s| s.to_string()).collect()
             )
         );
