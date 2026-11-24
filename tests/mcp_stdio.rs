@@ -1,5 +1,6 @@
 //! Starts `orbit-tape mcp` as a child process and speaks the protocol over its
-//! stdin and stdout: initialize, list the tools, call one that needs no network.
+//! stdin and stdout: initialize, list the tools, call one that needs no network,
+//! list and get the prompt.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
@@ -33,13 +34,15 @@ fn mcp_server_lists_its_tools_over_stdio() {
             "params": { "name": "check_indicator", "arguments": { "path": examples } },
         })
         .to_string(),
+        r#"{"jsonrpc":"2.0","id":4,"method":"prompts/list"}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":5,"method":"prompts/get","params":{"name":"daily_report"}}"#.to_owned(),
     ];
     for request in &requests {
         writeln!(stdin, "{request}").unwrap();
     }
     stdin.flush().unwrap();
 
-    // Read the three responses, with a watchdog so a hang fails the test.
+    // Read the five responses, with a watchdog so a hang fails the test.
     let stdout = child.stdout.take().unwrap();
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -50,7 +53,7 @@ fn mcp_server_lists_its_tools_over_stdio() {
         }
     });
     let mut responses = std::collections::BTreeMap::new();
-    while responses.len() < 3 {
+    while responses.len() < 5 {
         let line = receiver
             .recv_timeout(Duration::from_secs(30))
             .expect("server answers within 30 s");
@@ -66,6 +69,7 @@ fn mcp_server_lists_its_tools_over_stdio() {
     let init = &responses[&1]["result"];
     assert_eq!(init["serverInfo"]["name"], "orbit-tape");
     assert!(init["capabilities"]["tools"].is_object());
+    assert!(init["capabilities"]["prompts"].is_object());
 
     let mut names = responses[&2]["result"]["tools"]
         .as_array()
@@ -110,4 +114,12 @@ fn mcp_server_lists_its_tools_over_stdio() {
     let call = &responses[&3]["result"];
     assert_eq!(call["isError"], false, "{call}");
     assert_eq!(call["content"][0]["text"], "check passed: 6 source(s)");
+
+    let prompts = responses[&4]["result"]["prompts"].as_array().unwrap();
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(prompts[0]["name"], "daily_report");
+    let text = responses[&5]["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(text.starts_with("Run the daily trading routine"), "{text}");
 }

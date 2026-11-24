@@ -9,6 +9,7 @@
 //! Logs go to stderr; stdout carries the protocol.
 
 mod alerts;
+pub(crate) mod report;
 mod routine;
 
 use crate::headless::{
@@ -316,6 +317,7 @@ pub struct OrbitTapeMcp {
     paths: Arc<Paths>,
     candles: Arc<dyn CandleSource>,
     tool_router: ToolRouter<Self>,
+    prompt_router: rmcp::handler::server::router::prompt::PromptRouter<Self>,
 }
 
 // ---------------------------------------------------------------- parameters
@@ -411,6 +413,7 @@ impl OrbitTapeMcp {
             tool_router: Self::tool_router()
                 + Self::alert_tool_router()
                 + Self::routine_tool_router(),
+            prompt_router: Self::report_prompt_router(),
         }
     }
 
@@ -829,21 +832,29 @@ impl OrbitTapeMcp {
 }
 
 #[tool_handler(router = self.tool_router)]
+#[rmcp::prompt_handler(router = self.prompt_router)]
 impl ServerHandler for OrbitTapeMcp {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("orbit-tape", env!("CARGO_PKG_VERSION")))
-            .with_instructions(
-                "Orbit Tape: crypto market tools. Candles are closed bars of USDT \
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .build(),
+        )
+        .with_server_info(Implementation::new("orbit-tape", env!("CARGO_PKG_VERSION")))
+        .with_instructions(
+            "Orbit Tape: crypto market tools. Candles are closed bars of USDT \
                  perpetuals on Binance or OKX; times are UTC. Use list_indicators to see the \
                  user's indicators and their inputs, scan for alert signals across many coins, \
                  run_indicator for one coin's values, key_levels for support and resistance \
                  levels, and alert_history for what fired. create_alert, list_alerts, \
                  update_alert, delete_alert, pause_alerts and resume_alerts manage saved \
                  alerts (price crosses and indicator conditions) that the app or orbit-tape \
-                 watch runs and sends to the desktop or the user's phone (ntfy). Nothing here \
-                 places orders or is financial advice.",
-            )
+                 watch runs and sends to the desktop or the user's phone (ntfy). For the \
+                 daily routine: get_plan reads the user's plan, market_snapshot, roman_setups \
+                 and spot_status apply it, and the daily_report prompt runs the whole \
+                 routine. Nothing here places orders or is financial advice.",
+        )
     }
 }
 
