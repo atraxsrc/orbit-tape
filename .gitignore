@@ -2,3 +2,14 @@
 /target
 /.vscode
 *.log
+
+# Local-only files (see scripts/check-private-files.sh)
+start-here.md
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.claude/
+/pine-sources/
+scan-symbols.txt
+.env
+.env.*
