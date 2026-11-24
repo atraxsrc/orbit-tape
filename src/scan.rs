@@ -186,6 +186,10 @@ fn scan(arguments: &[String]) -> Result<(), String> {
         ));
     }
 
+    eprintln!(
+        "Scanning {} pairs, this takes about a second per pair...",
+        symbols.len()
+    );
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -521,7 +525,16 @@ async fn fetch_all(
     let from = forming.saturating_sub(interval * arguments.bars as u64);
 
     let mut rows = Vec::new();
-    for symbol in symbols {
+    // Progress on the terminal only, so the journal of a timer run stays clean.
+    let progress = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    for (index, symbol) in symbols.iter().enumerate() {
+        if progress {
+            eprint!(
+                "\rFetching {symbol:<16} {:>3}/{}\u{1b}[K",
+                index + 1,
+                symbols.len()
+            );
+        }
         let ticker = Ticker::new(symbol, Exchange::BinanceLinear);
         let fetched = match metadata.get(&ticker).copied().flatten() {
             None => Err("not a Binance USDT perpetual".to_owned()),
@@ -532,6 +545,9 @@ async fn fetch_all(
             }
         };
         rows.push((symbol.clone(), fetched));
+    }
+    if progress {
+        eprint!("\r\u{1b}[K");
     }
     Ok(rows)
 }
