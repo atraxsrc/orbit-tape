@@ -1039,6 +1039,16 @@ fn format_indicator_color(value: u64) -> String {
     }
 }
 
+/// The hex a resolved color draws with: `#RRGGBB` when opaque, else `#AARRGGBB`.
+fn format_resolved_hex(color: iced::Color) -> String {
+    let [r, g, b, a] = color.into_rgba8();
+    if a == 0xff {
+        format!("#{r:02X}{g:02X}{b:02X}")
+    } else {
+        format!("#{a:02X}{r:02X}{g:02X}{b:02X}")
+    }
+}
+
 /// A color setting: a square showing the color and a box taking `#RRGGBB`,
 /// `#AARRGGBB` or `theme.<role>`. Clicking the square opens a picker and a
 /// row of theme colors, which follow the COSMIC theme.
@@ -1085,7 +1095,15 @@ fn indicator_color_control<'a>(
         .on_input(send.clone())
         .style(move |theme, status| style::validated_text_input(theme, status, is_valid))
         .width(Length::Fill);
-    let mut content = column![row![swatch, input].spacing(6).align_y(Alignment::Center)].spacing(8);
+    let mut field = row![swatch, input].spacing(6).align_y(Alignment::Center);
+    if color.theme_role().is_some() {
+        field = field.push(
+            text(format_resolved_hex(resolved))
+                .size(crate::style::text_size::SMALL)
+                .style(style::text_color::muted),
+        );
+    }
+    let mut content = column![field].spacing(8);
 
     if open {
         let alpha = color.alpha();
@@ -2290,6 +2308,14 @@ impl InspectorState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resolved_hex_drops_alpha_when_opaque() {
+        let opaque = iced::Color::from_rgba8(0x2E, 0xB6, 0x7D, 1.0);
+        assert_eq!(super::format_resolved_hex(opaque), "#2EB67D");
+        let faded = iced::Color::from_rgba8(0x2E, 0xB6, 0x7D, 0x80 as f32 / 255.0);
+        assert_eq!(super::format_resolved_hex(faded), "#802EB67D");
+    }
+
     use super::{format_indicator_color, parse_indicator_color};
 
     #[test]
