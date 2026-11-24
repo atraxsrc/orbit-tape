@@ -1,3 +1,13 @@
+orbit-tape (0.11.1-1) unstable; urgency=medium
+
+  * Key Levels loads faster on long histories (about 40% less replay time
+    on 30k 1H bars); the indicator engine skips needless resource scans.
+  * Settings panel is wider so rows are no longer cut off at the edge.
+  * README and AppStream screenshots show Orbit Tape.
+  * CI actions moved to the Node 24 runtime.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Tue, 24 Nov 2026 20:05:00 +1100
+
 orbit-tape (0.11.0-1) unstable; urgency=medium
 
   * Indicators: Key Levels (daily/weekly/monthly/quarterly/yearly opens,
