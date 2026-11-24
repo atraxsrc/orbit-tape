@@ -718,10 +718,10 @@ impl OrbitTape {
                     Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Network))) => {
                         self.network_editor = NetworkEditor::new(&self.network);
                     }
-                    Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Alerts))) => {
-                        if self.alert_history.mark_read() {
-                            self.alert_history.save();
-                        }
+                    Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Alerts)))
+                        if self.alert_history.mark_read() =>
+                    {
+                        self.alert_history.save();
                     }
                     Some(screen::sidebar::Action::MenuChanged(_)) => {}
                     Some(screen::sidebar::Action::TickerSelected(ticker_info, content)) => {
