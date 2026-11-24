@@ -52,7 +52,7 @@ the last closed bar. Sends one desktop notification when anything fired.
                 file with one coin per line (# for comments) and an optional
                 `exchange = okx` line. Default: scan-symbols.txt in the data
                 folder, created with 20 large-cap coins on the first run
-  --timeframe   1m 3m 5m 15m 30m 1h 2h 4h 12h 1d (default 1h)
+  --timeframe   1m 3m 5m 15m 30m 1h 2h 4h 12h 1d 1w (default 1h)
   --bars        candles of history per symbol (default 2000)
   --lookback    report alerts from the last n closed bars (default 1)
   --input       indicator input by id or label, e.g. --input ctMode=true

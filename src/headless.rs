@@ -85,9 +85,9 @@ pub fn coin(symbol: &str) -> String {
         .to_owned()
 }
 
-/// Chart timeframes the exchanges serve as candles.
+/// Timeframes the exchanges serve as candles: the chart ones plus 1w.
 pub fn timeframes() -> impl Iterator<Item = Timeframe> {
-    Timeframe::KLINE.into_iter()
+    Timeframe::KLINE.into_iter().chain([Timeframe::W1])
 }
 
 pub fn parse_timeframe(text: &str) -> Result<Timeframe, String> {
@@ -163,7 +163,7 @@ impl Market {
             .ok_or_else(|| format!("no {} USDT perpetual for {coin}", self.exchange.name()))?;
         let interval = timeframe.to_milliseconds();
         // Open time of the bar that is still forming; everything before it is closed.
-        let forming = UnixMs::now().as_u64() / interval * interval;
+        let forming = UnixMs::now().floor_to(timeframe).as_u64();
         let from = forming.saturating_sub(interval * bars as u64);
         let klines = fetch_klines(&self.handles, ticker_info, timeframe, from, forming).await?;
         Ok(Series {
@@ -482,9 +482,10 @@ mod tests {
         assert_eq!(PerpExchange::parse("bybit"), None);
         assert_eq!(parse_timeframe("4H").unwrap(), Timeframe::H4);
         assert_eq!(parse_timeframe("1d").unwrap(), Timeframe::D1);
+        assert_eq!(parse_timeframe("1W").unwrap(), Timeframe::W1);
         assert_eq!(
             parse_timeframe("7h").unwrap_err(),
-            "unknown timeframe '7h' (use one of 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1d)"
+            "unknown timeframe '7h' (use one of 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1d, 1w)"
         );
     }
 

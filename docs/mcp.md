@@ -60,7 +60,7 @@ names the exchange it used. Symbols can be written as `BTC`, `BTCUSDT` or
 `BTC-USDT-SWAP`, and Binance's 1000x contracts (`1000PEPEUSDT`) are found
 from `PEPE`; results carry both `base` (`BTC`, to join results across tools
 and exchanges) and `symbol`, the exchange's own name. Timeframes:
-`1m 3m 5m 15m 30m 1h 2h 4h 12h 1d`.
+`1m 3m 5m 15m 30m 1h 2h 4h 12h 1d 1w` (weeks open on Monday 00:00 UTC; 1w is for the tools only, charts stop at 1d).
 
 Prices are rounded to the instrument's tick size. Candle `volume` is quote
 volume in USDT (base volume times the bar's close, the app's default size

@@ -196,6 +196,8 @@ pub(super) async fn fetch_klines(
     let timeframe_str = {
         if Timeframe::D1 == timeframe {
             "D".to_string()
+        } else if Timeframe::W1 == timeframe {
+            "W".to_string()
         } else {
             timeframe.to_minutes().to_string()
         }

@@ -38,7 +38,7 @@ pub struct CreateAlertParams {
     /// For indicator: inputs by id or label, values as text, e.g.
     /// {"ctMode": "true"}.
     pub inputs: Option<BTreeMap<String, String>>,
-    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h. Indicator alerts run on
+    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d 1w. Default 1h. Indicator alerts run on
     /// its closed bars; every_bar price alerts fire at most once per bar of it.
     pub timeframe: Option<String>,
     /// once (fire, then turn off) or every_bar. Default: once for price

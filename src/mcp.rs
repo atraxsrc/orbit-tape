@@ -216,7 +216,7 @@ pub struct ScanParams {
     /// Indicator name, ID or .ind path. Default: Roman Trade Setup
     /// (roman-setup).
     pub indicator: Option<String>,
-    /// Chart timeframe: 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h.
+    /// Chart timeframe: 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d 1w. Default 1h.
     pub timeframe: Option<String>,
     /// binance or okx. Default: the exchange line of the user's
     /// scan-symbols.txt, else okx.
@@ -234,7 +234,7 @@ pub struct ScanParams {
 pub struct CandlesParams {
     /// Coin or instrument, e.g. BTC, BTCUSDT, BTC-USDT-SWAP.
     pub symbol: String,
-    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h.
+    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d 1w. Default 1h.
     pub timeframe: Option<String>,
     /// binance or okx. Default: the exchange line of the user's
     /// scan-symbols.txt, else okx.
@@ -249,7 +249,7 @@ pub struct RunParams {
     pub indicator: String,
     /// Coin or instrument, e.g. BTC.
     pub symbol: String,
-    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h.
+    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d 1w. Default 1h.
     pub timeframe: Option<String>,
     /// binance or okx. Default: the exchange line of the user's
     /// scan-symbols.txt, else okx.

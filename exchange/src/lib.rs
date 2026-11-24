@@ -61,6 +61,7 @@ impl std::fmt::Display for Timeframe {
                 Timeframe::H4 => "4h",
                 Timeframe::H12 => "12h",
                 Timeframe::D1 => "1d",
+                Timeframe::W1 => "1w",
             }
         )
     }
@@ -83,6 +84,10 @@ pub enum Timeframe {
     H4,
     H12,
     D1,
+    /// Weeks open on Monday 00:00 UTC, not on a multiple of 7 days since
+    /// 1970 (a Thursday). Fetched for the headless tools only; charts do not
+    /// offer it (see `Timeframe::KLINE`).
+    W1,
 }
 
 impl Timeframe {
@@ -122,6 +127,7 @@ impl Timeframe {
             Timeframe::H4 => 240,
             Timeframe::H12 => 720,
             Timeframe::D1 => 1440,
+            Timeframe::W1 => 10_080,
             _ => panic!("Invalid timeframe: {:?}", self),
         }
     }
@@ -173,6 +179,7 @@ impl TryFrom<u64> for Timeframe {
             14_400_000 => Ok(Timeframe::H4),
             43_200_000 => Ok(Timeframe::H12),
             86_400_000 => Ok(Timeframe::D1),
+            604_800_000 => Ok(Timeframe::W1),
             _ => Err(InvalidTimeframe(value)),
         }
     }

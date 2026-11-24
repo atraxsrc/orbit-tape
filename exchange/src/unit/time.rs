@@ -80,8 +80,16 @@ impl UnixMs {
     #[inline]
     pub fn floor_to(self, timeframe: Timeframe) -> Self {
         let bucket_ms = timeframe.to_milliseconds().max(1);
-        let rounded = (self.as_u64() / bucket_ms) * bucket_ms;
-        Self::from_millis(rounded)
+        // Weeks start on Monday. 1970-01-01 was a Thursday; the Monday before
+        // it (1969-12-29) was 3 days earlier.
+        let shift = if timeframe == Timeframe::W1 {
+            3 * Timeframe::D1.to_milliseconds()
+        } else {
+            0
+        };
+        let time = self.as_u64() + shift;
+        let rounded = (time / bucket_ms) * bucket_ms;
+        Self::from_millis(rounded.saturating_sub(shift))
     }
 
     #[inline]
@@ -217,5 +225,29 @@ impl From<UnixMs> for u64 {
 impl fmt::Display for UnixMs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod week_tests {
+    use super::*;
+
+    #[test]
+    fn weeks_start_on_monday() {
+        // Wed 2026-11-25 07:00 UTC -> Mon 2026-11-23 00:00 UTC
+        let wednesday = UnixMs::new(1_795_590_000_000);
+        assert_eq!(
+            wednesday.floor_to(Timeframe::W1).as_u64(),
+            1_795_392_000_000
+        );
+        // A Monday open stays put; days are unchanged.
+        let monday = UnixMs::new(1_795_392_000_000);
+        assert_eq!(monday.floor_to(Timeframe::W1), monday);
+        assert_eq!(
+            wednesday.floor_to(Timeframe::D1).as_u64(),
+            1_795_564_800_000
+        );
+        assert_eq!(Timeframe::try_from(604_800_000), Ok(Timeframe::W1));
+        assert_eq!(Timeframe::W1.to_string(), "1w");
     }
 }

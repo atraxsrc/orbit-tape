@@ -267,8 +267,8 @@ impl Core {
             };
             firings.extend(self.step_prices(
                 ticker,
-                |rule, state, bar_ms| {
-                    rule.step(state, previous, price, time / bar_ms * bar_ms)
+                |rule, state, timeframe| {
+                    rule.step(state, previous, price, bar_open(time, timeframe))
                         .map(|fire| vec![(fire, time, price)])
                         .unwrap_or_default()
                 },
@@ -296,14 +296,19 @@ impl Core {
             let time = kline.time.as_u64();
             firings.extend(self.step_prices(
                 ticker,
-                |rule, state, bar_ms| {
-                    rule.step_candle(state, previous, (high, low, close), time / bar_ms * bar_ms)
-                        .into_iter()
-                        .map(|fire| {
-                            // A candle has no single trade price; report the level.
-                            (fire, time, rule.level)
-                        })
-                        .collect()
+                |rule, state, timeframe| {
+                    rule.step_candle(
+                        state,
+                        previous,
+                        (high, low, close),
+                        bar_open(time, timeframe),
+                    )
+                    .into_iter()
+                    .map(|fire| {
+                        // A candle has no single trade price; report the level.
+                        (fire, time, rule.level)
+                    })
+                    .collect()
                 },
                 now,
             ));
@@ -316,7 +321,7 @@ impl Core {
     fn step_prices(
         &mut self,
         ticker: Ticker,
-        step: impl Fn(&PriceRule, &mut PriceState, u64) -> Vec<(Fire, u64, f64)>,
+        step: impl Fn(&PriceRule, &mut PriceState, Timeframe) -> Vec<(Fire, u64, f64)>,
         now: u64,
     ) -> Vec<Firing> {
         let mut firings = Vec::new();
@@ -335,9 +340,8 @@ impl Core {
             let Some((rule, state)) = self.prices.get_mut(&id) else {
                 continue;
             };
-            let bar_ms = alert.timeframe.to_milliseconds();
-            for (fire, time, price) in step(rule, state, bar_ms) {
-                let bar = time / bar_ms * bar_ms;
+            for (fire, time, price) in step(rule, state, alert.timeframe) {
+                let bar = bar_open(time, alert.timeframe);
                 firings.push(price_firing(
                     &alert,
                     self.infos.get(&ticker).copied(),
@@ -378,7 +382,7 @@ impl Core {
                 continue;
             };
             let bar_ms = timeframe.to_milliseconds();
-            let forming = now / bar_ms * bar_ms;
+            let forming = bar_open(now, *timeframe);
             let newest_closed = forming - bar_ms;
             if series
                 .checked
@@ -420,7 +424,7 @@ impl Core {
         now: u64,
     ) -> Vec<Firing> {
         let bar_ms = timeframe.to_milliseconds();
-        let newest_closed = (now / bar_ms * bar_ms).saturating_sub(bar_ms);
+        let newest_closed = bar_open(now, timeframe).saturating_sub(bar_ms);
         let Some(series) = self.series.get_mut(&(ticker, timeframe)) else {
             return Vec::new();
         };
@@ -963,6 +967,12 @@ pub fn spawn_in_app(owner: Arc<AtomicBool>) {
     if let Err(error) = spawned {
         log::error!("could not start the alert engine: {error}");
     }
+}
+
+/// Open time of the `timeframe` bar that `time` falls in (weeks start on
+/// Monday, like the exchanges' weekly candles).
+fn bar_open(time: u64, timeframe: Timeframe) -> u64 {
+    exchange::UnixMs::new(time).floor_to(timeframe).as_u64()
 }
 
 #[cfg(test)]

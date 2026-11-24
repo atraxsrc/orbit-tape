@@ -86,6 +86,7 @@ fn convert_to_mexc_timeframe(timeframe: Timeframe, market: MarketKind) -> Option
             Timeframe::H1 => Some("60m"),
             Timeframe::H4 => Some("4h"),
             Timeframe::D1 => Some("1d"),
+            Timeframe::W1 => Some("1W"),
             _ => None,
         }
     } else {
@@ -97,6 +98,7 @@ fn convert_to_mexc_timeframe(timeframe: Timeframe, market: MarketKind) -> Option
             Timeframe::H1 => Some("Min60"),
             Timeframe::H4 => Some("Hour4"),
             Timeframe::D1 => Some("Day1"),
+            Timeframe::W1 => Some("Week1"),
             _ => None,
         }
     }
