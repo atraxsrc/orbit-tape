@@ -902,7 +902,13 @@ fn indicator_report(
                 row.push(value);
             }
             rows.push(Json::Array(row));
-            for marker in output.markers.iter() {
+            // A marker without a price is one the script did not show on
+            // this bar (`visible = false`).
+            for marker in output
+                .markers
+                .iter()
+                .filter(|marker| marker.value.is_some())
+            {
                 markers.push(json!({
                     "time_utc": utc(output.time),
                     "id": marker.id,
@@ -1533,6 +1539,22 @@ mod tests {
         }))));
         assert_eq!(roman["report"]["rows"].as_array().unwrap().len(), 200);
         assert!(roman["report"]["alerts"].is_array());
+        // Only markers the script showed, each with a price.
+        let markers = roman["report"]["markers"].as_array().unwrap();
+        assert!(markers.len() < 200, "{} markers", markers.len());
+        assert!(markers.iter().all(|marker| marker["price"].is_f64()));
+        // The setup values carry the TradingView titles.
+        let titles = &roman["report"]["plot_titles"];
+        for title in [
+            "x_bias",
+            "x_tapUpAgo",
+            "x_mssDir",
+            "x_b1St",
+            "x_ctArm",
+            "x_bullFlip",
+        ] {
+            assert_eq!(titles[title], title);
+        }
 
         let error = block_on(server().run_indicator(Parameters(RunParams {
             indicator: "market.sma".into(),
