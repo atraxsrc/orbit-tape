@@ -197,7 +197,8 @@ fn key_levels_match_the_exchange_candles() {
     };
     let mid = |candle: Option<Candle>| candle.map(|c| (c.high + c.low) / 2.0);
 
-    for (time, output) in run(KEY_LEVELS, &bars, IndicatorConfig::default()) {
+    let export = IndicatorConfig::default().with("exportValues", InputValue::Bool(true));
+    for (time, output) in run(KEY_LEVELS, &bars, export) {
         let day = time.div_euclid(DAY) * DAY;
         let week = (time - 4 * DAY).div_euclid(WEEK) * WEEK + 4 * DAY;
         let month = months_start(time, 1, 0);
