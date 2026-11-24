@@ -724,7 +724,7 @@ impl OrbitTape {
 
                 match action {
                     Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Network))) => {
-                        self.network_editor = NetworkEditor::new(&self.network);
+                        self.network_editor.reopen(&self.network);
                     }
                     Some(screen::sidebar::Action::MenuChanged(Some(sidebar::Menu::Alerts)))
                         if self.alert_history.mark_read() =>
