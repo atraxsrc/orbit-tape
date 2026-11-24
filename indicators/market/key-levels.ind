@@ -202,6 +202,12 @@ plQ = pQ.low
 // The current year so far.
 hY = select(wholeY, fY.high, na)
 lY = select(wholeY, fY.low, na)
+state lastHY = na
+state lastLY = na
+yChanged = select(na(hY), !na(lastHY), select(na(lastHY), true, hY != lastHY)) ||
+    select(na(lY), !na(lastLY), select(na(lastLY), true, lY != lastLY))
+lastHY := hY
+lastLY := lY
 
 // Monday: the range of the bars on the Monday that starts the current week
 // (while it is Monday, the range so far). A week whose start isn't loaded has
@@ -212,7 +218,8 @@ if startW == bar_index {
     monHigh := na
     monLow := na
 }
-if wholeW && fD.time == fW.time {
+mondayBar = wholeW && fD.time == fW.time
+if mondayBar {
     monHigh := select(na(monHigh), chart.high, math.max(monHigh, chart.high))
     monLow := select(na(monLow), chart.low, math.min(monLow, chart.low))
 }
@@ -220,14 +227,6 @@ if wholeW && fD.time == fW.time {
 // Sessions: the running range of the session in progress, or of the last one
 // once it has ended. Hours are UTC; a start after the end wraps past midnight.
 // Minutes since UTC midnight: the day candle starts at midnight.
-nowRecord = { time: chart.time }
-minuteOfDay = (nowRecord.time - fD.time) / 60000
-inLon = select(lonStart < lonEnd, minuteOfDay >= lonStart * 60 && minuteOfDay < lonEnd * 60,
-    minuteOfDay >= lonStart * 60 || minuteOfDay < lonEnd * 60)
-inNy = select(nyStart < nyEnd, minuteOfDay >= nyStart * 60 && minuteOfDay < nyEnd * 60,
-    minuteOfDay >= nyStart * 60 || minuteOfDay < nyEnd * 60)
-inAs = select(asStart < asEnd, minuteOfDay >= asStart * 60 && minuteOfDay < asEnd * 60,
-    minuteOfDay >= asStart * 60 || minuteOfDay < asEnd * 60)
 state wasLon = false
 state wasNy = false
 state wasAs = false
@@ -243,319 +242,351 @@ state asH = na
 state asL = na
 state asO = na
 state asAt = na
-if inLon {
-    if !wasLon {
-        lonH := chart.high
-        lonL := chart.low
-        lonO := chart.open
-        lonAt := bar_index
-    } else {
-        lonH := math.max(lonH, chart.high)
-        lonL := math.min(lonL, chart.low)
+anySession = lonOn || nyOn || asOn
+inLon = false
+inNy = false
+inAs = false
+if anySession {
+    nowRecord = { time: chart.time }
+    minuteOfDay = (nowRecord.time - fD.time) / 60000
+    inLon := select(lonStart < lonEnd, minuteOfDay >= lonStart * 60 && minuteOfDay < lonEnd * 60,
+        minuteOfDay >= lonStart * 60 || minuteOfDay < lonEnd * 60)
+    inNy := select(nyStart < nyEnd, minuteOfDay >= nyStart * 60 && minuteOfDay < nyEnd * 60,
+        minuteOfDay >= nyStart * 60 || minuteOfDay < nyEnd * 60)
+    inAs := select(asStart < asEnd, minuteOfDay >= asStart * 60 && minuteOfDay < asEnd * 60,
+        minuteOfDay >= asStart * 60 || minuteOfDay < asEnd * 60)
+    if inLon {
+        if !wasLon {
+            lonH := chart.high
+            lonL := chart.low
+            lonO := chart.open
+            lonAt := bar_index
+        } else {
+            lonH := math.max(lonH, chart.high)
+            lonL := math.min(lonL, chart.low)
+        }
     }
-}
-if inNy {
-    if !wasNy {
-        nyH := chart.high
-        nyL := chart.low
-        nyO := chart.open
-        nyAt := bar_index
-    } else {
-        nyH := math.max(nyH, chart.high)
-        nyL := math.min(nyL, chart.low)
+    if inNy {
+        if !wasNy {
+            nyH := chart.high
+            nyL := chart.low
+            nyO := chart.open
+            nyAt := bar_index
+        } else {
+            nyH := math.max(nyH, chart.high)
+            nyL := math.min(nyL, chart.low)
+        }
     }
-}
-if inAs {
-    if !wasAs {
-        asH := chart.high
-        asL := chart.low
-        asO := chart.open
-        asAt := bar_index
-    } else {
-        asH := math.max(asH, chart.high)
-        asL := math.min(asL, chart.low)
+    if inAs {
+        if !wasAs {
+            asH := chart.high
+            asL := chart.low
+            asO := chart.open
+            asAt := bar_index
+        } else {
+            asH := math.max(asH, chart.high)
+            asL := math.min(asL, chart.low)
+        }
     }
+    wasLon := inLon
+    wasNy := inNy
+    wasAs := inAs
 }
-wasLon := inLon
-wasNy := inNy
-wasAs := inAs
 
 // ============================== DRAWING ======================================
 // The enabled levels in drawing order, as four parallel lists: price, bar
-// index the line starts at, label text and color.
-prices = array.new()
-starts = array.new()
-texts = array.new()
-colors = array.new()
-c4 = select(oneColor, allColor, h4Color)
-cD = select(oneColor, allColor, dColor)
-cMon = select(oneColor, allColor, monColor)
-cW = select(oneColor, allColor, wColor)
-cM = select(oneColor, allColor, mColor)
-cQ = select(oneColor, allColor, qColor)
-cY = select(oneColor, allColor, yColor)
-cS = select(oneColor, allColor, sesColor)
-s4 = shortAll || h4Short
-sD = shortAll || dShort
-sMon = shortAll || monShort
-sW = shortAll || wShort
-sM = shortAll || mShort
-sQ = shortAll || qShort
-sY = shortAll || yShort
-sS = shortAll || sesShort
-
-if lonOn {
-    prices := array.push(prices, lonH)
-    starts := array.push(starts, lonAt)
-    texts := array.push(texts, select(sS, "Lon-H", "London High"))
-    colors := array.push(colors, cS)
-    prices := array.push(prices, lonL)
-    starts := array.push(starts, lonAt)
-    texts := array.push(texts, select(sS, "Lon-L", "London Low"))
-    colors := array.push(colors, cS)
-    prices := array.push(prices, lonO)
-    starts := array.push(starts, lonAt)
-    texts := array.push(texts, select(sS, "Lon-O", "London Open"))
-    colors := array.push(colors, cS)
-}
-if nyOn {
-    prices := array.push(prices, nyH)
-    starts := array.push(starts, nyAt)
-    texts := array.push(texts, select(sS, "NY-H", "New York High"))
-    colors := array.push(colors, cS)
-    prices := array.push(prices, nyL)
-    starts := array.push(starts, nyAt)
-    texts := array.push(texts, select(sS, "NY-L", "New York Low"))
-    colors := array.push(colors, cS)
-    prices := array.push(prices, nyO)
-    starts := array.push(starts, nyAt)
-    texts := array.push(texts, select(sS, "NY-O", "New York Open"))
-    colors := array.push(colors, cS)
-}
-if asOn {
-    prices := array.push(prices, asH)
-    starts := array.push(starts, asAt)
-    texts := array.push(texts, select(sS, "AS-H", "Asia High"))
-    colors := array.push(colors, cS)
-    prices := array.push(prices, asL)
-    starts := array.push(starts, asAt)
-    texts := array.push(texts, select(sS, "AS-L", "Asia Low"))
-    colors := array.push(colors, cS)
-    prices := array.push(prices, asO)
-    starts := array.push(starts, asAt)
-    texts := array.push(texts, select(sS, "AS-O", "Asia Open"))
-    colors := array.push(colors, cS)
-}
-if h4Open {
-    prices := array.push(prices, o4)
-    starts := array.push(starts, start4)
-    texts := array.push(texts, select(s4, "4H-O", "4H Open"))
-    colors := array.push(colors, c4)
-}
-if h4Range {
-    prices := array.push(prices, ph4)
-    starts := array.push(starts, prevStart4)
-    texts := array.push(texts, select(s4, "P-4H-H", "Prev 4H High"))
-    colors := array.push(colors, c4)
-    prices := array.push(prices, pl4)
-    starts := array.push(starts, prevStart4)
-    texts := array.push(texts, select(s4, "P-4H-L", "Prev 4H Low"))
-    colors := array.push(colors, c4)
-}
-if h4Mid {
-    prices := array.push(prices, (ph4 + pl4) / 2)
-    starts := array.push(starts, prevStart4)
-    texts := array.push(texts, select(s4, "P-4H-M", "Prev 4H Mid"))
-    colors := array.push(colors, c4)
-}
-if monRange {
-    prices := array.push(prices, monHigh)
-    starts := array.push(starts, startW)
-    texts := array.push(texts, select(sMon, "MDAY-H", "Monday High"))
-    colors := array.push(colors, cMon)
-    prices := array.push(prices, monLow)
-    starts := array.push(starts, startW)
-    texts := array.push(texts, select(sMon, "MDAY-L", "Monday Low"))
-    colors := array.push(colors, cMon)
-}
-if monMid {
-    prices := array.push(prices, (monHigh + monLow) / 2)
-    starts := array.push(starts, startW)
-    texts := array.push(texts, select(sMon, "MDAY-M", "Monday Mid"))
-    colors := array.push(colors, cMon)
-}
-if dOpen {
-    prices := array.push(prices, oD)
-    starts := array.push(starts, startD)
-    texts := array.push(texts, select(sD, "DO", "Daily Open"))
-    colors := array.push(colors, cD)
-}
-if dRange {
-    prices := array.push(prices, phD)
-    starts := array.push(starts, prevStartD)
-    texts := array.push(texts, select(sD, "PDH", "Prev Day High"))
-    colors := array.push(colors, cD)
-    prices := array.push(prices, plD)
-    starts := array.push(starts, prevStartD)
-    texts := array.push(texts, select(sD, "PDL", "Prev Day Low"))
-    colors := array.push(colors, cD)
-}
-if dMid {
-    prices := array.push(prices, (phD + plD) / 2)
-    starts := array.push(starts, prevStartD)
-    texts := array.push(texts, select(sD, "PDM", "Prev Day Mid"))
-    colors := array.push(colors, cD)
-}
-if wOpen {
-    prices := array.push(prices, oW)
-    starts := array.push(starts, startW)
-    texts := array.push(texts, select(sW, "WO", "Weekly Open"))
-    colors := array.push(colors, cW)
-}
-if wRange {
-    prices := array.push(prices, phW)
-    starts := array.push(starts, prevStartW)
-    texts := array.push(texts, select(sW, "PWH", "Prev Week High"))
-    colors := array.push(colors, cW)
-    prices := array.push(prices, plW)
-    starts := array.push(starts, prevStartW)
-    texts := array.push(texts, select(sW, "PWL", "Prev Week Low"))
-    colors := array.push(colors, cW)
-}
-if wMid {
-    prices := array.push(prices, (phW + plW) / 2)
-    starts := array.push(starts, prevStartW)
-    texts := array.push(texts, select(sW, "PWM", "Prev Week Mid"))
-    colors := array.push(colors, cW)
-}
-if mOpen {
-    prices := array.push(prices, oM)
-    starts := array.push(starts, startM)
-    texts := array.push(texts, select(sM, "MO", "Monthly Open"))
-    colors := array.push(colors, cM)
-}
-if mRange {
-    prices := array.push(prices, phM)
-    starts := array.push(starts, prevStartM)
-    texts := array.push(texts, select(sM, "PMH", "Prev Month High"))
-    colors := array.push(colors, cM)
-    prices := array.push(prices, plM)
-    starts := array.push(starts, prevStartM)
-    texts := array.push(texts, select(sM, "PML", "Prev Month Low"))
-    colors := array.push(colors, cM)
-}
-if mMid {
-    prices := array.push(prices, (phM + plM) / 2)
-    starts := array.push(starts, prevStartM)
-    texts := array.push(texts, select(sM, "PMM", "Prev Month Mid"))
-    colors := array.push(colors, cM)
-}
-if qOpen {
-    prices := array.push(prices, oQ)
-    starts := array.push(starts, startQ)
-    texts := array.push(texts, select(sQ, "QO", "Quarterly Open"))
-    colors := array.push(colors, cQ)
-}
-if qRange {
-    prices := array.push(prices, phQ)
-    starts := array.push(starts, prevStartQ)
-    texts := array.push(texts, select(sQ, "PQH", "Prev Quarter High"))
-    colors := array.push(colors, cQ)
-    prices := array.push(prices, plQ)
-    starts := array.push(starts, prevStartQ)
-    texts := array.push(texts, select(sQ, "PQL", "Prev Quarter Low"))
-    colors := array.push(colors, cQ)
-}
-if qMid {
-    prices := array.push(prices, (phQ + plQ) / 2)
-    starts := array.push(starts, prevStartQ)
-    texts := array.push(texts, select(sQ, "PQM", "Prev Quarter Mid"))
-    colors := array.push(colors, cQ)
-}
-if yOpen {
-    prices := array.push(prices, oY)
-    starts := array.push(starts, startY)
-    texts := array.push(texts, select(sY, "YO", "Yearly Open"))
-    colors := array.push(colors, cY)
-}
-if yRange {
-    prices := array.push(prices, hY)
-    starts := array.push(starts, startY)
-    texts := array.push(texts, select(sY, "CYH", "Current Year High"))
-    colors := array.push(colors, cY)
-    prices := array.push(prices, lY)
-    starts := array.push(starts, startY)
-    texts := array.push(texts, select(sY, "CYL", "Current Year Low"))
-    colors := array.push(colors, cY)
-}
-if yMid {
-    prices := array.push(prices, (hY + lY) / 2)
-    starts := array.push(starts, startY)
-    texts := array.push(texts, select(sY, "CYM", "Current Year Mid"))
-    colors := array.push(colors, cY)
-}
-
-// Labels: with merging, levels at the same price share the label of the
-// first of them, which lists every one of them, newest group first, in the
-// color of the newest; the others draw their line without a label.
-// Prices change on few bars (a new day, Monday, a session), so the labels are
-// worked out again only when one did, and kept in state otherwise.
-// (Loops here only compare numbers and push onto lists: a label is only
-// assembled in a local when levels do merge.)
-count = array.size(prices)
+// index the line starts at, label text and color. The lists and labels only change on bars where a level can: a new candle,
+// a Monday bar, a new high or low of the year, or a bar in a session. Other
+// bars reuse them, which keeps long histories quick to replay.
+state prices = na
+state starts = na
+state texts = na
+state colors = na
 state lastPrices = na
 state labels = na
 state labelColors = na
-unchanged = !na(lastPrices) && array.size(lastPrices) == count
-if unchanged {
-    for i = 0 to count - 1 {
-        now = array.get(prices, i)
-        before = array.get(lastPrices, i)
-        if select(na(now), !na(before), select(na(before), true, now != before)) {
-            unchanged := false
-            break
+state built = false
+use4 = h4Open || h4Range || h4Mid
+useMon = monRange || monMid
+useY = yRange || yMid
+rebuild = !built || startD == bar_index || startW == bar_index || startM == bar_index ||
+    startQ == bar_index || startY == bar_index || (use4 && start4 == bar_index) ||
+    (useMon && mondayBar) || (useY && yChanged) ||
+    (lonOn && inLon) || (nyOn && inNy) || (asOn && inAs)
+if rebuild {
+    prices := array.new()
+    starts := array.new()
+    texts := array.new()
+    colors := array.new()
+    c4 = select(oneColor, allColor, h4Color)
+    cD = select(oneColor, allColor, dColor)
+    cMon = select(oneColor, allColor, monColor)
+    cW = select(oneColor, allColor, wColor)
+    cM = select(oneColor, allColor, mColor)
+    cQ = select(oneColor, allColor, qColor)
+    cY = select(oneColor, allColor, yColor)
+    cS = select(oneColor, allColor, sesColor)
+    s4 = shortAll || h4Short
+    sD = shortAll || dShort
+    sMon = shortAll || monShort
+    sW = shortAll || wShort
+    sM = shortAll || mShort
+    sQ = shortAll || qShort
+    sY = shortAll || yShort
+    sS = shortAll || sesShort
+
+    if lonOn {
+        prices := array.push(prices, lonH)
+        starts := array.push(starts, lonAt)
+        texts := array.push(texts, select(sS, "Lon-H", "London High"))
+        colors := array.push(colors, cS)
+        prices := array.push(prices, lonL)
+        starts := array.push(starts, lonAt)
+        texts := array.push(texts, select(sS, "Lon-L", "London Low"))
+        colors := array.push(colors, cS)
+        prices := array.push(prices, lonO)
+        starts := array.push(starts, lonAt)
+        texts := array.push(texts, select(sS, "Lon-O", "London Open"))
+        colors := array.push(colors, cS)
+    }
+    if nyOn {
+        prices := array.push(prices, nyH)
+        starts := array.push(starts, nyAt)
+        texts := array.push(texts, select(sS, "NY-H", "New York High"))
+        colors := array.push(colors, cS)
+        prices := array.push(prices, nyL)
+        starts := array.push(starts, nyAt)
+        texts := array.push(texts, select(sS, "NY-L", "New York Low"))
+        colors := array.push(colors, cS)
+        prices := array.push(prices, nyO)
+        starts := array.push(starts, nyAt)
+        texts := array.push(texts, select(sS, "NY-O", "New York Open"))
+        colors := array.push(colors, cS)
+    }
+    if asOn {
+        prices := array.push(prices, asH)
+        starts := array.push(starts, asAt)
+        texts := array.push(texts, select(sS, "AS-H", "Asia High"))
+        colors := array.push(colors, cS)
+        prices := array.push(prices, asL)
+        starts := array.push(starts, asAt)
+        texts := array.push(texts, select(sS, "AS-L", "Asia Low"))
+        colors := array.push(colors, cS)
+        prices := array.push(prices, asO)
+        starts := array.push(starts, asAt)
+        texts := array.push(texts, select(sS, "AS-O", "Asia Open"))
+        colors := array.push(colors, cS)
+    }
+    if h4Open {
+        prices := array.push(prices, o4)
+        starts := array.push(starts, start4)
+        texts := array.push(texts, select(s4, "4H-O", "4H Open"))
+        colors := array.push(colors, c4)
+    }
+    if h4Range {
+        prices := array.push(prices, ph4)
+        starts := array.push(starts, prevStart4)
+        texts := array.push(texts, select(s4, "P-4H-H", "Prev 4H High"))
+        colors := array.push(colors, c4)
+        prices := array.push(prices, pl4)
+        starts := array.push(starts, prevStart4)
+        texts := array.push(texts, select(s4, "P-4H-L", "Prev 4H Low"))
+        colors := array.push(colors, c4)
+    }
+    if h4Mid {
+        prices := array.push(prices, (ph4 + pl4) / 2)
+        starts := array.push(starts, prevStart4)
+        texts := array.push(texts, select(s4, "P-4H-M", "Prev 4H Mid"))
+        colors := array.push(colors, c4)
+    }
+    if monRange {
+        prices := array.push(prices, monHigh)
+        starts := array.push(starts, startW)
+        texts := array.push(texts, select(sMon, "MDAY-H", "Monday High"))
+        colors := array.push(colors, cMon)
+        prices := array.push(prices, monLow)
+        starts := array.push(starts, startW)
+        texts := array.push(texts, select(sMon, "MDAY-L", "Monday Low"))
+        colors := array.push(colors, cMon)
+    }
+    if monMid {
+        prices := array.push(prices, (monHigh + monLow) / 2)
+        starts := array.push(starts, startW)
+        texts := array.push(texts, select(sMon, "MDAY-M", "Monday Mid"))
+        colors := array.push(colors, cMon)
+    }
+    if dOpen {
+        prices := array.push(prices, oD)
+        starts := array.push(starts, startD)
+        texts := array.push(texts, select(sD, "DO", "Daily Open"))
+        colors := array.push(colors, cD)
+    }
+    if dRange {
+        prices := array.push(prices, phD)
+        starts := array.push(starts, prevStartD)
+        texts := array.push(texts, select(sD, "PDH", "Prev Day High"))
+        colors := array.push(colors, cD)
+        prices := array.push(prices, plD)
+        starts := array.push(starts, prevStartD)
+        texts := array.push(texts, select(sD, "PDL", "Prev Day Low"))
+        colors := array.push(colors, cD)
+    }
+    if dMid {
+        prices := array.push(prices, (phD + plD) / 2)
+        starts := array.push(starts, prevStartD)
+        texts := array.push(texts, select(sD, "PDM", "Prev Day Mid"))
+        colors := array.push(colors, cD)
+    }
+    if wOpen {
+        prices := array.push(prices, oW)
+        starts := array.push(starts, startW)
+        texts := array.push(texts, select(sW, "WO", "Weekly Open"))
+        colors := array.push(colors, cW)
+    }
+    if wRange {
+        prices := array.push(prices, phW)
+        starts := array.push(starts, prevStartW)
+        texts := array.push(texts, select(sW, "PWH", "Prev Week High"))
+        colors := array.push(colors, cW)
+        prices := array.push(prices, plW)
+        starts := array.push(starts, prevStartW)
+        texts := array.push(texts, select(sW, "PWL", "Prev Week Low"))
+        colors := array.push(colors, cW)
+    }
+    if wMid {
+        prices := array.push(prices, (phW + plW) / 2)
+        starts := array.push(starts, prevStartW)
+        texts := array.push(texts, select(sW, "PWM", "Prev Week Mid"))
+        colors := array.push(colors, cW)
+    }
+    if mOpen {
+        prices := array.push(prices, oM)
+        starts := array.push(starts, startM)
+        texts := array.push(texts, select(sM, "MO", "Monthly Open"))
+        colors := array.push(colors, cM)
+    }
+    if mRange {
+        prices := array.push(prices, phM)
+        starts := array.push(starts, prevStartM)
+        texts := array.push(texts, select(sM, "PMH", "Prev Month High"))
+        colors := array.push(colors, cM)
+        prices := array.push(prices, plM)
+        starts := array.push(starts, prevStartM)
+        texts := array.push(texts, select(sM, "PML", "Prev Month Low"))
+        colors := array.push(colors, cM)
+    }
+    if mMid {
+        prices := array.push(prices, (phM + plM) / 2)
+        starts := array.push(starts, prevStartM)
+        texts := array.push(texts, select(sM, "PMM", "Prev Month Mid"))
+        colors := array.push(colors, cM)
+    }
+    if qOpen {
+        prices := array.push(prices, oQ)
+        starts := array.push(starts, startQ)
+        texts := array.push(texts, select(sQ, "QO", "Quarterly Open"))
+        colors := array.push(colors, cQ)
+    }
+    if qRange {
+        prices := array.push(prices, phQ)
+        starts := array.push(starts, prevStartQ)
+        texts := array.push(texts, select(sQ, "PQH", "Prev Quarter High"))
+        colors := array.push(colors, cQ)
+        prices := array.push(prices, plQ)
+        starts := array.push(starts, prevStartQ)
+        texts := array.push(texts, select(sQ, "PQL", "Prev Quarter Low"))
+        colors := array.push(colors, cQ)
+    }
+    if qMid {
+        prices := array.push(prices, (phQ + plQ) / 2)
+        starts := array.push(starts, prevStartQ)
+        texts := array.push(texts, select(sQ, "PQM", "Prev Quarter Mid"))
+        colors := array.push(colors, cQ)
+    }
+    if yOpen {
+        prices := array.push(prices, oY)
+        starts := array.push(starts, startY)
+        texts := array.push(texts, select(sY, "YO", "Yearly Open"))
+        colors := array.push(colors, cY)
+    }
+    if yRange {
+        prices := array.push(prices, hY)
+        starts := array.push(starts, startY)
+        texts := array.push(texts, select(sY, "CYH", "Current Year High"))
+        colors := array.push(colors, cY)
+        prices := array.push(prices, lY)
+        starts := array.push(starts, startY)
+        texts := array.push(texts, select(sY, "CYL", "Current Year Low"))
+        colors := array.push(colors, cY)
+    }
+    if yMid {
+        prices := array.push(prices, (hY + lY) / 2)
+        starts := array.push(starts, startY)
+        texts := array.push(texts, select(sY, "CYM", "Current Year Mid"))
+        colors := array.push(colors, cY)
+    }
+
+    // Labels: with merging, levels at the same price share the label of the
+    // first of them, which lists every one of them, newest group first, in the
+    // color of the newest; the others draw their line without a label.
+    // Prices change on few bars (a new day, Monday, a session), so the labels are
+    // worked out again only when one did, and kept in state otherwise.
+    // (Loops here only compare numbers and push onto lists: a label is only
+    // assembled in a local when levels do merge.)
+    levelCount = array.size(prices)
+    unchanged = !na(lastPrices) && array.size(lastPrices) == levelCount
+    if unchanged {
+        for i = 0 to levelCount - 1 {
+            now = array.get(prices, i)
+            before = array.get(lastPrices, i)
+            if select(na(now), !na(before), select(na(before), true, now != before)) {
+                unchanged := false
+                break
+            }
         }
     }
-}
-if !unchanged {
-    fresh = array.new()
-    freshColors = array.new()
-    for i = 0 to count - 1 {
-        price = array.get(prices, i)
-        shadowed = false
-        newest = i
-        if mergeLevels && !na(price) {
-            for j = 0 to i - 1 {
-                if array.get(prices, j) == price {
-                    shadowed := true
-                    break
-                }
-            }
-            if !shadowed {
-                for j = i + 1 to count - 1 {
+    if !unchanged {
+        fresh = array.new()
+        freshColors = array.new()
+        for i = 0 to levelCount - 1 {
+            price = array.get(prices, i)
+            shadowed = false
+            newest = i
+            if mergeLevels && !na(price) {
+                for j = 0 to i - 1 {
                     if array.get(prices, j) == price {
-                        newest := j
+                        shadowed := true
+                        break
+                    }
+                }
+                if !shadowed {
+                    for j = i + 1 to levelCount - 1 {
+                        if array.get(prices, j) == price {
+                            newest := j
+                        }
                     }
                 }
             }
-        }
-        if newest == i {
-            fresh := array.push(fresh, select(shadowed, na, array.get(texts, i)))
-        } else {
-            label = array.get(texts, i)
-            for j = i + 1 to count - 1 {
-                if array.get(prices, j) == price {
-                    label := array.get(texts, j) + " / " + label
+            if newest == i {
+                fresh := array.push(fresh, select(shadowed, na, array.get(texts, i)))
+            } else {
+                label = array.get(texts, i)
+                for j = i + 1 to levelCount - 1 {
+                    if array.get(prices, j) == price {
+                        label := array.get(texts, j) + " / " + label
+                    }
                 }
+                fresh := array.push(fresh, label)
             }
-            fresh := array.push(fresh, label)
+            freshColors := array.push(freshColors, array.get(colors, newest))
         }
-        freshColors := array.push(freshColors, array.get(colors, newest))
+        labels := fresh
+        labelColors := freshColors
+        lastPrices := prices
     }
-    labels := fresh
-    labelColors := freshColors
-    lastPrices := prices
+    built := true
 }
+count = array.size(prices)
 
 anchored = displayStyle == "Right Anchored"
 nearEnd = bar_index + select(distance < anchorDistance, distance, anchorDistance)
