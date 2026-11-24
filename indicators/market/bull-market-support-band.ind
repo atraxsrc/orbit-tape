@@ -1,0 +1,64 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © zkdev
+//
+// Bull Market Support Band: the 20-week SMA and the 21-week EMA of the weekly
+// close, with the band between them filled. Ported to Orbit Tape's indicator
+// language from zkdev's Pine Script "Bull Market Support Band"; the port is
+// distributed under the same MPL 2.0 terms.
+//
+// Differences from the Pine version:
+//   - The Pine script runs on weekly candles with timeframe_gaps = true, so
+//     a value only shows on the chart bar where a week closes. Here both
+//     lines are continuous steps: each closed week's values hold until the
+//     next week closes. They change on the first bar of the new week (Monday
+//     00:00 UTC), one chart bar after TradingView's gapped point.
+//   - Weeks are built from the chart's own bars (Monday 00:00 UTC, as on
+//     TradingView crypto charts) and the unfinished week is not drawn, so the
+//     lines never repaint.
+//   - The EMA starts on the first whole week of the loaded history instead
+//     of the symbol's first week. "History (weeks)" sets how much is loaded:
+//     after 150 weeks the start's influence is below one part in a million.
+//     Charts below 1H can't load that many bars (the app caps indicator
+//     history at 50,000 bars), so there the oldest part of the EMA is less
+//     settled.
+
+language(1)
+indicator("Bull Market Support Band", id = "market.bull-market-support-band", max_bars_back = 1,
+    bases = ["time"],
+    description = "20-week SMA and 21-week EMA of the weekly close (zkdev, MPL 2.0).")
+display(view = "plot", attachment = "overlay", layer_name = "BMSB")
+format(precision = "base_ticker_min_tick")
+
+smaLength = input.int(20, "SMA length (weeks)", min = 1, max = 200)
+emaLength = input.int(21, "EMA length (weeks)", min = 1, max = 200)
+historyWeeks = input.int(150, "History (weeks)", min = 21, max = 400,
+    tooltip = "Whole weeks of history to load for the EMA to settle.")
+
+weeks = htf.bars("W", historyWeeks)
+newWeek = htf.new_bar("W")
+
+state ema = na
+state sma = na
+state seen = 0
+if newWeek {
+    newest = array.get(weeks, 0)
+    alpha = 2 / (emaLength + 1)
+    ema := select(na(ema), newest.close, alpha * newest.close + (1 - alpha) * ema)
+    seen := seen + 1
+    if array.size(weeks) >= smaLength {
+        total = 0.0
+        for k = 0 to smaLength - 1 {
+            week = array.get(weeks, k)
+            total := total + week.close
+        }
+        sma := total / smaLength
+    }
+}
+
+plot(sma, id = "sma", title = "20w SMA", style = "step", color_slot = "sma", layer_title = "20w SMA", precision = "instrument")
+plot(select(seen >= emaLength, ema, na), id = "ema", title = "21w EMA", style = "step", color_slot = "ema", layer_title = "21w EMA", precision = "instrument")
+
+style("sma", title = "20w SMA", role = "danger")
+style("ema", title = "21w EMA", role = "success")
+style("band", title = "Band", role = "warning", shade = "soft")
+fill(upper = "sma", lower = "ema", geometry = "series_band", color_slot = "band", opacity = 0.25)

@@ -1,0 +1,601 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 Atrax.
+//
+// Key Levels: horizontal lines at the opens, previous highs/lows and mids of
+// higher-timeframe candles, with a label at the right end of each line.
+//
+//   4H        open, previous 4H high/low, previous 4H mid
+//   Daily     open, previous day high/low, previous day mid
+//   Monday    Monday's high/low and mid (while Monday is still open: so far)
+//   Weekly    open, previous week high/low, previous week mid
+//   Monthly   open, previous month high/low, previous month mid
+//   Quarterly open, previous quarter high/low, previous quarter mid
+//   Yearly    open, current year high/low, current year mid
+//   Sessions  London / New York / Asia high, low and open (UTC hours)
+//
+// Every candle comes from the chart's own bars, bucketed by UTC calendar
+// (htf.*), so use a chart of 1D or less: on a weekly chart the month, quarter
+// and year candles would be built from whole weeks. The yearly mid uses the
+// current year's high and low; every other mid uses the previous candle.
+//
+// Lines start at the first bar of the candle they come from (an open: the
+// current candle; a previous high/low/mid: the previous one) and end
+// `Distance` bars right of the last bar. "Right Anchored" instead draws every
+// line between `Distance` and `Anchor Distance` bars right of the last bar.
+// With "Merge Levels" on, levels at exactly the same price share one label.
+
+language(1)
+indicator("Key Levels", id = "market.key-levels", max_bars_back = 1, bases = ["time"],
+    description = "Daily, weekly, monthly, quarterly and yearly opens, highs, lows and mids, Monday range and FX sessions.")
+display(view = "primary_overlay")
+plot(na, id = "anchor", display = "none", pane = "main", layer = true)
+
+// ============================= INPUTS ========================================
+displayStyle = input.string("Standard", "Display style", options = ["Standard", "Right Anchored"], group = "Display")
+mergeLevels = input.bool(true, "Merge levels", group = "Display",
+    tooltip = "Levels at exactly the same price share one label, newest group first.")
+distance = input.int(30, "Distance", min = 5, max = 500, group = "Display",
+    tooltip = "Bars right of the last bar where the lines end.")
+anchorDistance = input.int(250, "Anchor distance", min = 5, max = 500, group = "Display",
+    tooltip = "Right Anchored only: the other end of the lines.")
+textSize = input.string("Medium", "Text size", options = ["Small", "Medium", "Large"], group = "Display")
+lineSize = input.string("Small", "Line width", options = ["Small", "Medium", "Large"], group = "Display")
+lineStyle = input.string("Solid", "Line style", options = ["Solid", "Dashed", "Dotted"], group = "Display")
+shortAll = input.bool(false, "Shorthand labels everywhere", group = "Display")
+oneColor = input.bool(false, "One color for all", group = "Display")
+allColor = input.color(theme.text, "Color for all", group = "Display")
+
+h4Open = input.bool(false, "Open", group = "4H")
+h4Range = input.bool(false, "Prev high/low", group = "4H")
+h4Mid = input.bool(false, "Prev mid", group = "4H")
+h4Short = input.bool(false, "Shorthand", group = "4H")
+h4Color = input.color(theme.secondary, "Color", group = "4H")
+
+dOpen = input.bool(true, "Open", group = "Daily")
+dRange = input.bool(false, "Prev high/low", group = "Daily")
+dMid = input.bool(false, "Prev mid", group = "Daily")
+dShort = input.bool(false, "Shorthand", group = "Daily")
+dColor = input.color(theme.primary, "Color", group = "Daily")
+
+monRange = input.bool(true, "Range", group = "Monday")
+monMid = input.bool(true, "Mid", group = "Monday")
+monShort = input.bool(false, "Shorthand", group = "Monday")
+monColor = input.color(theme.text, "Color", group = "Monday")
+
+wOpen = input.bool(true, "Open", group = "Weekly")
+wRange = input.bool(true, "Prev high/low", group = "Weekly")
+wMid = input.bool(true, "Prev mid", group = "Weekly")
+wShort = input.bool(false, "Shorthand", group = "Weekly")
+wColor = input.color(theme.warning, "Color", group = "Weekly")
+
+mOpen = input.bool(true, "Open", group = "Monthly")
+mRange = input.bool(true, "Prev high/low", group = "Monthly")
+mMid = input.bool(true, "Prev mid", group = "Monthly")
+mShort = input.bool(false, "Shorthand", group = "Monthly")
+mColor = input.color(theme.success, "Color", group = "Monthly")
+
+qOpen = input.bool(true, "Open", group = "Quarterly")
+qRange = input.bool(false, "Prev high/low", group = "Quarterly")
+qMid = input.bool(true, "Prev mid", group = "Quarterly")
+qShort = input.bool(false, "Shorthand", group = "Quarterly")
+qColor = input.color(theme.danger, "Color", group = "Quarterly")
+
+yOpen = input.bool(true, "Open", group = "Yearly")
+yRange = input.bool(false, "Current high/low", group = "Yearly")
+yMid = input.bool(true, "Mid", group = "Yearly")
+yShort = input.bool(false, "Shorthand", group = "Yearly")
+yColor = input.color(theme.danger, "Color", group = "Yearly")
+
+lonOn = input.bool(false, "London", group = "Sessions (UTC)")
+lonStart = input.int(8, "London start hour", min = 0, max = 23, group = "Sessions (UTC)")
+lonEnd = input.int(16, "London end hour", min = 1, max = 24, group = "Sessions (UTC)")
+nyOn = input.bool(false, "New York", group = "Sessions (UTC)")
+nyStart = input.int(14, "New York start hour", min = 0, max = 23, group = "Sessions (UTC)")
+nyEnd = input.int(21, "New York end hour", min = 1, max = 24, group = "Sessions (UTC)")
+asOn = input.bool(false, "Asia", group = "Sessions (UTC)")
+asStart = input.int(0, "Asia start hour", min = 0, max = 23, group = "Sessions (UTC)")
+asEnd = input.int(9, "Asia end hour", min = 1, max = 24, group = "Sessions (UTC)")
+sesShort = input.bool(false, "Shorthand", group = "Sessions (UTC)")
+sesColor = input.color(theme.neutral, "Color", group = "Sessions (UTC)")
+
+lineWidth = switch lineSize { "Medium" => 2, "Large" => 3, default => 1 }
+lineDash = switch lineStyle { "Dashed" => "dashed", "Dotted" => "dotted", default => "solid" }
+labelSize = switch textSize { "Small" => "small", "Large" => "large", default => "normal" }
+
+// ======================= HIGHER-TIMEFRAME CANDLES ============================
+// One forming candle and the last closed candle per timeframe. Like every
+// htf.* call, these run once per bar at top level.
+f4 = htf.forming("240")
+fD = htf.forming("D")
+fW = htf.forming("W")
+fM = htf.forming("M")
+fQ = htf.forming("3M")
+fY = htf.forming("12M")
+p4 = array.get(htf.bars("240", 1), 0)
+pD = array.get(htf.bars("D", 1), 0)
+pW = array.get(htf.bars("W", 1), 0)
+pM = array.get(htf.bars("M", 1), 0)
+pQ = array.get(htf.bars("3M", 1), 0)
+
+// A forming candle that began before the first loaded bar is incomplete: its
+// open and range would be wrong, so it is not used.
+state firstTime = chart.time
+whole4 = f4.time >= firstTime
+wholeD = fD.time >= firstTime
+wholeW = fW.time >= firstTime
+wholeM = fM.time >= firstTime
+wholeQ = fQ.time >= firstTime
+wholeY = fY.time >= firstTime
+
+// Bar index of the first bar of the current and of the previous candle, for
+// where the lines start.
+state start4 = na
+state prevStart4 = na
+state startD = na
+state prevStartD = na
+state startW = na
+state prevStartW = na
+state startM = na
+state prevStartM = na
+state startQ = na
+state prevStartQ = na
+state startY = na
+state seen4 = na
+state seenD = na
+state seenW = na
+state seenM = na
+state seenQ = na
+state seenY = na
+if na(seen4) || f4.time != seen4 {
+    prevStart4 := start4
+    start4 := bar_index
+    seen4 := f4.time
+}
+if na(seenD) || fD.time != seenD {
+    prevStartD := startD
+    startD := bar_index
+    seenD := fD.time
+}
+if na(seenW) || fW.time != seenW {
+    prevStartW := startW
+    startW := bar_index
+    seenW := fW.time
+}
+if na(seenM) || fM.time != seenM {
+    prevStartM := startM
+    startM := bar_index
+    seenM := fM.time
+}
+if na(seenQ) || fQ.time != seenQ {
+    prevStartQ := startQ
+    startQ := bar_index
+    seenQ := fQ.time
+}
+if na(seenY) || fY.time != seenY {
+    startY := bar_index
+    seenY := fY.time
+}
+
+// ============================== LEVELS =======================================
+// Opens of the current candles.
+o4 = select(whole4, f4.open, na)
+oD = select(wholeD, fD.open, na)
+oW = select(wholeW, fW.open, na)
+oM = select(wholeM, fM.open, na)
+oQ = select(wholeQ, fQ.open, na)
+oY = select(wholeY, fY.open, na)
+
+// Previous candles. htf.bars already leaves out a first, incomplete candle.
+ph4 = p4.high
+pl4 = p4.low
+phD = pD.high
+plD = pD.low
+phW = pW.high
+plW = pW.low
+phM = pM.high
+plM = pM.low
+phQ = pQ.high
+plQ = pQ.low
+
+// The current year so far.
+hY = select(wholeY, fY.high, na)
+lY = select(wholeY, fY.low, na)
+
+// Monday: the range of the bars on the Monday that starts the current week
+// (while it is Monday, the range so far). A week whose start isn't loaded has
+// none.
+state monHigh = na
+state monLow = na
+if startW == bar_index {
+    monHigh := na
+    monLow := na
+}
+if wholeW && fD.time == fW.time {
+    monHigh := select(na(monHigh), chart.high, math.max(monHigh, chart.high))
+    monLow := select(na(monLow), chart.low, math.min(monLow, chart.low))
+}
+
+// Sessions: the running range of the session in progress, or of the last one
+// once it has ended. Hours are UTC; a start after the end wraps past midnight.
+// Minutes since UTC midnight: the day candle starts at midnight.
+nowRecord = { time: chart.time }
+minuteOfDay = (nowRecord.time - fD.time) / 60000
+inLon = select(lonStart < lonEnd, minuteOfDay >= lonStart * 60 && minuteOfDay < lonEnd * 60,
+    minuteOfDay >= lonStart * 60 || minuteOfDay < lonEnd * 60)
+inNy = select(nyStart < nyEnd, minuteOfDay >= nyStart * 60 && minuteOfDay < nyEnd * 60,
+    minuteOfDay >= nyStart * 60 || minuteOfDay < nyEnd * 60)
+inAs = select(asStart < asEnd, minuteOfDay >= asStart * 60 && minuteOfDay < asEnd * 60,
+    minuteOfDay >= asStart * 60 || minuteOfDay < asEnd * 60)
+state wasLon = false
+state wasNy = false
+state wasAs = false
+state lonH = na
+state lonL = na
+state lonO = na
+state lonAt = na
+state nyH = na
+state nyL = na
+state nyO = na
+state nyAt = na
+state asH = na
+state asL = na
+state asO = na
+state asAt = na
+if inLon {
+    if !wasLon {
+        lonH := chart.high
+        lonL := chart.low
+        lonO := chart.open
+        lonAt := bar_index
+    } else {
+        lonH := math.max(lonH, chart.high)
+        lonL := math.min(lonL, chart.low)
+    }
+}
+if inNy {
+    if !wasNy {
+        nyH := chart.high
+        nyL := chart.low
+        nyO := chart.open
+        nyAt := bar_index
+    } else {
+        nyH := math.max(nyH, chart.high)
+        nyL := math.min(nyL, chart.low)
+    }
+}
+if inAs {
+    if !wasAs {
+        asH := chart.high
+        asL := chart.low
+        asO := chart.open
+        asAt := bar_index
+    } else {
+        asH := math.max(asH, chart.high)
+        asL := math.min(asL, chart.low)
+    }
+}
+wasLon := inLon
+wasNy := inNy
+wasAs := inAs
+
+// ============================== DRAWING ======================================
+// The enabled levels in drawing order, as four parallel lists: price, bar
+// index the line starts at, label text and color.
+prices = array.new()
+starts = array.new()
+texts = array.new()
+colors = array.new()
+c4 = select(oneColor, allColor, h4Color)
+cD = select(oneColor, allColor, dColor)
+cMon = select(oneColor, allColor, monColor)
+cW = select(oneColor, allColor, wColor)
+cM = select(oneColor, allColor, mColor)
+cQ = select(oneColor, allColor, qColor)
+cY = select(oneColor, allColor, yColor)
+cS = select(oneColor, allColor, sesColor)
+s4 = shortAll || h4Short
+sD = shortAll || dShort
+sMon = shortAll || monShort
+sW = shortAll || wShort
+sM = shortAll || mShort
+sQ = shortAll || qShort
+sY = shortAll || yShort
+sS = shortAll || sesShort
+
+if lonOn {
+    prices := array.push(prices, lonH)
+    starts := array.push(starts, lonAt)
+    texts := array.push(texts, select(sS, "Lon-H", "London High"))
+    colors := array.push(colors, cS)
+    prices := array.push(prices, lonL)
+    starts := array.push(starts, lonAt)
+    texts := array.push(texts, select(sS, "Lon-L", "London Low"))
+    colors := array.push(colors, cS)
+    prices := array.push(prices, lonO)
+    starts := array.push(starts, lonAt)
+    texts := array.push(texts, select(sS, "Lon-O", "London Open"))
+    colors := array.push(colors, cS)
+}
+if nyOn {
+    prices := array.push(prices, nyH)
+    starts := array.push(starts, nyAt)
+    texts := array.push(texts, select(sS, "NY-H", "New York High"))
+    colors := array.push(colors, cS)
+    prices := array.push(prices, nyL)
+    starts := array.push(starts, nyAt)
+    texts := array.push(texts, select(sS, "NY-L", "New York Low"))
+    colors := array.push(colors, cS)
+    prices := array.push(prices, nyO)
+    starts := array.push(starts, nyAt)
+    texts := array.push(texts, select(sS, "NY-O", "New York Open"))
+    colors := array.push(colors, cS)
+}
+if asOn {
+    prices := array.push(prices, asH)
+    starts := array.push(starts, asAt)
+    texts := array.push(texts, select(sS, "AS-H", "Asia High"))
+    colors := array.push(colors, cS)
+    prices := array.push(prices, asL)
+    starts := array.push(starts, asAt)
+    texts := array.push(texts, select(sS, "AS-L", "Asia Low"))
+    colors := array.push(colors, cS)
+    prices := array.push(prices, asO)
+    starts := array.push(starts, asAt)
+    texts := array.push(texts, select(sS, "AS-O", "Asia Open"))
+    colors := array.push(colors, cS)
+}
+if h4Open {
+    prices := array.push(prices, o4)
+    starts := array.push(starts, start4)
+    texts := array.push(texts, select(s4, "4H-O", "4H Open"))
+    colors := array.push(colors, c4)
+}
+if h4Range {
+    prices := array.push(prices, ph4)
+    starts := array.push(starts, prevStart4)
+    texts := array.push(texts, select(s4, "P-4H-H", "Prev 4H High"))
+    colors := array.push(colors, c4)
+    prices := array.push(prices, pl4)
+    starts := array.push(starts, prevStart4)
+    texts := array.push(texts, select(s4, "P-4H-L", "Prev 4H Low"))
+    colors := array.push(colors, c4)
+}
+if h4Mid {
+    prices := array.push(prices, (ph4 + pl4) / 2)
+    starts := array.push(starts, prevStart4)
+    texts := array.push(texts, select(s4, "P-4H-M", "Prev 4H Mid"))
+    colors := array.push(colors, c4)
+}
+if monRange {
+    prices := array.push(prices, monHigh)
+    starts := array.push(starts, startW)
+    texts := array.push(texts, select(sMon, "MDAY-H", "Monday High"))
+    colors := array.push(colors, cMon)
+    prices := array.push(prices, monLow)
+    starts := array.push(starts, startW)
+    texts := array.push(texts, select(sMon, "MDAY-L", "Monday Low"))
+    colors := array.push(colors, cMon)
+}
+if monMid {
+    prices := array.push(prices, (monHigh + monLow) / 2)
+    starts := array.push(starts, startW)
+    texts := array.push(texts, select(sMon, "MDAY-M", "Monday Mid"))
+    colors := array.push(colors, cMon)
+}
+if dOpen {
+    prices := array.push(prices, oD)
+    starts := array.push(starts, startD)
+    texts := array.push(texts, select(sD, "DO", "Daily Open"))
+    colors := array.push(colors, cD)
+}
+if dRange {
+    prices := array.push(prices, phD)
+    starts := array.push(starts, prevStartD)
+    texts := array.push(texts, select(sD, "PDH", "Prev Day High"))
+    colors := array.push(colors, cD)
+    prices := array.push(prices, plD)
+    starts := array.push(starts, prevStartD)
+    texts := array.push(texts, select(sD, "PDL", "Prev Day Low"))
+    colors := array.push(colors, cD)
+}
+if dMid {
+    prices := array.push(prices, (phD + plD) / 2)
+    starts := array.push(starts, prevStartD)
+    texts := array.push(texts, select(sD, "PDM", "Prev Day Mid"))
+    colors := array.push(colors, cD)
+}
+if wOpen {
+    prices := array.push(prices, oW)
+    starts := array.push(starts, startW)
+    texts := array.push(texts, select(sW, "WO", "Weekly Open"))
+    colors := array.push(colors, cW)
+}
+if wRange {
+    prices := array.push(prices, phW)
+    starts := array.push(starts, prevStartW)
+    texts := array.push(texts, select(sW, "PWH", "Prev Week High"))
+    colors := array.push(colors, cW)
+    prices := array.push(prices, plW)
+    starts := array.push(starts, prevStartW)
+    texts := array.push(texts, select(sW, "PWL", "Prev Week Low"))
+    colors := array.push(colors, cW)
+}
+if wMid {
+    prices := array.push(prices, (phW + plW) / 2)
+    starts := array.push(starts, prevStartW)
+    texts := array.push(texts, select(sW, "PWM", "Prev Week Mid"))
+    colors := array.push(colors, cW)
+}
+if mOpen {
+    prices := array.push(prices, oM)
+    starts := array.push(starts, startM)
+    texts := array.push(texts, select(sM, "MO", "Monthly Open"))
+    colors := array.push(colors, cM)
+}
+if mRange {
+    prices := array.push(prices, phM)
+    starts := array.push(starts, prevStartM)
+    texts := array.push(texts, select(sM, "PMH", "Prev Month High"))
+    colors := array.push(colors, cM)
+    prices := array.push(prices, plM)
+    starts := array.push(starts, prevStartM)
+    texts := array.push(texts, select(sM, "PML", "Prev Month Low"))
+    colors := array.push(colors, cM)
+}
+if mMid {
+    prices := array.push(prices, (phM + plM) / 2)
+    starts := array.push(starts, prevStartM)
+    texts := array.push(texts, select(sM, "PMM", "Prev Month Mid"))
+    colors := array.push(colors, cM)
+}
+if qOpen {
+    prices := array.push(prices, oQ)
+    starts := array.push(starts, startQ)
+    texts := array.push(texts, select(sQ, "QO", "Quarterly Open"))
+    colors := array.push(colors, cQ)
+}
+if qRange {
+    prices := array.push(prices, phQ)
+    starts := array.push(starts, prevStartQ)
+    texts := array.push(texts, select(sQ, "PQH", "Prev Quarter High"))
+    colors := array.push(colors, cQ)
+    prices := array.push(prices, plQ)
+    starts := array.push(starts, prevStartQ)
+    texts := array.push(texts, select(sQ, "PQL", "Prev Quarter Low"))
+    colors := array.push(colors, cQ)
+}
+if qMid {
+    prices := array.push(prices, (phQ + plQ) / 2)
+    starts := array.push(starts, prevStartQ)
+    texts := array.push(texts, select(sQ, "PQM", "Prev Quarter Mid"))
+    colors := array.push(colors, cQ)
+}
+if yOpen {
+    prices := array.push(prices, oY)
+    starts := array.push(starts, startY)
+    texts := array.push(texts, select(sY, "YO", "Yearly Open"))
+    colors := array.push(colors, cY)
+}
+if yRange {
+    prices := array.push(prices, hY)
+    starts := array.push(starts, startY)
+    texts := array.push(texts, select(sY, "CYH", "Current Year High"))
+    colors := array.push(colors, cY)
+    prices := array.push(prices, lY)
+    starts := array.push(starts, startY)
+    texts := array.push(texts, select(sY, "CYL", "Current Year Low"))
+    colors := array.push(colors, cY)
+}
+if yMid {
+    prices := array.push(prices, (hY + lY) / 2)
+    starts := array.push(starts, startY)
+    texts := array.push(texts, select(sY, "CYM", "Current Year Mid"))
+    colors := array.push(colors, cY)
+}
+
+// Labels: with merging, levels at the same price share the label of the
+// first of them, which lists every one of them, newest group first, in the
+// color of the newest; the others draw their line without a label.
+// Prices change on few bars (a new day, Monday, a session), so the labels are
+// worked out again only when one did, and kept in state otherwise.
+// (Loops here only compare numbers and push onto lists: a label is only
+// assembled in a local when levels do merge.)
+count = array.size(prices)
+state lastPrices = na
+state labels = na
+state labelColors = na
+unchanged = !na(lastPrices) && array.size(lastPrices) == count
+if unchanged {
+    for i = 0 to count - 1 {
+        now = array.get(prices, i)
+        before = array.get(lastPrices, i)
+        if select(na(now), !na(before), select(na(before), true, now != before)) {
+            unchanged := false
+            break
+        }
+    }
+}
+if !unchanged {
+    fresh = array.new()
+    freshColors = array.new()
+    for i = 0 to count - 1 {
+        price = array.get(prices, i)
+        shadowed = false
+        newest = i
+        if mergeLevels && !na(price) {
+            for j = 0 to i - 1 {
+                if array.get(prices, j) == price {
+                    shadowed := true
+                    break
+                }
+            }
+            if !shadowed {
+                for j = i + 1 to count - 1 {
+                    if array.get(prices, j) == price {
+                        newest := j
+                    }
+                }
+            }
+        }
+        if newest == i {
+            fresh := array.push(fresh, select(shadowed, na, array.get(texts, i)))
+        } else {
+            label = array.get(texts, i)
+            for j = i + 1 to count - 1 {
+                if array.get(prices, j) == price {
+                    label := array.get(texts, j) + " / " + label
+                }
+            }
+            fresh := array.push(fresh, label)
+        }
+        freshColors := array.push(freshColors, array.get(colors, newest))
+    }
+    labels := fresh
+    labelColors := freshColors
+    lastPrices := prices
+}
+
+anchored = displayStyle == "Right Anchored"
+nearEnd = bar_index + select(distance < anchorDistance, distance, anchorDistance)
+farEnd = bar_index + select(distance < anchorDistance, anchorDistance, distance)
+for i = 0 to count - 1 {
+    if !na(array.get(prices, i)) && !na(array.get(starts, i)) {
+        region(key = i, upper = array.get(prices, i), lower = array.get(prices, i),
+               left_index = select(anchored, nearEnd, array.get(starts, i)),
+               right_index = select(anchored, farEnd, bar_index + distance),
+               id = "levels", border_color = array.get(colors, i), width = lineWidth,
+               border_style = lineDash, text = array.get(labels, i),
+               text_position = "right", text_color = array.get(labelColors, i),
+               text_size = labelSize)
+    }
+}
+
+// Every level as an output, for the data window, the CLI and comparisons.
+// (Last, so the loops above run with few outputs to account for.)
+plot(o4, id = "h4_open", title = "4H open", display = "none", pane = "main", precision = "instrument")
+plot(ph4, id = "h4_prev_high", title = "Prev 4H high", display = "none", pane = "main", precision = "instrument")
+plot(pl4, id = "h4_prev_low", title = "Prev 4H low", display = "none", pane = "main", precision = "instrument")
+plot((ph4 + pl4) / 2, id = "h4_prev_mid", title = "Prev 4H mid", display = "none", pane = "main", precision = "instrument")
+plot(oD, id = "d_open", title = "Daily open", display = "none", pane = "main", precision = "instrument")
+plot(phD, id = "d_prev_high", title = "Prev day high", display = "none", pane = "main", precision = "instrument")
+plot(plD, id = "d_prev_low", title = "Prev day low", display = "none", pane = "main", precision = "instrument")
+plot((phD + plD) / 2, id = "d_prev_mid", title = "Prev day mid", display = "none", pane = "main", precision = "instrument")
+plot(monHigh, id = "mon_high", title = "Monday high", display = "none", pane = "main", precision = "instrument")
+plot(monLow, id = "mon_low", title = "Monday low", display = "none", pane = "main", precision = "instrument")
+plot((monHigh + monLow) / 2, id = "mon_mid", title = "Monday mid", display = "none", pane = "main", precision = "instrument")
+plot(oW, id = "w_open", title = "Weekly open", display = "none", pane = "main", precision = "instrument")
+plot(phW, id = "w_prev_high", title = "Prev week high", display = "none", pane = "main", precision = "instrument")
+plot(plW, id = "w_prev_low", title = "Prev week low", display = "none", pane = "main", precision = "instrument")
+plot((phW + plW) / 2, id = "w_prev_mid", title = "Prev week mid", display = "none", pane = "main", precision = "instrument")
+plot(oM, id = "m_open", title = "Monthly open", display = "none", pane = "main", precision = "instrument")
+plot(phM, id = "m_prev_high", title = "Prev month high", display = "none", pane = "main", precision = "instrument")
+plot(plM, id = "m_prev_low", title = "Prev month low", display = "none", pane = "main", precision = "instrument")
+plot((phM + plM) / 2, id = "m_prev_mid", title = "Prev month mid", display = "none", pane = "main", precision = "instrument")
+plot(oQ, id = "q_open", title = "Quarterly open", display = "none", pane = "main", precision = "instrument")
+plot(phQ, id = "q_prev_high", title = "Prev quarter high", display = "none", pane = "main", precision = "instrument")
+plot(plQ, id = "q_prev_low", title = "Prev quarter low", display = "none", pane = "main", precision = "instrument")
+plot((phQ + plQ) / 2, id = "q_prev_mid", title = "Prev quarter mid", display = "none", pane = "main", precision = "instrument")
+plot(oY, id = "y_open", title = "Yearly open", display = "none", pane = "main", precision = "instrument")
+plot(hY, id = "y_high", title = "Current year high", display = "none", pane = "main", precision = "instrument")
+plot(lY, id = "y_low", title = "Current year low", display = "none", pane = "main", precision = "instrument")
+plot((hY + lY) / 2, id = "y_mid", title = "Current year mid", display = "none", pane = "main", precision = "instrument")
