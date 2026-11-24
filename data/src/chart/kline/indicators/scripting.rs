@@ -33,7 +33,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use url::Url;
 
-const MAX_RETAINED_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
+// Room for a script with ~30 plots on the longest indicator history the app
+// loads (50,000 bars); still a bound for a runaway script.
+const MAX_RETAINED_OUTPUT_BYTES: usize = 128 * 1024 * 1024;
 
 struct PresentationParts {
     panel_recipe: IndicatorPanelRecipe,
@@ -378,6 +380,11 @@ impl IndicatorOutputStore {
                 .is_some()
             {
                 self.budget.release(size_of::<(usize, SeriesOutput)>())?;
+            }
+            // A missing value reads as `na`, so `na` isn't stored: scripts
+            // with many mostly-empty plots stay small on long histories.
+            if plot.value.is_na() {
+                continue;
             }
 
             if !self.series.contains_key(&plot.id) {
@@ -1997,6 +2004,36 @@ mark(title = "Bars", source = "value", kind = "histogram", color_slot = "bars")
             text: None,
             border_style: Default::default(),
         }
+    }
+
+    #[test]
+    fn na_plot_values_are_not_retained() {
+        let plot = |value| indicator_engine::PlotOutput {
+            id: "value".to_owned(),
+            value,
+            color: None,
+        };
+        let frame = |index, value| FrameOutput {
+            index,
+            plots: vec![plot(value)].into(),
+            ..FrameOutput::default()
+        };
+        let mut store = IndicatorOutputStore::default();
+        store
+            .apply_output(frame(0, Value::Float(1.0)), false)
+            .unwrap();
+        let one = store.budget.bytes;
+        for index in 1..100 {
+            store.apply_output(frame(index, Value::Na), false).unwrap();
+        }
+        assert_eq!(store.budget.bytes, one);
+        assert!(store.series_value("value", 50).is_none());
+        assert_eq!(store.series_value("value", 0), Some(&Value::Float(1.0)));
+
+        // A value replaced by `na` on the same bar gives its bytes back.
+        store.apply_output(frame(0, Value::Na), false).unwrap();
+        assert!(store.series_value("value", 0).is_none());
+        assert!(store.budget.bytes < one);
     }
 
     #[test]
