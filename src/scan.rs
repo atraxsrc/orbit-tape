@@ -204,9 +204,13 @@ fn scan(arguments: &[String]) -> Result<(), String> {
         }
     );
 
-    if arguments.notify && !signals.is_empty() {
-        notify(&indicator.descriptor.title, &signals);
-    }
+    println!(
+        "{}",
+        notify_status(arguments.notify, &signals, |signals| notify(
+            &indicator.descriptor.title,
+            signals
+        ))
+    );
     if failures == table.len() - 1 {
         return Err("every symbol failed".to_owned());
     }
@@ -498,19 +502,39 @@ fn short_time(time_ms: i64) -> String {
         .unwrap_or_default()
 }
 
-/// One desktop notification for the whole scan.
-fn notify(indicator: &str, signals: &[Signal]) {
+/// The one status line each run ends with, so the journal says what happened
+/// to the desktop notification.
+fn notify_status(
+    enabled: bool,
+    signals: &[Signal],
+    send: impl FnOnce(&[Signal]) -> Result<u32, String>,
+) -> String {
+    if signals.is_empty() {
+        return "no signals".to_owned();
+    }
+    if !enabled {
+        return "notification off (--no-notify)".to_owned();
+    }
+    match send(signals) {
+        Ok(id) => format!("notification sent (id {id})"),
+        Err(reason) => format!("notification failed: {reason}"),
+    }
+}
+
+/// One desktop notification for the whole scan, over the session D-Bus
+/// (`DBUS_SESSION_BUS_ADDRESS`, else `$XDG_RUNTIME_DIR/bus`, which a systemd
+/// user service has). Returns the id the notification server gave it.
+fn notify(indicator: &str, signals: &[Signal]) -> Result<u32, String> {
     let (summary, body) = notification_text(indicator, signals);
-    if let Err(error) = notify_rust::Notification::new()
+    notify_rust::Notification::new()
         .appname("Orbit Tape")
         .summary(&summary)
         .body(&body)
         .icon("appointment-soon")
         .timeout(notify_rust::Timeout::Milliseconds(30_000))
         .show()
-    {
-        eprintln!("orbit-tape scan: desktop notification failed: {error}");
-    }
+        .map(|handle| handle.id())
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -622,6 +646,29 @@ mod tests {
         assert_eq!(
             lines[NOTIFY_MAX_LINES],
             "and 11 more, see the terminal or journal"
+        );
+    }
+
+    #[test]
+    fn logs_one_notification_status_per_run() {
+        let signal = Signal {
+            symbol: "BTCUSDT".into(),
+            bar_time: 0,
+            title: "LTF MSS down".into(),
+        };
+        let never = |_: &[Signal]| -> Result<u32, String> { panic!("not sent") };
+        assert_eq!(notify_status(true, &[], never), "no signals");
+        assert_eq!(
+            notify_status(false, std::slice::from_ref(&signal), never),
+            "notification off (--no-notify)"
+        );
+        assert_eq!(
+            notify_status(true, std::slice::from_ref(&signal), |_| Ok(7)),
+            "notification sent (id 7)"
+        );
+        assert_eq!(
+            notify_status(true, &[signal], |_| Err("no session bus".into())),
+            "notification failed: no session bus"
         );
     }
 }
