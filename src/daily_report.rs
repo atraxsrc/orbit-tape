@@ -7,7 +7,7 @@
 //! `--mcp-config` and `--strict-mcp-config`) and may use only its tools, so
 //! the run does not depend on how the server is registered in Claude Code.
 
-use crate::mcp::report::DAILY_REPORT;
+use crate::mcp::report::{DAILY_REPORT, REPORT_TOOLS};
 use data::config::alert_store::{AlertStore, Channel};
 use data::config::plan::Plan;
 use std::io::{Read, Write};
@@ -34,6 +34,9 @@ Options:
                                 else claude on PATH, else ~/.local/bin/claude.
   --timeout MINUTES             Stop Claude after this long. Default 15.
   --print-prompt                Print the prompt and exit.
+
+Claude may use only get_plan, market_snapshot, roman_setups, spot_status,
+list_alerts and create_alert: it cannot change, pause or delete alerts.
 
 Daily at 11:05 local time:
   systemctl --user enable --now orbit-tape-report.timer
@@ -201,8 +204,8 @@ fn find_claude(given: Option<&Path>) -> Result<PathBuf, String> {
         })
 }
 
-/// The arguments for `claude -p`: only this program's MCP server, only its
-/// tools, plain text out. The prompt goes on stdin.
+/// The arguments for `claude -p`: only this program's MCP server, only the
+/// routine's tools, plain text out. The prompt goes on stdin.
 fn claude_args(orbit_tape: &Path) -> Vec<String> {
     let config = serde_json::json!({
         "mcpServers": {
@@ -213,7 +216,7 @@ fn claude_args(orbit_tape: &Path) -> Vec<String> {
             }
         }
     });
-    [
+    let mut args: Vec<String> = [
         "-p",
         "--output-format",
         "text",
@@ -221,11 +224,12 @@ fn claude_args(orbit_tape: &Path) -> Vec<String> {
         &config.to_string(),
         "--strict-mcp-config",
         "--allowedTools",
-        "mcp__orbit-tape__*",
     ]
     .into_iter()
     .map(str::to_owned)
-    .collect()
+    .collect();
+    args.push(REPORT_TOOLS.join(","));
+    args
 }
 
 fn run_claude(claude: &Path, timeout: Duration) -> Result<String, String> {
@@ -407,7 +411,18 @@ mod tests {
         assert_eq!(args[0], "-p");
         assert!(args.contains(&"--strict-mcp-config".to_owned()));
         let at = args.iter().position(|a| a == "--allowedTools").unwrap();
-        assert_eq!(args[at + 1], "mcp__orbit-tape__*");
+        let allowed: Vec<&str> = args[at + 1].split(',').collect();
+        assert_eq!(allowed.len(), 6);
+        assert!(allowed.contains(&"mcp__orbit-tape__create_alert"));
+        for refused in [
+            "delete_alert",
+            "update_alert",
+            "pause_alerts",
+            "check_indicator",
+            "*",
+        ] {
+            assert!(!args[at + 1].contains(refused), "{refused}");
+        }
         let at = args.iter().position(|a| a == "--mcp-config").unwrap();
         let config: serde_json::Value = serde_json::from_str(&args[at + 1]).unwrap();
         assert_eq!(

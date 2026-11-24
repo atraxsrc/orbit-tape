@@ -51,6 +51,18 @@ with only three lines: \"No Roman Setup trades near a level today.\", BTC's flip
 level with its distance, and the one-line SPOT status.
    - End with the plan's report.footer, word for word.";
 
+/// The only tools an unattended run may use: reading the plan and the
+/// market, listing alerts, and creating new ones. Not changing, deleting or
+/// pausing alerts, and not the indicator tools that read files.
+pub const REPORT_TOOLS: [&str; 6] = [
+    "mcp__orbit-tape__get_plan",
+    "mcp__orbit-tape__market_snapshot",
+    "mcp__orbit-tape__roman_setups",
+    "mcp__orbit-tape__spot_status",
+    "mcp__orbit-tape__list_alerts",
+    "mcp__orbit-tape__create_alert",
+];
+
 #[prompt_router(router = "report_prompt_router", vis = "pub(crate)")]
 impl OrbitTapeMcp {
     #[prompt(
@@ -88,6 +100,12 @@ mod tests {
                 tools.iter().any(|name| name == tool),
                 "{tool} is not a tool"
             );
+        }
+        // `orbit-tape report` allows exactly the tools the prompt uses.
+        for tool in REPORT_TOOLS {
+            let name = tool.trim_start_matches("mcp__orbit-tape__");
+            assert!(DAILY_REPORT.contains(name), "{name} unused by the prompt");
+            assert!(tools.iter().any(|t| t == name), "{name} is not a tool");
         }
         // The condition names the prompt uses are the create_alert ones.
         for condition in ["crosses_above", "crosses_below"] {

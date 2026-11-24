@@ -146,7 +146,8 @@ then the nearest WATCH levels; never spot alerts), and replies with the
 report ending in your `footer`.
 
 **Every day, unattended.** `orbit-tape report` runs the prompt once with
-`claude -p`, with only this program's MCP server and its tools allowed,
+`claude -p`, with only this program's MCP server and only the six tools the
+routine uses allowed (it can create alerts, not change, pause or delete them),
 saves the answer to `~/.local/share/orbit-tape/reports/YYYY-MM-DD.md`
 (readable by you only) and sends it to the desktop and/or ntfy (the plan's
 `alert_channel`, or `--channel`). A failed run is sent too, with the reason.
