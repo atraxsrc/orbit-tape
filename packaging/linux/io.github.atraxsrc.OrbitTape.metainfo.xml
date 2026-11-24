@@ -57,6 +57,12 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.11.2" date="2026-11-24">
+      <description>
+        <p>Theme color fields show their resolved hex value, and the Roman
+        Setup Bull breaker defaults to its original blue.</p>
+      </description>
+    </release>
     <release version="0.11.1" date="2026-11-24">
       <description>
         <p>Faster Key Levels on long histories, a wider Settings panel and

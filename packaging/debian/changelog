@@ -1,3 +1,11 @@
+orbit-tape (0.11.2-1) unstable; urgency=medium
+
+  * Settings shows the resolved hex value beside each theme color field.
+  * Roman Setup Bull breaker defaults to the original blue
+    (color.rgb(41, 98, 255)); saved instances keep their colors.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Tue, 24 Nov 2026 21:05:00 +1100
+
 orbit-tape (0.11.1-1) unstable; urgency=medium
 
   * Key Levels loads faster on long histories (about 40% less replay time
