@@ -134,15 +134,18 @@ pub trait CandleSource: Send + Sync + 'static {
 /// Exchange candles; each exchange's symbol list is loaded once.
 ///
 /// Requests run in parallel up to a per-exchange limit (the adapters' rate
-/// limiters still pace them), and closed candles are kept until the next bar
-/// closes, so tools called one after another (market_snapshot, then
-/// roman_setups) fetch each series once.
+/// limiters still pace them). OKX perps and spot share one adapter, so one
+/// rate limiter, as the exchange counts requests per IP. Closed candles are
+/// kept until the next bar closes, and a series being fetched is fetched
+/// once however many tools ask for it at the same time (market_snapshot and
+/// roman_setups called together).
 #[derive(Default)]
 pub struct LiveCandles {
-    markets: Mutex<HashMap<PerpExchange, Arc<Market>>>,
+    markets: Mutex<HashMap<PerpExchange, Arc<tokio::sync::OnceCell<Arc<Market>>>>>,
+    okx_adapter: Mutex<Option<exchange::adapter::AdapterHandles>>,
     spot: tokio::sync::OnceCell<Arc<headless::SpotMarket>>,
     slots: Mutex<HashMap<PerpExchange, Arc<tokio::sync::Semaphore>>>,
-    cache: Mutex<HashMap<(PerpExchange, String, Timeframe), Cached>>,
+    cache: CandleCache,
 }
 
 /// A fetched series: the bar that was forming then, and how many bars were
@@ -156,9 +159,9 @@ struct Cached {
 /// Requests in flight per exchange.
 fn parallel_requests(exchange: PerpExchange) -> usize {
     match exchange {
-        // 20 requests per 2 s; 6 at once keeps the limiter busy without
-        // queueing a whole scan behind it.
-        PerpExchange::Okx => 6,
+        // 20 candle requests per 2 s per IP, shared with spot; 3 at once
+        // keeps the limiter busy without bursts that earn a 429.
+        PerpExchange::Okx => 3,
         PerpExchange::Binance => 8,
     }
 }
@@ -175,20 +178,91 @@ fn from_cache(cached: &Cached, forming: u64, bars: usize) -> Option<Series> {
     Some(series)
 }
 
-impl LiveCandles {
-    async fn market(&self, exchange: PerpExchange) -> Result<Arc<Market>, String> {
-        if let Some(market) = self.lock().get(&exchange) {
-            return Ok(market.clone());
-        }
-        let market = Arc::new(Market::connect(exchange).await?);
-        self.lock().insert(exchange, market.clone());
-        Ok(market)
-    }
+type CandleKey = (PerpExchange, String, Timeframe);
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<PerpExchange, Arc<Market>>> {
-        self.markets
+/// Closed candles by exchange, coin and timeframe, one lock per series: a
+/// second request for a series that is being fetched waits for that fetch
+/// instead of starting its own.
+#[derive(Default)]
+struct CandleCache {
+    entries: Mutex<HashMap<CandleKey, Arc<tokio::sync::Mutex<Option<Cached>>>>>,
+}
+
+impl CandleCache {
+    /// The cached series if it is fresh and long enough, else `fetch`'s.
+    async fn get_or_fetch(
+        &self,
+        key: CandleKey,
+        forming: u64,
+        bars: usize,
+        fetch: impl Future<Output = Result<Series, String>>,
+    ) -> Result<Series, String> {
+        let entry = {
+            let mut entries = self
+                .entries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Drop series of bars that closed since (unless being fetched).
+            entries.retain(|(_, _, timeframe), slot| {
+                slot.try_lock().map_or(true, |cached| {
+                    cached.as_ref().is_some_and(|cached| {
+                        cached.forming == exchange::UnixMs::now().floor_to(*timeframe).as_u64()
+                    })
+                })
+            });
+            entries.entry(key).or_default().clone()
+        };
+        let mut slot = entry.lock().await;
+        if let Some(series) = slot
+            .as_ref()
+            .and_then(|cached| from_cache(cached, forming, bars))
+        {
+            return Ok(series);
+        }
+        let series = fetch.await?;
+        *slot = Some(Cached {
+            forming,
+            requested: bars,
+            series: series.clone(),
+        });
+        Ok(series)
+    }
+}
+
+impl LiveCandles {
+    /// The exchange's perps, connected once even when many ask at once.
+    async fn market(&self, exchange: PerpExchange) -> Result<Arc<Market>, String> {
+        let cell = self
+            .markets
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(exchange)
+            .or_default()
+            .clone();
+        cell.get_or_try_init(|| async {
+            Market::connect_with(exchange, self.adapter(exchange)?)
+                .await
+                .map(Arc::new)
+        })
+        .await
+        .cloned()
+    }
+
+    /// The exchange adapter; OKX's is shared by perps and spot.
+    fn adapter(&self, exchange: PerpExchange) -> Result<exchange::adapter::AdapterHandles, String> {
+        if exchange != PerpExchange::Okx {
+            return headless::adapter(exchange.venue());
+        }
+        let mut shared = self
+            .okx_adapter
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(handles) = shared.as_ref() {
+            return Ok(handles.clone());
+        }
+        let handles = headless::adapter(exchange.venue())?;
+        *shared = Some(handles.clone());
+        Ok(handles)
     }
 
     fn slots(&self, exchange: PerpExchange) -> Arc<tokio::sync::Semaphore> {
@@ -198,14 +272,6 @@ impl LiveCandles {
             .entry(exchange)
             .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(parallel_requests(exchange))))
             .clone()
-    }
-
-    fn cache(
-        &self,
-    ) -> std::sync::MutexGuard<'_, HashMap<(PerpExchange, String, Timeframe), Cached>> {
-        self.cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -233,31 +299,14 @@ impl CandleSource for LiveCandles {
         Box::pin(async move {
             let forming = exchange::UnixMs::now().floor_to(timeframe).as_u64();
             let key = (exchange, coin.clone(), timeframe);
-            if let Some(series) = self
-                .cache()
-                .get(&key)
-                .and_then(|cached| from_cache(cached, forming, bars))
-            {
-                return Ok(series);
-            }
-            let market = self.market(exchange).await?;
-            let slots = self.slots(exchange);
-            let _slot = slots.acquire().await.map_err(|error| error.to_string())?;
-            let series = market.closed_candles(&coin, timeframe, bars).await?;
-            let mut cache = self.cache();
-            // Series of bars that closed since are stale.
-            cache.retain(|(_, _, timeframe), cached| {
-                cached.forming == exchange::UnixMs::now().floor_to(*timeframe).as_u64()
-            });
-            cache.insert(
-                key,
-                Cached {
-                    forming,
-                    requested: bars,
-                    series: series.clone(),
-                },
-            );
-            Ok(series)
+            self.cache
+                .get_or_fetch(key, forming, bars, async {
+                    let market = self.market(exchange).await?;
+                    let slots = self.slots(exchange);
+                    let _slot = slots.acquire().await.map_err(|error| error.to_string())?;
+                    market.closed_candles(&coin, timeframe, bars).await
+                })
+                .await
         })
     }
 
@@ -271,7 +320,9 @@ impl CandleSource for LiveCandles {
             let spot = self
                 .spot
                 .get_or_try_init(|| async {
-                    headless::SpotMarket::connect_okx().await.map(Arc::new)
+                    headless::SpotMarket::connect_okx_with(self.adapter(PerpExchange::Okx)?)
+                        .await
+                        .map(Arc::new)
                 })
                 .await?;
             let slots = self.slots(PerpExchange::Okx);
@@ -2376,6 +2427,42 @@ mod tests {
         );
         let error = block_on(missing.get_plan()).unwrap_err();
         assert!(error.contains("plan.example.toml"), "{error}");
+    }
+
+    #[test]
+    fn a_series_asked_for_twice_at_once_is_fetched_once() {
+        let cache = CandleCache::default();
+        let fetches = std::sync::atomic::AtomicUsize::new(0);
+        let forming = exchange::UnixMs::now().floor_to(Timeframe::H1).as_u64();
+        let fetch = || async {
+            fetches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // Still fetching when the second request comes.
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            FixtureCandles
+                .closed_candles(PerpExchange::Binance, "BTC".into(), Timeframe::H1, 100)
+                .await
+        };
+        let key = || (PerpExchange::Okx, "BTC".to_owned(), Timeframe::H1);
+        let (first, second) = block_on(async {
+            iced::futures::join!(
+                cache.get_or_fetch(key(), forming, 100, fetch()),
+                cache.get_or_fetch(key(), forming, 50, fetch()),
+            )
+        });
+        assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(first.unwrap().klines.len(), 100);
+        assert_eq!(second.unwrap().klines.len(), 50);
+        // More bars than were fetched: a new fetch.
+        block_on(cache.get_or_fetch(key(), forming, 200, fetch())).unwrap();
+        assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // A failed fetch is not cached.
+        let other = (PerpExchange::Okx, "ETH".to_owned(), Timeframe::H1);
+        let failed = block_on(
+            cache.get_or_fetch(other.clone(), forming, 10, async { Err("down".to_owned()) }),
+        );
+        assert!(failed.is_err());
+        block_on(cache.get_or_fetch(other, forming, 10, fetch())).unwrap();
+        assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[test]

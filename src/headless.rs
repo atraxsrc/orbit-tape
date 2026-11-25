@@ -38,7 +38,7 @@ impl PerpExchange {
         }
     }
 
-    fn venue(self) -> Venue {
+    pub fn venue(self) -> Venue {
         match self {
             Self::Binance => Venue::Binance,
             Self::Okx => Venue::Okex,
@@ -119,14 +119,28 @@ pub struct Market {
     metadata: HashMap<Ticker, Option<TickerInfo>>,
 }
 
+/// An exchange adapter for one venue: its own HTTP client and rate limiter.
+/// Share one between [`Market`] and [`SpotMarket`] on the same exchange so
+/// they keep to one request budget.
+pub fn adapter(venue: Venue) -> Result<AdapterHandles, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|error| format!("could not build the HTTP client: {error}"))?;
+    Ok(AdapterHandles::spawn_venues(&client, [venue], None))
+}
+
 impl Market {
     pub async fn connect(exchange: PerpExchange) -> Result<Self, String> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|error| format!("could not build the HTTP client: {error}"))?;
-        let handles = AdapterHandles::spawn_venues(&client, [exchange.venue()], None);
+        Self::connect_with(exchange, adapter(exchange.venue())?).await
+    }
+
+    /// Connects through `handles`, an adapter for the exchange's venue.
+    pub async fn connect_with(
+        exchange: PerpExchange,
+        handles: AdapterHandles,
+    ) -> Result<Self, String> {
         let metadata = handles
             .fetch_ticker_metadata(exchange.venue(), &[MarketKind::LinearPerps])
             .await
@@ -183,13 +197,8 @@ pub struct SpotMarket {
 }
 
 impl SpotMarket {
-    pub async fn connect_okx() -> Result<Self, String> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|error| format!("could not build the HTTP client: {error}"))?;
-        let handles = AdapterHandles::spawn_venues(&client, [Venue::Okex], None);
+    /// Connects through `handles`, an OKX adapter (e.g. the perps' one).
+    pub async fn connect_okx_with(handles: AdapterHandles) -> Result<Self, String> {
         let metadata = handles
             .fetch_ticker_metadata(Venue::Okex, &[MarketKind::Spot])
             .await
