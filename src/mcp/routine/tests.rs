@@ -200,3 +200,156 @@ fn spot_status_from_the_plan_and_spot_candles() {
     .unwrap_err();
     assert!(error.contains("not a date"), "{error}");
 }
+
+/// Recorded OKX BTC-USDT-SWAP 1h candles (2026-11-25); every other coin is
+/// unlisted.
+struct OkxBtcCandles;
+
+const OKX_BTC: &str = "indicators/roman/tests/okx-btcusdt-perp-1h-20261125.csv";
+
+fn okx_btc_info() -> exchange::TickerInfo {
+    exchange::TickerInfo::new(
+        exchange::Ticker::new("BTC-USDT-SWAP", exchange::adapter::Exchange::OkexLinear),
+        0.1,
+        0.01,
+        None,
+    )
+}
+
+impl crate::mcp::CandleSource for OkxBtcCandles {
+    fn resolve(
+        &self,
+        _exchange: PerpExchange,
+        coin: String,
+    ) -> crate::mcp::BoxFuture<'_, Result<(String, exchange::TickerInfo), String>> {
+        Box::pin(async move {
+            match coin.as_str() {
+                "BTC" => Ok(("BTC-USDT-SWAP".to_owned(), okx_btc_info())),
+                _ => Err(format!("no OKX USDT perpetual for {coin}")),
+            }
+        })
+    }
+
+    fn closed_candles(
+        &self,
+        _exchange: PerpExchange,
+        coin: String,
+        timeframe: Timeframe,
+        bars: usize,
+    ) -> crate::mcp::BoxFuture<'_, Result<Series, String>> {
+        Box::pin(async move {
+            if coin != "BTC" {
+                return Err(format!("no OKX USDT perpetual for {coin}"));
+            }
+            crate::mcp::tests::csv_series(OKX_BTC, "BTC-USDT-SWAP", okx_btc_info(), timeframe, bars)
+        })
+    }
+
+    fn spot_candles(
+        &self,
+        pair: String,
+        _timeframe: Timeframe,
+        _bars: usize,
+    ) -> crate::mcp::BoxFuture<'_, Result<Series, String>> {
+        Box::pin(async move { Err(format!("no OKX spot pair {pair}")) })
+    }
+}
+
+fn okx_server(paths: crate::mcp::Paths) -> OrbitTapeMcp {
+    crate::mcp::tests::server_with(std::sync::Arc::new(OkxBtcCandles), paths)
+}
+
+fn btc_only() -> Parameters<SetupsParams> {
+    Parameters(SetupsParams {
+        coins: Some(vec!["BTC".into()]),
+    })
+}
+
+/// A copy of the example plan with `edit` applied, in its own folder.
+fn plan_with(name: &str, edit: impl Fn(&str) -> String) -> crate::mcp::Paths {
+    let dir = crate::mcp::tests::temp_dir(name);
+    let example =
+        std::fs::read_to_string(crate::mcp::tests::repo("docs/plan.example.toml")).unwrap();
+    let plan = dir.join("plan.toml");
+    std::fs::write(&plan, edit(&example)).unwrap();
+    crate::mcp::Paths {
+        plan,
+        ..crate::mcp::tests::paths()
+    }
+}
+
+#[test]
+fn roman_setups_on_recorded_okx_btc_have_a_bias_and_a_flip_level() {
+    // The example plan's BTC override is the major-coin profile
+    // (maxDist = 5, maxHeight = 2), on top of ctMode and mssGate.
+    let out = parse(block_on(
+        okx_server(crate::mcp::tests::paths()).roman_setups(btc_only()),
+    ));
+    assert_eq!(out["failed"], 0, "{out}");
+    assert!(
+        out["indicator"]
+            .as_str()
+            .unwrap()
+            .ends_with("roman/roman-setup.ind")
+    );
+    let btc = &out["coins"][0];
+    assert_eq!(btc["base"], "BTC");
+    assert_ne!(btc["bias"], "none", "{btc}");
+    assert!(btc["flip"]["level"].is_number(), "{btc}");
+    assert!(btc["flip"]["distance_pct"].is_number(), "{btc}");
+}
+
+#[test]
+fn unknown_or_invalid_plan_inputs_are_errors_not_a_missing_bias() {
+    let unknown = plan_with("plan-unknown-input", |plan| {
+        plan.replace("maxDist = 5", "maxDistance = 5")
+    });
+    let out = parse(block_on(okx_server(unknown).roman_setups(btc_only())));
+    assert_eq!(out["failed"], 1, "{out}");
+    let error = out["coins"][0]["error"].as_str().unwrap();
+    assert!(error.contains("unknown input 'maxDistance'"), "{error}");
+
+    let invalid = plan_with("plan-invalid-option", |plan| {
+        plan.replace("mssGate = \"Zone tap or SFP\"", "mssGate = \"Wick tap\"")
+    });
+    let out = parse(block_on(okx_server(invalid).roman_setups(btc_only())));
+    assert_eq!(out["failed"], 1);
+    assert!(
+        out["coins"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("mssGate"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_roman_copy_without_setup_values_is_refused() {
+    // An installed copy from before the x_* plots, ahead of the current one.
+    let dir = crate::mcp::tests::temp_dir("stale-roman");
+    let folder = dir.join("roman");
+    std::fs::create_dir_all(&folder).unwrap();
+    let current =
+        std::fs::read_to_string(crate::mcp::tests::repo("indicators/roman/roman-setup.ind"))
+            .unwrap();
+    std::fs::write(
+        folder.join("roman-setup.ind"),
+        current.replace("\"x_", "\"old_"),
+    )
+    .unwrap();
+    let paths = crate::mcp::Paths {
+        indicator_folders: vec![dir, crate::mcp::tests::repo("indicators")],
+        ..crate::mcp::tests::paths()
+    };
+    let error = block_on(okx_server(paths.clone()).roman_setups(btc_only())).unwrap_err();
+    assert!(error.contains("older than this Orbit Tape"), "{error}");
+    assert!(error.contains("x_bias"), "{error}");
+    let error = block_on(
+        okx_server(paths).market_snapshot(Parameters(SnapshotParams {
+            coins: Some(vec!["BTC".into()]),
+            exchange: None,
+        })),
+    )
+    .unwrap_err();
+    assert!(error.contains("older than this Orbit Tape"), "{error}");
+}

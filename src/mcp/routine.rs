@@ -21,6 +21,8 @@ use std::collections::BTreeMap;
 
 /// The Roman Setup indicator the routine runs.
 pub(crate) const ROMAN: &str = "roman.roman-setup";
+/// Setup values the routine cannot work without.
+const ROMAN_VALUES: [&str; 3] = ["x_bias", "x_bullFlip", "x_bearFlip"];
 /// Coins worked on at once (each fetches several timeframes; the candle
 /// source caps requests per exchange).
 const COINS_PARALLEL: usize = 4;
@@ -86,6 +88,28 @@ impl OrbitTapeMcp {
             return Err("no coins to look at".to_owned());
         }
         Ok((exchange, unique))
+    }
+
+    /// The installed Roman Setup, refused when it predates the x_* setup
+    /// values the routine reads (an old copy in the user's folder would
+    /// otherwise give every coin a zero bias).
+    pub(crate) fn roman(&self) -> Result<(String, CompiledIndicator), String> {
+        let (path, roman) = self.indicator(Some(ROMAN))?;
+        let missing: Vec<&str> = ROMAN_VALUES
+            .iter()
+            .copied()
+            .filter(|id| !roman.descriptor.plots.iter().any(|plot| plot.id == *id))
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "{path} is older than this Orbit Tape: it has no {} plot(s), so every coin \
+                 would read as no bias. Copy the current script over it, e.g. `cp \
+                 /usr/share/doc/orbit-tape/indicators/roman/roman-setup.ind \
+                 ~/.local/share/orbit-tape/indicators/roman/roman-setup.ind`",
+                missing.join(", ")
+            ));
+        }
+        Ok((path, roman))
     }
 
     /// Roman Setup on a coin's closed 1h candles with the plan's inputs for
@@ -174,6 +198,12 @@ impl OrbitTapeMcp {
         let setup = input.setup(&rules);
         let mut out = serde_json::to_value(&setup).map_err(|error| error.to_string())?;
         rounded(&mut out, Precision::of(&hours.ticker_info));
+        if setup.bias == "none" {
+            out["skipped"] = json!(format!(
+                "no HTF bias yet (Roman Setup ran on {} closed 1h bars)",
+                hours.klines.len()
+            ));
+        }
         out["base"] = json!(coin);
         out["symbol"] = json!(hours.instrument);
         out["close"] = json!(Precision::of(&hours.ticker_info).price(snapshot.close));
@@ -428,7 +458,7 @@ impl OrbitTapeMcp {
         use iced::futures::StreamExt;
         let plan = self.plan()?;
         let (exchange, coins) = self.universe(params.coins, None, Some(&plan))?;
-        let (_, roman) = self.indicator(Some(ROMAN))?;
+        let (roman_path, roman) = self.roman()?;
         let rows: Vec<Json> = iced::futures::stream::iter(coins)
             .map(|coin| {
                 let (roman, plan) = (&roman, &plan);
@@ -453,6 +483,7 @@ impl OrbitTapeMcp {
         };
         to_text(&json!({
             "exchange": exchange_id(exchange),
+            "indicator": roman_path,
             "live": group("LIVE"),
             "watch": group("WATCH"),
             "flip_watch": group("FLIP-WATCH"),
@@ -544,7 +575,7 @@ impl OrbitTapeMcp {
             (Err(_), Some(_)) => None,
         };
         let (exchange, coins) = self.universe(params.coins, params.exchange.as_deref(), plan)?;
-        let (_, roman) = self.indicator(Some(ROMAN))?;
+        let (roman_path, roman) = self.roman()?;
         let rows: Vec<Json> = iced::futures::stream::iter(coins)
             .map(|coin| {
                 let roman = &roman;
@@ -560,6 +591,7 @@ impl OrbitTapeMcp {
         let failed = rows.iter().filter(|row| row.get("error").is_some()).count();
         to_text(&json!({
             "exchange": exchange_id(exchange),
+            "indicator": roman_path,
             "plan_inputs": plan.is_some(),
             "coins": rows,
             "failed": failed,

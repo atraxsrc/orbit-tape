@@ -1497,45 +1497,50 @@ mod tests {
                 if coin != "BTC" {
                     return Err(format!("no {} USDT perpetual for {coin}", exchange.name()));
                 }
-                let ticker_info = TickerInfo::new(
-                    Ticker::new("BTCUSDT", Exchange::BinanceLinear),
-                    0.1,
-                    0.001,
-                    None,
-                );
-                let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURE);
-                let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-                let mut klines = text
-                    .lines()
-                    .skip(1)
-                    .map(|line| {
-                        let field = line
-                            .split(',')
-                            .map(|value| value.parse::<f64>().unwrap())
-                            .collect::<Vec<_>>();
-                        Kline::new(
-                            field[0] as u64,
-                            field[1],
-                            field[2],
-                            field[3],
-                            field[4],
-                            exchange::Volume::TotalOnly(exchange::unit::Qty::from_f64(field[5])),
-                            ticker_info.min_ticksize,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                if timeframe != Timeframe::H1 {
-                    klines = aggregate(&klines, timeframe);
-                }
-                let first = klines.len().saturating_sub(bars);
-                klines.drain(..first);
-                Ok(Series {
-                    instrument: "BTCUSDT".to_owned(),
-                    ticker_info,
-                    klines,
-                })
+                csv_series(FIXTURE, "BTCUSDT", fixture_info(), timeframe, bars)
             })
         }
+    }
+
+    /// The newest `bars` candles of a 1h candle CSV, aggregated to `timeframe`.
+    pub(super) fn csv_series(
+        file: &str,
+        instrument: &str,
+        ticker_info: TickerInfo,
+        timeframe: Timeframe,
+        bars: usize,
+    ) -> Result<Series, String> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
+        let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        let mut klines = text
+            .lines()
+            .skip(1)
+            .map(|line| {
+                let field = line
+                    .split(',')
+                    .map(|value| value.parse::<f64>().unwrap())
+                    .collect::<Vec<_>>();
+                Kline::new(
+                    field[0] as u64,
+                    field[1],
+                    field[2],
+                    field[3],
+                    field[4],
+                    exchange::Volume::TotalOnly(exchange::unit::Qty::from_f64(field[5])),
+                    ticker_info.min_ticksize,
+                )
+            })
+            .collect::<Vec<_>>();
+        if timeframe != Timeframe::H1 {
+            klines = aggregate(&klines, timeframe);
+        }
+        let first = klines.len().saturating_sub(bars);
+        klines.drain(..first);
+        Ok(Series {
+            instrument: instrument.to_owned(),
+            ticker_info,
+            klines,
+        })
     }
 
     /// Every request fails, like an exchange that is down.
@@ -1605,7 +1610,7 @@ mod tests {
         serde_json::from_str(&result.expect("tool succeeds")).unwrap()
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
+    pub(super) fn temp_dir(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("orbit-tape-mcp-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
