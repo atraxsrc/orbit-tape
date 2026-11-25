@@ -57,6 +57,13 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.12.0" date="2026-11-25">
+      <description>
+        <p>An MCP server for Claude, saved alerts with a background watcher
+        and ntfy phone push, a daily trading routine report, and notices
+        when an installed indicator is older than the shipped one.</p>
+      </description>
+    </release>
     <release version="0.11.2" date="2026-11-24">
       <description>
         <p>Theme color fields show their resolved hex value, and the Roman

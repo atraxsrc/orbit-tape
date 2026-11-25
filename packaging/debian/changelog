@@ -1,3 +1,30 @@
+orbit-tape (0.12.0-1) unstable; urgency=medium
+
+  * orbit-tape mcp: an MCP server for Claude with read-only market tools
+    (candles, indicator runs, scans, Key Levels, alert history) and alert
+    tools (create, list, update, delete, pause, resume; no orders or keys).
+  * Saved alerts shared by the app, the MCP server and the new
+    orbit-tape watch service (systemd user unit, off by default), with
+    one program evaluating them at a time, catch-up of alerts missed while
+    closed, and ntfy phone push as a second channel.
+  * Daily routine: plan.toml with get_plan, market_snapshot, roman_setups
+    (LIVE ranked, RAN for setups price already ran from, named levels,
+    ready alert messages) and spot_status; the daily_report prompt and
+    orbit-tape report with a daily timer (off by default), run with the
+    plan's Claude model (sonnet by default) and a progress line.
+  * Candle fetches retry HTTP 429; OKX perps and spot share one rate
+    limiter; a series is fetched once per bar for all tools.
+  * Indicators take an optional version. The app's Indicators panel and
+    the MCP tools name installed copies older than the shipped ones, with
+    the cp command that updates them. The .deb ships indicators/market.
+  * Roman Setup 7.1: TradingView x_* setup values (checked against
+    TradingView on OKX BTC and ETH); Roman ports are GPL-3.0-or-later.
+  * Local-only defaults: Binance and OKX venues, a neutral scan list, the
+    community indicator catalog, and data-server TLS verified unless
+    turned off.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Wed, 25 Nov 2026 12:10:00 +1100
+
 orbit-tape (0.11.2-1) unstable; urgency=medium
 
   * Settings shows the resolved hex value beside each theme color field.

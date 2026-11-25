@@ -146,9 +146,6 @@ Planned:
 
 ### .deb (recommended)
 
-Coming soon - see [Releases](https://github.com/atraxsrc/orbit-tape/releases).
-Once a release is published:
-
 1. Download `orbit-tape_<version>_amd64.deb` from the
    [latest release](https://github.com/atraxsrc/orbit-tape/releases/latest).
    Optionally check it against `SHA256SUMS` from the same release:
@@ -165,7 +162,12 @@ Updates are manual for now: download the new release and run the same
 command. Uninstall with `sudo apt remove orbit-tape`; your settings in
 `~/.local/share/orbit-tape` are kept.
 
-The package also installs `orbit-tape-indicator`, the indicator CLI.
+The package also installs `orbit-tape-indicator`, the indicator CLI, and
+copies of the Roman and market indicators in
+`/usr/share/doc/orbit-tape/indicators/`. After an update, the Indicators
+panel (and the MCP tools) name any copy in your own indicators folder that is
+older than the shipped one, with the `cp` command that updates it; your copy
+keeps running until you do.
 
 ### Build from source (Pop!_OS 26.04)
 
@@ -201,6 +203,8 @@ Then add it to a candlestick chart from the indicator sidebar (**+**).
 - Language reference: [indicator-engine/LANGUAGE.md](indicator-engine/LANGUAGE.md)
 - Commented examples: [examples/indicators/](examples/indicators/)
 - Optional Roman Setup and Order Block ports: [indicators/](indicators/README.md)
+- Give a script `version = "1.0"` in `indicator(...)` and raise it on
+  changes, so an older copy of it can be told apart
 - Shared indicators: the in-app catalog browser loads the community catalog
   [orbit-tape-indicators](https://github.com/atraxsrc/orbit-tape-indicators)
   when you open it. Settings > Indicator catalog points it at another
@@ -279,7 +283,8 @@ Details: [Alerts while the app is closed](docs/mcp.md#alerts-while-the-app-is-cl
 For a daily check of your own trading plan (a market snapshot, Roman setups
 near a level, a few alerts, spot accumulation), write a plan file from
 `docs/plan.example.toml` and run the `daily_report` prompt, or let
-`orbit-tape report` run it once a day through Claude Code (off by default):
+`orbit-tape report` run it once a day through Claude Code (off by default;
+it uses the plan's `model`, `sonnet` unless you change it):
 
 ```sh
 systemctl --user enable --now orbit-tape-report.timer
