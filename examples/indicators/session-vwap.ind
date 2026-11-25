@@ -10,7 +10,7 @@
 // square root, so it is computed with Newton's method).
 
 language(1)
-indicator("Session VWAP", id = "example.session-vwap", max_bars_back = 1, bases = ["time"],
+indicator("Session VWAP", id = "example.session-vwap", version = "1.0", max_bars_back = 1, bases = ["time"],
     description = "Session-anchored VWAP with volume-weighted standard deviation bands.")
 display(view = "plot", attachment = "overlay", layer_name = "Session VWAP")
 format(precision = "base_ticker_min_tick")

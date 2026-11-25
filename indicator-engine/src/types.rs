@@ -645,6 +645,58 @@ pub struct SeriesInputDescriptor {
     pub allow_indicator: bool,
 }
 
+/// A script version: one to four whole numbers with dots (`7`, `1.2`,
+/// `2.0.1`). Missing parts count as 0, so `1.2` equals `1.2.0`.
+#[derive(Debug, Clone, Eq)]
+pub struct IndicatorVersion(Vec<u32>);
+
+impl IndicatorVersion {
+    pub fn parse(text: &str) -> Option<Self> {
+        let parts: Vec<u32> = text
+            .trim()
+            .split('.')
+            .map(|part| {
+                (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+                    .then(|| part.parse().ok())
+                    .flatten()
+            })
+            .collect::<Option<_>>()?;
+        (1..=4).contains(&parts.len()).then_some(Self(parts))
+    }
+
+    fn part(&self, index: usize) -> u32 {
+        self.0.get(index).copied().unwrap_or(0)
+    }
+}
+
+impl PartialEq for IndicatorVersion {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Ord for IndicatorVersion {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (0..self.0.len().max(other.0.len()))
+            .map(|index| self.part(index).cmp(&other.part(index)))
+            .find(|order| order.is_ne())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
+impl PartialOrd for IndicatorVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::fmt::Display for IndicatorVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let parts: Vec<String> = self.0.iter().map(u32::to_string).collect();
+        f.write_str(&parts.join("."))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndicatorDescriptor {
     pub id: IndicatorId,
@@ -656,6 +708,9 @@ pub struct IndicatorDescriptor {
     pub optional_trades: bool,
     pub bases: Option<Vec<crate::frame::TimeOrTick>>,
     pub max_bars_back: usize,
+    /// The script's own version (`indicator(..., version = "1.2")`), so a
+    /// host can tell an older copy of the same indicator.
+    pub version: Option<IndicatorVersion>,
     pub inputs: Vec<InputDescriptor>,
     pub series_inputs: Vec<SeriesInputDescriptor>,
     pub plots: Vec<crate::scene::PlotDescriptor>,

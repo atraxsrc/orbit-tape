@@ -7,7 +7,7 @@ pub(crate) mod spot;
 
 use super::{
     DEFAULT_RUN_BARS, OrbitTapeMcp, Precision, Series, coin, exchange_id, indicator_config, number,
-    perp_exchange, round_decimals, to_text, utc,
+    perp_exchange, round_decimals, to_text, utc, with_warnings,
 };
 use crate::headless::{self, PerpExchange};
 use data::config::plan::Plan;
@@ -481,25 +481,29 @@ impl OrbitTapeMcp {
                 .map(|row| row["base"].clone())
                 .collect()
         };
-        to_text(&json!({
-            "exchange": exchange_id(exchange),
-            "indicator": roman_path,
-            "live": group("LIVE"),
-            "watch": group("WATCH"),
-            "flip_watch": group("FLIP-WATCH"),
-            "counter_trend": group("COUNTER-TREND"),
-            "failed": rows.iter().filter(|row| row.get("error").is_some()).count(),
-            "rules": {
-                "risk_pct": plan.prop.risk_pct,
-                "counter_trend_risk_pct": plan.prop.counter_trend_risk_pct,
-                "max_correlated": plan.prop.max_correlated,
-                "max_stop_pct": plan.prop.max_stop_pct,
-                "live_tap_bars": setups::LIVE_BARS,
-                "watch_pct": setups::WATCH_PCT,
-                "flip_watch_pct": setups::FLIP_PCT,
-            },
-            "coins": rows,
-        }))
+        let warnings = self.indicator_warnings(ROMAN);
+        to_text(&with_warnings(
+            json!({
+                "exchange": exchange_id(exchange),
+                "indicator": roman_path,
+                "live": group("LIVE"),
+                "watch": group("WATCH"),
+                "flip_watch": group("FLIP-WATCH"),
+                "counter_trend": group("COUNTER-TREND"),
+                "failed": rows.iter().filter(|row| row.get("error").is_some()).count(),
+                "rules": {
+                    "risk_pct": plan.prop.risk_pct,
+                    "counter_trend_risk_pct": plan.prop.counter_trend_risk_pct,
+                    "max_correlated": plan.prop.max_correlated,
+                    "max_stop_pct": plan.prop.max_stop_pct,
+                    "live_tap_bars": setups::LIVE_BARS,
+                    "watch_pct": setups::WATCH_PCT,
+                    "flip_watch_pct": setups::FLIP_PCT,
+                },
+                "coins": rows,
+            }),
+            warnings,
+        ))
     }
 
     #[tool(
@@ -589,13 +593,17 @@ impl OrbitTapeMcp {
             .collect()
             .await;
         let failed = rows.iter().filter(|row| row.get("error").is_some()).count();
-        to_text(&json!({
-            "exchange": exchange_id(exchange),
-            "indicator": roman_path,
-            "plan_inputs": plan.is_some(),
-            "coins": rows,
-            "failed": failed,
-        }))
+        let warnings = self.indicator_warnings(ROMAN);
+        to_text(&with_warnings(
+            json!({
+                "exchange": exchange_id(exchange),
+                "indicator": roman_path,
+                "plan_inputs": plan.is_some(),
+                "coins": rows,
+                "failed": failed,
+            }),
+            warnings,
+        ))
     }
 }
 

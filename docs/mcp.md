@@ -94,6 +94,13 @@ the copies the `.deb` ships in `/usr/share/doc/orbit-tape/indicators/`. `inputs`
 take values as text by input ID or label, for example `{"ctMode": "true"}`;
 `list_indicators` shows the IDs.
 
+Your own copy always runs. When it has the ID of an indicator the `.deb`
+ships but an older `version` (or none, while the shipped one has one), the
+tools that run it (`scan`, `run_indicator`, `key_levels`, `market_snapshot`,
+`roman_setups`) add a `warnings` list with the `cp` command that updates it,
+and `list_indicators` shows it as `update` on that indicator. Without a
+version on either side, a copy whose text differs is named the same way.
+
 `check_indicator`, `test_indicator` and `run_indicator` read only `.ind`
 sources: a path must be a folder (scanned for `.ind` files, links skipped) or
 a regular `.ind` file. A link named `.ind` that points at any other file is

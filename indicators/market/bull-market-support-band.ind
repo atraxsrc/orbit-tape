@@ -23,7 +23,7 @@
 //     settled.
 
 language(1)
-indicator("Bull Market Support Band", id = "market.bull-market-support-band", max_bars_back = 1,
+indicator("Bull Market Support Band", id = "market.bull-market-support-band", version = "1.0", max_bars_back = 1,
     bases = ["time"],
     description = "20-week SMA and 21-week EMA of the weekly close (zkdev, MPL 2.0).")
 display(view = "plot", attachment = "overlay", layer_name = "BMSB")

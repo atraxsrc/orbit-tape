@@ -11,7 +11,7 @@
 // (visible_when), and an info panel (info_row) with runtime text and colors.
 
 language(1)
-indicator("CVD Candles", id = "example.cvd-candles", max_bars_back = 1, bases = ["time"],
+indicator("CVD Candles", id = "example.cvd-candles", version = "1.0", max_bars_back = 1, bases = ["time"],
     optional_trades = true,
     description = "Cumulative volume delta as candles, with an optional daily reset.")
 display(layer_name = "CVD Candles")

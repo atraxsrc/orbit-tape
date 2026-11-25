@@ -232,6 +232,7 @@ struct LoaderState {
 
 static LOADER_STATE: Mutex<Option<LoaderState>> = Mutex::new(None);
 static SOURCE_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static UPDATE_NOTICES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
@@ -243,6 +244,27 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// listed here either kept their last good version or are not loaded.
 pub fn indicator_source_errors() -> Vec<String> {
     lock(&SOURCE_ERRORS).clone()
+}
+
+/// Installed copies older than the indicator Orbit Tape ships with the same
+/// ID, each with the command that updates it. Refreshed on every load and
+/// live reload.
+pub fn indicator_update_notices() -> Vec<String> {
+    lock(&UPDATE_NOTICES).clone()
+}
+
+fn refresh_update_notices(installed_directory: &Path) {
+    let notices: Vec<String> = crate::indicator_updates::find(
+        installed_directory,
+        &crate::indicator_updates::shipped_folders(),
+    )
+    .iter()
+    .map(crate::indicator_updates::UpdateNotice::message)
+    .collect();
+    for notice in &notices {
+        warn!("{notice}");
+    }
+    *lock(&UPDATE_NOTICES) = notices;
 }
 
 /// Directories and files the live reload watcher should observe: the
@@ -404,6 +426,7 @@ fn load_catalog_sources(paths: &IndicatorCatalogPaths) -> Result<IndicatorCatalo
     }
     *lock(&SOURCE_ERRORS) = errors.clone();
     diagnostics.extend(errors);
+    refresh_update_notices(&paths.installed_directory);
 
     *lock(&LOADER_STATE) = Some(LoaderState {
         paths: paths.clone(),
@@ -456,6 +479,7 @@ pub fn reload_indicator_catalog() -> Result<IndicatorReloadReport, String> {
     }
     *lock(&SOURCE_ERRORS) = errors.clone();
     diagnostics.extend(errors.iter().cloned());
+    refresh_update_notices(&state.paths.installed_directory);
     state.last_good = last_good;
 
     if !reloaded.is_empty() || !removed.is_empty() {

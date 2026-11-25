@@ -557,16 +557,20 @@ impl OrbitTapeMcp {
                 }
             }
         }
-        to_text(&json!({
-            "indicator": indicator.descriptor.title,
-            "path": path,
-            "exchange": exchange_id(exchange),
-            "timeframe": timeframe.to_string(),
-            "lookback_bars": lookback,
-            "signal_count": signal_count,
-            "failed_symbols": failed,
-            "rows": rows,
-        }))
+        let warnings = self.indicator_warnings(indicator.descriptor.id.as_str());
+        to_text(&with_warnings(
+            json!({
+                "indicator": indicator.descriptor.title,
+                "path": path,
+                "exchange": exchange_id(exchange),
+                "timeframe": timeframe.to_string(),
+                "lookback_bars": lookback,
+                "signal_count": signal_count,
+                "failed_symbols": failed,
+                "rows": rows,
+            }),
+            warnings,
+        ))
     }
 
     #[tool(
@@ -639,19 +643,23 @@ impl OrbitTapeMcp {
             .closed_candles(exchange, base.clone(), timeframe, bars)
             .await?;
         let report = indicator_report(&indicator, &config, &series, last)?;
-        to_text(&json!({
-            "indicator": indicator.descriptor.title,
-            "id": indicator.descriptor.id.as_str(),
-            "path": path,
-            "base": base,
-            "symbol": series.instrument,
-            "exchange": exchange_id(exchange),
-            "timeframe": timeframe.to_string(),
-            "bars_requested": bars,
-            "bars_run": series.klines.len(),
-            "history_note": history_note(bars, &series),
-            "report": report,
-        }))
+        let warnings = self.indicator_warnings(indicator.descriptor.id.as_str());
+        to_text(&with_warnings(
+            json!({
+                "indicator": indicator.descriptor.title,
+                "id": indicator.descriptor.id.as_str(),
+                "path": path,
+                "base": base,
+                "symbol": series.instrument,
+                "exchange": exchange_id(exchange),
+                "timeframe": timeframe.to_string(),
+                "bars_requested": bars,
+                "bars_run": series.klines.len(),
+                "history_note": history_note(bars, &series),
+                "report": report,
+            }),
+            warnings,
+        ))
     }
 
     #[tool(
@@ -725,26 +733,30 @@ impl OrbitTapeMcp {
             ));
         }
         levels.sort_by(|a, b| b.2.total_cmp(&a.2));
-        to_text(&json!({
-            "base": base,
-            "symbol": series.instrument,
-            "exchange": exchange_id(exchange),
-            "selection": if params.levels.is_some() { "requested" } else { "indicator defaults" },
-            "as_of_bar_utc": utc(output.time),
-            "bars_run": series.klines.len(),
-            "history_note": history,
-            "missing": missing,
-            "close": close,
-            "levels": levels
-                .iter()
-                .map(|(label, id, value)| json!({
-                    "label": label,
-                    "id": id,
-                    "price": value,
-                    "side": if *value > close { "above" } else { "below" },
-                }))
-                .collect::<Vec<_>>(),
-        }))
+        let warnings = self.indicator_warnings(indicator.descriptor.id.as_str());
+        to_text(&with_warnings(
+            json!({
+                "base": base,
+                "symbol": series.instrument,
+                "exchange": exchange_id(exchange),
+                "selection": if params.levels.is_some() { "requested" } else { "indicator defaults" },
+                "as_of_bar_utc": utc(output.time),
+                "bars_run": series.klines.len(),
+                "history_note": history,
+                "missing": missing,
+                "close": close,
+                "levels": levels
+                    .iter()
+                    .map(|(label, id, value)| json!({
+                        "label": label,
+                        "id": id,
+                        "price": value,
+                        "side": if *value > close { "above" } else { "below" },
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            warnings,
+        ))
     }
 
     #[tool(
@@ -798,6 +810,7 @@ impl OrbitTapeMcp {
         description = "List the user's installed indicators: name, ID, path (relative to its indicators folder, with source user or bundled), inputs (with defaults and options) and alert conditions. Colors are #RRGGBB, #RRGGBBAA, or theme.<role> (theme.<role>@AA with alpha)."
     )]
     pub async fn list_indicators(&self) -> Result<String, String> {
+        let notices = self.update_notices();
         let indicators = self
             .installed()
             .into_iter()
@@ -809,6 +822,11 @@ impl OrbitTapeMcp {
                     "id": descriptor.id.as_str(),
                     "path": found.path,
                     "source": found.source,
+                    "version": descriptor.version.as_ref().map(ToString::to_string),
+                    "update": notices
+                        .iter()
+                        .find(|notice| notice.id == descriptor.id.as_str())
+                        .map(data::indicator_updates::UpdateNotice::message),
                     "description": descriptor.description,
                     "inputs": descriptor.inputs.iter().map(|input| {
                         let mut entry = json!({
@@ -836,7 +854,14 @@ impl OrbitTapeMcp {
                 })
             })
             .collect::<Vec<_>>();
-        to_text(&json!({ "indicators": indicators }))
+        let warnings = notices
+            .iter()
+            .map(data::indicator_updates::UpdateNotice::message)
+            .collect();
+        to_text(&with_warnings(
+            json!({ "indicators": indicators }),
+            warnings,
+        ))
     }
 
     #[tool(
@@ -913,6 +938,25 @@ impl ServerHandler for OrbitTapeMcp {
 
 impl OrbitTapeMcp {
     /// Every installed indicator that compiles, first folder wins per ID.
+    /// The user's copies older than (or, without versions, different from)
+    /// the shipped indicator with the same ID: the first indicator folder is
+    /// the user's, the others are shipped.
+    fn update_notices(&self) -> Vec<data::indicator_updates::UpdateNotice> {
+        match self.paths.indicator_folders.split_first() {
+            Some((user, shipped)) => data::indicator_updates::find(user, shipped),
+            None => Vec::new(),
+        }
+    }
+
+    /// Warnings for a tool that ran indicator `id`.
+    pub(crate) fn indicator_warnings(&self, id: &str) -> Vec<String> {
+        self.update_notices()
+            .iter()
+            .filter(|notice| notice.id == id)
+            .map(data::indicator_updates::UpdateNotice::message)
+            .collect()
+    }
+
     fn installed(&self) -> Vec<Installed> {
         let mut found: Vec<Installed> = Vec::new();
         for (index, folder) in self.paths.indicator_folders.iter().enumerate() {
@@ -1401,6 +1445,14 @@ fn utc(time_ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(time_ms)
         .map(|time| time.format("%Y-%m-%d %H:%M").to_string())
         .unwrap_or_default()
+}
+
+/// `out` with a `warnings` list when there are any.
+fn with_warnings(mut out: Json, warnings: Vec<String>) -> Json {
+    if !warnings.is_empty() {
+        out["warnings"] = json!(warnings);
+    }
+    out
 }
 
 fn number(value: &Value) -> Option<f64> {

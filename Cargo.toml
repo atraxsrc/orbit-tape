@@ -54,6 +54,7 @@ assets = [
     ["indicator-engine/LICENSE", "usr/share/doc/orbit-tape/LICENSE-Apache-2.0-indicator-engine", "644"],
     ["exchange/LICENSE", "usr/share/doc/orbit-tape/LICENSE-MIT-exchange", "644"],
     ["indicators/roman/*.ind", "usr/share/doc/orbit-tape/indicators/roman/", "644"],
+    ["indicators/market/*.ind", "usr/share/doc/orbit-tape/indicators/market/", "644"],
     ["examples/indicators/*.ind", "usr/share/doc/orbit-tape/examples/indicators/", "644"],
     ["docs/custom-indicators.md", "usr/share/doc/orbit-tape/custom-indicators.md", "644"],
     ["docs/mcp.md", "usr/share/doc/orbit-tape/mcp.md", "644"],

@@ -22,7 +22,7 @@
 //     is not checked against the chart timeframe.
 
 language(1)
-indicator("Roman Trade Setup (H12 to H1)", id = "roman.roman-setup", max_bars_back = 64)
+indicator("Roman Trade Setup (H12 to H1)", id = "roman.roman-setup", max_bars_back = 64, version = "7.1")
 display(view = "primary_overlay")
 
 // Pivot tie rule, shared by the HTF and LTF pivots: a bar on the left (older)

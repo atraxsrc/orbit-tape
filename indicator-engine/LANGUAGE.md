@@ -260,6 +260,7 @@ Use a unique `namespace.name` ID and a matching `name.ind` filename.
 | `bases` | Unrestricted; non-empty list of `"time"` and/or `"tick"` |
 | `author`, `author_url` | Optional pair; URL must be absolute HTTP(S) |
 | `description`, `source` | Optional strings; source must be absolute HTTP(S) |
+| `version` | Optional string of one to four whole numbers with dots, like `"1.2"`; hosts compare it to tell an older copy of the same ID (missing parts are 0) |
 
 Data requirements are inferred separately from `bases`. `ta.avwap` requires
 complete anchor history and is unavailable on the host's live-only tick charts.

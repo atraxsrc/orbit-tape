@@ -6,7 +6,7 @@
 // source and on/off switch; the colors follow the theme.
 
 language(1)
-indicator("SMA x4", id = "market.sma", bases = ["time", "tick"],
+indicator("SMA x4", id = "market.sma", version = "1.0", bases = ["time", "tick"],
     description = "Four simple moving averages (20/50/100/200 by default).")
 display(view = "plot", attachment = "overlay", layer_name = "SMA")
 format(precision = "base_ticker_min_tick")

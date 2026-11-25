@@ -353,3 +353,68 @@ fn a_roman_copy_without_setup_values_is_refused() {
     .unwrap_err();
     assert!(error.contains("older than this Orbit Tape"), "{error}");
 }
+
+#[test]
+fn an_older_installed_copy_is_named_in_the_output() {
+    // The user's copy has the setup values but no version; the shipped one
+    // is 7.1.
+    let dir = crate::mcp::tests::temp_dir("older-roman");
+    let folder = dir.join("roman");
+    std::fs::create_dir_all(&folder).unwrap();
+    let current =
+        std::fs::read_to_string(crate::mcp::tests::repo("indicators/roman/roman-setup.ind"))
+            .unwrap();
+    assert!(current.contains(", version = \"7.1\""));
+    std::fs::write(
+        folder.join("roman-setup.ind"),
+        current.replace(", version = \"7.1\"", ""),
+    )
+    .unwrap();
+    let paths = crate::mcp::Paths {
+        indicator_folders: vec![dir.clone(), crate::mcp::tests::repo("indicators")],
+        ..crate::mcp::tests::paths()
+    };
+    let server = okx_server(paths);
+    // The user's copy still runs, and the output says it is older.
+    let out = parse(block_on(server.roman_setups(btc_only())));
+    assert_ne!(out["coins"][0]["bias"], "none");
+    let warning = out["warnings"][0].as_str().unwrap();
+    assert!(
+        warning.contains("(no version) is older than the version 7.1"),
+        "{warning}"
+    );
+    assert!(
+        warning.contains("Your copy is the one that runs"),
+        "{warning}"
+    );
+    // Shipped copy, then the user's (the home folder may show as ~).
+    let command = &warning[warning.find("cp ").unwrap()..];
+    assert!(
+        command.contains("indicators/roman/roman-setup.ind ")
+            && command.ends_with(&folder.join("roman-setup.ind").display().to_string()),
+        "{warning}"
+    );
+    let listed = parse(block_on(server.list_indicators()));
+    let roman = listed["indicators"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|indicator| indicator["id"] == "roman.roman-setup")
+        .unwrap();
+    assert_eq!(roman["source"], "user");
+    assert_eq!(roman["version"], Json::Null);
+    assert!(roman["update"].as_str().unwrap().contains("older"));
+    // Other indicators are not flagged.
+    let key_levels = listed["indicators"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|indicator| indicator["id"] == "market.key-levels")
+        .unwrap();
+    assert_eq!(key_levels["version"], "1.0");
+    assert_eq!(key_levels["update"], Json::Null);
+    // The same version: nothing to say.
+    std::fs::write(folder.join("roman-setup.ind"), &current).unwrap();
+    let out = parse(block_on(server.roman_setups(btc_only())));
+    assert!(out.get("warnings").is_none(), "{out}");
+}
