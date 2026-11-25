@@ -237,6 +237,39 @@ async fn fetch_klines(
     Ok(klines)
 }
 
+/// Pauses before each retry of a request the exchange refused with HTTP 429.
+const RATE_LIMIT_RETRIES: [std::time::Duration; 4] = [
+    std::time::Duration::from_secs(1),
+    std::time::Duration::from_secs(2),
+    std::time::Duration::from_secs(4),
+    std::time::Duration::from_secs(8),
+];
+
+/// Runs `request`, and again after each pause in `pauses` while the
+/// exchange answers "too many requests". Other errors return at once.
+async fn retry_rate_limited<T, F, Fut>(
+    pauses: &[std::time::Duration],
+    mut request: F,
+) -> Result<T, exchange::adapter::AdapterError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, exchange::adapter::AdapterError>>,
+{
+    let mut pauses = pauses.iter();
+    loop {
+        match request().await {
+            Err(error) if error.is_rate_limited() => match pauses.next() {
+                Some(pause) => {
+                    log::warn!("rate limited, trying again in {pause:?}: {error}");
+                    tokio::time::sleep(*pause).await;
+                }
+                None => return Err(error),
+            },
+            result => return result,
+        }
+    }
+}
+
 /// Candles with open times in `[from, to)`, oldest first; maybe none.
 pub async fn fetch_kline_range(
     handles: &AdapterHandles,
@@ -248,10 +281,11 @@ pub async fn fetch_kline_range(
     let mut klines: Vec<Kline> = Vec::new();
     let mut next = from;
     while next < to {
-        let page = handles
-            .fetch_klines_page(ticker_info, timeframe, UnixMs::new(next), UnixMs::new(to))
-            .await
-            .map_err(|error| format!("candles: {error}"))?;
+        let page = retry_rate_limited(&RATE_LIMIT_RETRIES, || {
+            handles.fetch_klines_page(ticker_info, timeframe, UnixMs::new(next), UnixMs::new(to))
+        })
+        .await
+        .map_err(|error| format!("candles: {error}"))?;
         if page.next_from.as_u64() <= next {
             break;
         }
@@ -507,6 +541,54 @@ pub fn format_price(price: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use exchange::adapter::AdapterError;
+    use std::time::Duration;
+
+    fn too_many() -> AdapterError {
+        AdapterError::http_status_failed(reqwest::StatusCode::TOO_MANY_REQUESTS, "429".into())
+    }
+
+    fn run<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn rate_limited_requests_are_tried_again() {
+        let pauses = [Duration::ZERO; 4];
+        // Two refusals, then an answer: three tries.
+        let mut tries = 0;
+        let result = run(retry_rate_limited(&pauses, || {
+            tries += 1;
+            let refused = tries <= 2;
+            async move { if refused { Err(too_many()) } else { Ok(tries) } }
+        }));
+        assert_eq!(result.unwrap(), 3);
+        // Refused every time: the first try and one per pause, then the error.
+        let mut tries = 0;
+        let result: Result<(), _> = run(retry_rate_limited(&pauses, || {
+            tries += 1;
+            async { Err(too_many()) }
+        }));
+        assert!(result.unwrap_err().is_rate_limited());
+        assert_eq!(tries, 5);
+        // Other errors are not retried.
+        let mut tries = 0;
+        let result: Result<(), _> = run(retry_rate_limited(&pauses, || {
+            tries += 1;
+            async {
+                Err(AdapterError::http_status_failed(
+                    reqwest::StatusCode::BAD_REQUEST,
+                    "400".into(),
+                ))
+            }
+        }));
+        assert!(!result.unwrap_err().is_rate_limited());
+        assert_eq!(tries, 1);
+    }
 
     #[test]
     fn reads_coins_and_timeframes() {
