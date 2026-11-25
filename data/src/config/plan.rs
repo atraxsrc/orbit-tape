@@ -240,6 +240,10 @@ pub struct Report {
     /// The report's last line.
     #[serde(default = "default_footer")]
     pub footer: String,
+    /// The Claude model `orbit-tape report` runs with (`claude --model`):
+    /// an alias such as sonnet, opus or haiku, or a full model name.
+    #[serde(default = "default_model")]
+    pub model: String,
 }
 
 impl Default for Report {
@@ -248,6 +252,7 @@ impl Default for Report {
             max_new_alerts: default_max_alerts(),
             alert_channel: default_channel(),
             footer: default_footer(),
+            model: default_model(),
         }
     }
 }
@@ -258,6 +263,11 @@ fn default_max_alerts() -> u32 {
 
 fn default_channel() -> String {
     "both".to_owned()
+}
+
+/// Cheaper than the default model; the routine is mostly tool calls.
+fn default_model() -> String {
+    "sonnet".to_owned()
 }
 
 fn default_footer() -> String {
@@ -351,6 +361,13 @@ impl Plan {
                 self.report.alert_channel
             ));
         }
+        if self.report.model.trim().is_empty() || self.report.model.chars().any(char::is_whitespace)
+        {
+            return Err(format!(
+                "report.model must be a model name such as sonnet, got '{}'",
+                self.report.model
+            ));
+        }
         if let Some(spot) = &self.spot {
             if spot.exchange != "okx" {
                 return Err(format!(
@@ -426,6 +443,18 @@ mod tests {
         let spot = plan.spot.expect("example has a spot plan");
         // Levels sorted high to low.
         assert!(spot.levels.windows(2).all(|w| w[0].price >= w[1].price));
+    }
+
+    #[test]
+    fn report_model_defaults_to_sonnet() {
+        let plan = Plan::parse(EXAMPLE).unwrap();
+        assert_eq!(plan.report.model, "sonnet");
+        let without = EXAMPLE.replace("model = \"sonnet\"", "");
+        assert_eq!(Plan::parse(&without).unwrap().report.model, "sonnet");
+        let opus = EXAMPLE.replace("model = \"sonnet\"", "model = \"opus\"");
+        assert_eq!(Plan::parse(&opus).unwrap().report.model, "opus");
+        let bad = EXAMPLE.replace("model = \"sonnet\"", "model = \"two words\"");
+        assert!(Plan::parse(&bad).unwrap_err().contains("report.model"));
     }
 
     #[test]

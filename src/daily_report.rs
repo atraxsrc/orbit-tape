@@ -32,6 +32,8 @@ Options:
   --no-send                     Save and print the report, send nothing.
   --claude PATH                 The claude program. Default: $ORBIT_TAPE_CLAUDE,
                                 else claude on PATH, else ~/.local/bin/claude.
+  --model NAME                  The Claude model. Default: the plan's
+                                report.model (sonnet unless set).
   --timeout MINUTES             Stop Claude after this long. Default 15.
   --print-prompt                Print the prompt and exit.
 
@@ -55,6 +57,7 @@ struct Options {
     channel: Option<Channel>,
     send: bool,
     claude: Option<PathBuf>,
+    model: Option<String>,
     timeout: Option<Duration>,
     print_prompt: bool,
     help: bool,
@@ -90,6 +93,13 @@ fn parse_options(arguments: &[String]) -> Result<Options, String> {
             "--print-prompt" => options.print_prompt = true,
             "--channel" => options.channel = Some(parse_channel(&value("--channel")?)?),
             "--claude" => options.claude = Some(PathBuf::from(value("--claude")?)),
+            "--model" => {
+                let model = value("--model")?.trim().to_owned();
+                if model.is_empty() || model.contains(char::is_whitespace) {
+                    return Err(format!("--model takes a model name, got '{model}'"));
+                }
+                options.model = Some(model);
+            }
             "--timeout" => {
                 let text = value("--timeout")?;
                 let minutes: u64 = text
@@ -135,10 +145,12 @@ pub fn run(arguments: &[String]) -> i32 {
             .unwrap_or(Channel::Both)
     });
     let result = plan
-        .and_then(|_| find_claude(options.claude.as_deref()))
-        .and_then(|claude| {
+        .and_then(|plan| Ok((plan, find_claude(options.claude.as_deref())?)))
+        .and_then(|(plan, claude)| {
+            let model = options.model.clone().unwrap_or(plan.report.model);
             run_claude(
                 &claude,
+                &model,
                 options
                     .timeout
                     .unwrap_or(Duration::from_secs(DEFAULT_TIMEOUT_MINUTES * 60)),
@@ -208,7 +220,7 @@ fn find_claude(given: Option<&Path>) -> Result<PathBuf, String> {
 
 /// The arguments for `claude -p`: only this program's MCP server, only the
 /// routine's tools, plain text out. The prompt goes on stdin.
-fn claude_args(orbit_tape: &Path) -> Vec<String> {
+fn claude_args(orbit_tape: &Path, model: &str) -> Vec<String> {
     let config = serde_json::json!({
         "mcpServers": {
             "orbit-tape": {
@@ -220,6 +232,8 @@ fn claude_args(orbit_tape: &Path) -> Vec<String> {
     });
     let mut args: Vec<String> = [
         "-p",
+        "--model",
+        model,
         "--output-format",
         "text",
         "--mcp-config",
@@ -234,7 +248,7 @@ fn claude_args(orbit_tape: &Path) -> Vec<String> {
     args
 }
 
-fn run_claude(claude: &Path, timeout: Duration) -> Result<String, String> {
+fn run_claude(claude: &Path, model: &str, timeout: Duration) -> Result<String, String> {
     let orbit_tape = std::env::current_exe()
         .map_err(|error| format!("could not find this program's path: {error}"))?;
     // Run from the reports folder, so no project's CLAUDE.md or settings apply.
@@ -242,11 +256,11 @@ fn run_claude(claude: &Path, timeout: Duration) -> Result<String, String> {
     std::fs::create_dir_all(&folder)
         .map_err(|error| format!("could not create {}: {error}", folder.display()))?;
     eprintln!(
-        "orbit-tape report: running the routine with {} (a few minutes)",
+        "orbit-tape report: running the routine with {} --model {model} (a few minutes)",
         claude.display()
     );
     let mut child = Command::new(claude)
-        .args(claude_args(&orbit_tape))
+        .args(claude_args(&orbit_tape, model))
         .current_dir(&folder)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -422,6 +436,14 @@ mod tests {
         assert!(!options.send);
         assert!(parse_options(&[]).unwrap().send);
         assert!(parse_options(&args(&["--timeout", "0"])).is_err());
+        assert_eq!(
+            parse_options(&args(&["--model", "opus"]))
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("opus")
+        );
+        assert!(parse_options(&args(&["--model", ""])).is_err());
         assert!(parse_options(&args(&["--channel", "email"])).is_err());
         assert!(
             parse_options(&args(&["--claude"]))
@@ -437,8 +459,10 @@ mod tests {
 
     #[test]
     fn claude_gets_only_this_server_and_its_tools() {
-        let args = claude_args(Path::new("/usr/bin/orbit-tape"));
+        let args = claude_args(Path::new("/usr/bin/orbit-tape"), "sonnet");
         assert_eq!(args[0], "-p");
+        let at = args.iter().position(|a| a == "--model").unwrap();
+        assert_eq!(args[at + 1], "sonnet");
         assert!(args.contains(&"--strict-mcp-config".to_owned()));
         let at = args.iter().position(|a| a == "--allowedTools").unwrap();
         let allowed: Vec<&str> = args[at + 1].split(',').collect();

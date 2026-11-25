@@ -141,7 +141,7 @@ Roman Setup inputs with per-coin overrides, the optional spot plan (pair,
 holdings, goals, reference price, heads-up and buy levels with amounts and
 `used`, monthly dates with an optional `skipped` list, the SPOT ZONE
 distance) and the report settings (`max_new_alerts`, `alert_channel`,
-`footer`). Unknown keys are errors that name the key. The file stays on your
+`footer`, `model`). Unknown keys are errors that name the key. The file stays on your
 machine; nothing in it is sent anywhere except to the Claude session you
 run the report in.
 
@@ -158,8 +158,9 @@ routine uses allowed (it can create alerts, not change, pause or delete them),
 saves the answer to `~/.local/share/orbit-tape/reports/YYYY-MM-DD.md`
 (readable by you only) and sends it to the desktop and/or ntfy (the plan's
 `alert_channel`, or `--channel`). A failed run is sent too, with the reason.
-Each run uses the Claude plan or API key `claude` is logged in with. The
-timer is off until you turn it on:
+Each run uses the Claude plan or API key `claude` is logged in with, and the
+plan's `model` (default `sonnet`, cheaper than the default model; `--model`
+overrides it for one run). The timer is off until you turn it on:
 
 ```sh
 systemctl --user enable --now orbit-tape-report.timer   # daily at 11:05

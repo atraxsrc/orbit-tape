@@ -77,3 +77,5 @@ spread_leftover = true          # after the last date, unused lump-sum parts
 max_new_alerts = 2              # most alerts one daily report may create
 alert_channel = "both"          # desktop, ntfy or both
 footer = "Script / plan output, not financial advice - the decision is yours."
+model = "sonnet"                # Claude model for orbit-tape report (sonnet,
+                                # opus, haiku or a full model name)
