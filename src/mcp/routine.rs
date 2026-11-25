@@ -171,7 +171,7 @@ impl OrbitTapeMcp {
         coin: String,
         roman: &CompiledIndicator,
         plan: &Plan,
-    ) -> Result<Json, String> {
+    ) -> Result<CoinSetup, String> {
         let candles = &self.candles;
         let (hours, days) = iced::futures::join!(
             candles.closed_candles(exchange, coin.clone(), Timeframe::H1, DEFAULT_RUN_BARS),
@@ -196,8 +196,10 @@ impl OrbitTapeMcp {
             counter_trend_risk_pct: plan.prop.counter_trend_risk_pct,
         };
         let setup = input.setup(&rules);
+        let precision = Precision::of(&hours.ticker_info);
         let mut out = serde_json::to_value(&setup).map_err(|error| error.to_string())?;
-        rounded(&mut out, Precision::of(&hours.ticker_info));
+        rounded(&mut out, precision);
+        out["alerts"] = json!(ready_alerts(&coin, &setup, precision));
         if setup.bias == "none" {
             out["skipped"] = json!(format!(
                 "no HTF bias yet (Roman Setup ran on {} closed 1h bars)",
@@ -213,8 +215,80 @@ impl OrbitTapeMcp {
                 .atr_1d
                 .map(|atr| Precision::of(&hours.ticker_info).price(atr))
         );
-        Ok(out)
+        Ok((out, setup))
     }
+}
+
+/// One coin's roman_setups row and the setup it was made from.
+type CoinSetup = (Json, setups::Setup);
+
+/// A price as the report shows it: to the tick, no trailing zeros.
+fn shown(precision: Precision, price: f64) -> String {
+    format!("{}", precision.price(price))
+}
+
+/// The alerts the routine may create for a coin, ready to pass to
+/// create_alert as they are: a WATCH level (entry, stop, targets and the
+/// MSS rule in the message) and a FLIP-WATCH bias-flip level.
+fn ready_alerts(coin: &str, setup: &setups::Setup, precision: Precision) -> Vec<Json> {
+    let mut alerts = Vec::new();
+    if setup.statuses.contains(&setups::Status::Watch)
+        && let (Some(level), Some(trade)) = (&setup.primary, &setup.trade)
+    {
+        let (condition, side) = match trade.direction {
+            setups::Direction::Short => ("crosses_above", "short"),
+            setups::Direction::Long => ("crosses_below", "long"),
+        };
+        let zone = if level.near == level.far {
+            shown(precision, level.near)
+        } else {
+            format!(
+                "{}-{}",
+                shown(precision, level.near.min(level.far)),
+                shown(precision, level.near.max(level.far))
+            )
+        };
+        let target = |name: &str, price: Option<f64>, r: Option<f64>| match (price, r) {
+            (Some(price), Some(r)) => format!(", {name} {} ({r:.1}R)", shown(precision, price)),
+            (Some(price), None) => format!(", {name} {}", shown(precision, price)),
+            _ => String::new(),
+        };
+        alerts.push(json!({
+            "kind": "watch",
+            "symbol": coin,
+            "condition": condition,
+            "price": precision.price(trade.entry),
+            "message": format!(
+                "{coin} {side} WATCH at the {} {zone} ({}). Entry {}, stop {}{}{}. Only enter after a 1H MSS.",
+                level.name,
+                level.role,
+                shown(precision, trade.entry),
+                shown(precision, trade.stop),
+                target("T1", trade.t1, trade.t1_r),
+                target("T2", trade.t2, trade.t2_r),
+            ),
+        }));
+    }
+    if setup.statuses.contains(&setups::Status::FlipWatch)
+        && let Some(flip) = &setup.flip
+    {
+        let (condition, beyond) = match flip.to {
+            "bullish" => ("crosses_above", "above"),
+            _ => ("crosses_below", "below"),
+        };
+        alerts.push(json!({
+            "kind": "flip",
+            "symbol": coin,
+            "condition": condition,
+            "price": precision.price(flip.level),
+            "message": format!(
+                "{coin}: a 12H close {beyond} {} flips the bias to {} - wait for the 12H close, then the pullback.",
+                shown(precision, flip.level),
+                flip.to
+            ),
+        }));
+    }
+    alerts
 }
 
 /// Rounds a setup for reading: prices to the tick, percentages and R
@@ -449,7 +523,7 @@ impl OrbitTapeMcp {
     }
 
     #[tool(
-        description = "Roman Setup (H12 bias, H1 execution) on every coin of the plan's universe (or the coins given) with the plan's inputs, and the routine's rules applied: the primary bias-aligned level (nearest resistance zone or broken level for a bearish bias, support for a bullish one, on the trade's side of price) and its distance %, entry (its near edge, or the broken level or 50% fib if nearer; the close when price is inside), stop beyond the area + 0.3 daily ATR, T1 (24h low/high) and T2 (1M low/high) with R multiples, notional and margin per $10 risked at the plan's max leverage. Statuses: LIVE (a tap on the bias side in the last 24 1h bars and a bias-aligned 1h MSS after it), WATCH (within 5% of the primary level), FLIP-WATCH (within 3% of the 12H bias-flip level), COUNTER-TREND (armed after an HTF SFP against the bias: entry after the next 1h MSS, stop beyond the SFP wick + 0.2 ATR, counter-trend risk). Setups whose stop is over the plan's max stop % are skipped with the reason. Script output, not advice."
+        description = "Roman Setup (H12 bias, H1 execution) on every coin of the plan's universe (or the coins given) with the plan's inputs, and the routine's rules applied: the primary bias-aligned level (nearest resistance zone or broken level for a bearish bias, support for a bullish one, on the trade's side of price) and its distance %, entry (its near edge, or the broken level or 50% fib if nearer; the close when price is inside), stop beyond the area + 0.3 daily ATR, T1 (24h low/high) and T2 (1M low/high) with R multiples, notional and margin per $10 risked at the plan's max leverage. Each level has a name and role (e.g. bear-slot breaker (broken bear OB), support: a long from a bear slot is a broken bear order block). Statuses: LIVE (a tap on the bias side in the last 24 1h bars and a bias-aligned 1h MSS after it; the live list is ranked: closest to the entry, then best R to T2, then higher max leverage), RAN (triggered like LIVE but price is at or past T1 or further past the entry than the stop distance: not a trade now; ran says why), WATCH (within 5% of the primary level), FLIP-WATCH (within 3% of the 12H bias-flip level), COUNTER-TREND (armed after an HTF SFP against the bias: entry after the next 1h MSS, stop beyond the SFP wick + 0.2 ATR, counter-trend risk). Setups whose stop is over the plan's max stop % are skipped with the reason. Each coin's alerts list holds ready create_alert arguments (symbol, condition, price, message) for its WATCH level and its FLIP-WATCH flip level. Script output, not advice."
     )]
     pub async fn roman_setups(
         &self,
@@ -459,18 +533,36 @@ impl OrbitTapeMcp {
         let plan = self.plan()?;
         let (exchange, coins) = self.universe(params.coins, None, Some(&plan))?;
         let (roman_path, roman) = self.roman()?;
-        let rows: Vec<Json> = iced::futures::stream::iter(coins)
+        let results: Vec<(String, Result<CoinSetup, String>)> = iced::futures::stream::iter(coins)
             .map(|coin| {
                 let (roman, plan) = (&roman, &plan);
                 async move {
-                    self.coin_setup(exchange, coin.clone(), roman, plan)
-                        .await
-                        .unwrap_or_else(|error| json!({ "base": coin, "error": error }))
+                    let result = self.coin_setup(exchange, coin.clone(), roman, plan).await;
+                    (coin, result)
                 }
             })
             .buffered(COINS_PARALLEL)
             .collect()
             .await;
+        let mut live: Vec<(String, setups::Trade)> = results
+            .iter()
+            .filter_map(|(coin, result)| {
+                let (_, setup) = result.as_ref().ok()?;
+                setup
+                    .statuses
+                    .contains(&setups::Status::Live)
+                    .then(|| setup.trade.clone().map(|trade| (coin.clone(), trade)))
+                    .flatten()
+            })
+            .collect();
+        setups::rank_live(&mut live);
+        let rows: Vec<Json> = results
+            .into_iter()
+            .map(|(coin, result)| match result {
+                Ok((row, _)) => row,
+                Err(error) => json!({ "base": coin, "error": error }),
+            })
+            .collect();
         let group = |status: &str| -> Vec<Json> {
             rows.iter()
                 .filter(|row| {
@@ -486,7 +578,8 @@ impl OrbitTapeMcp {
             json!({
                 "exchange": exchange_id(exchange),
                 "indicator": roman_path,
-                "live": group("LIVE"),
+                "live": live.iter().map(|(coin, _)| coin).collect::<Vec<_>>(),
+                "ran": group("RAN"),
                 "watch": group("WATCH"),
                 "flip_watch": group("FLIP-WATCH"),
                 "counter_trend": group("COUNTER-TREND"),

@@ -49,6 +49,13 @@ pub enum Direction {
 }
 
 impl Direction {
+    fn role(self) -> &'static str {
+        match self {
+            Self::Long => "support",
+            Self::Short => "resistance",
+        }
+    }
+
     fn sign(self) -> f64 {
         match self {
             Self::Long => 1.0,
@@ -69,6 +76,11 @@ pub enum LevelKind {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Level {
     pub kind: LevelKind,
+    /// What it is in words, e.g. "bear-slot breaker (broken bear OB)": a
+    /// long can come from a bear slot when its order block was broken.
+    pub name: &'static str,
+    /// support (backs a long) or resistance (backs a short).
+    pub role: &'static str,
     /// The slot it came from (b1, b2, s1, s2), for zones.
     pub slot: Option<&'static str>,
     /// The edge price reaches first.
@@ -85,6 +97,8 @@ pub struct Level {
 pub struct Trade {
     pub direction: Direction,
     pub entry: f64,
+    /// From the close to the entry, %.
+    pub entry_distance_pct: f64,
     pub stop: f64,
     pub stop_pct: f64,
     pub t1: Option<f64>,
@@ -125,6 +139,9 @@ pub struct CounterTrend {
 #[serde(rename_all = "SCREAMING-KEBAB-CASE")]
 pub enum Status {
     Live,
+    /// Triggered like LIVE, but price already ran: past T1, or further past
+    /// the entry than the stop distance. Not a trade to take now.
+    Ran,
     Watch,
     FlipWatch,
     CounterTrend,
@@ -142,10 +159,34 @@ pub struct Setup {
     pub counter_trend: Option<CounterTrend>,
     pub tap_ago: Option<f64>,
     pub mss_ago: Option<f64>,
+    /// Why a triggered setup is RAN, not LIVE.
+    pub ran: Option<String>,
 }
 
 fn pct(from: f64, to: f64) -> f64 {
     (to - from).abs() / from * 100.0
+}
+
+impl Trade {
+    /// Why price has already run from this trade at `close`: at or past T1,
+    /// or further past the entry (the profit way) than the stop distance.
+    pub fn ran(&self, close: f64) -> Option<String> {
+        let sign = self.direction.sign();
+        if let Some(t1) = self.t1
+            && (close - t1) * sign >= 0.0
+        {
+            return Some(format!("price is at or past T1 ({t1})"));
+        }
+        let risk = (self.entry - self.stop).abs();
+        let run = (close - self.entry) * sign;
+        (run > risk).then(|| {
+            format!(
+                "price is {:.2}% past the entry, more than the {:.2}% stop distance",
+                run / self.entry * 100.0,
+                self.stop_pct
+            )
+        })
+    }
 }
 
 impl CoinInput {
@@ -188,6 +229,13 @@ impl CoinInput {
                 } else {
                     LevelKind::OrderBlock
                 },
+                name: match (bull, breaker) {
+                    (true, false) => "bull order block",
+                    (false, false) => "bear order block",
+                    (true, true) => "bull-slot breaker (broken bull OB)",
+                    (false, true) => "bear-slot breaker (broken bear OB)",
+                },
+                role: direction.role(),
                 slot: Some(slot),
                 near,
                 far,
@@ -203,6 +251,8 @@ impl CoinInput {
             if on_side {
                 levels.push(Level {
                     kind: LevelKind::BrokenLevel,
+                    name: "broken HTF level",
+                    role: direction.role(),
                     slot: None,
                     near: broken,
                     far: broken,
@@ -280,6 +330,7 @@ impl CoinInput {
         Ok(Trade {
             direction,
             entry,
+            entry_distance_pct: pct(close, entry),
             stop,
             stop_pct,
             t1,
@@ -372,6 +423,7 @@ impl CoinInput {
         let mut primary = None;
         let mut trade = None;
         let mut skipped = None;
+        let mut ran = None;
         match direction {
             None => skipped = Some("no HTF bias yet".to_owned()),
             Some(direction) => match self.levels(direction).into_iter().next() {
@@ -385,7 +437,10 @@ impl CoinInput {
                                 (Some(tap), Some(dir), Some(mss))
                                     if tap <= LIVE_BARS && dir == mss_dir && mss <= tap
                             );
-                            if live {
+                            ran = live.then(|| found.ran(self.close)).flatten();
+                            if ran.is_some() {
+                                statuses.push(Status::Ran);
+                            } else if live {
                                 statuses.push(Status::Live);
                             } else if level.distance_pct <= WATCH_PCT {
                                 statuses.push(Status::Watch);
@@ -420,8 +475,24 @@ impl CoinInput {
             counter_trend,
             tap_ago,
             mss_ago,
+            ran,
         }
     }
+}
+
+/// LIVE setups in the order to read them: closest to the entry first, then
+/// the best R to T2, then the higher max leverage (the bigger coins).
+pub fn rank_live(setups: &mut [(String, Trade)]) {
+    setups.sort_by(|(_, a), (_, b)| {
+        a.entry_distance_pct
+            .total_cmp(&b.entry_distance_pct)
+            .then_with(|| {
+                b.t2_r
+                    .unwrap_or(f64::MIN)
+                    .total_cmp(&a.t2_r.unwrap_or(f64::MIN))
+            })
+            .then_with(|| b.max_leverage.total_cmp(&a.max_leverage))
+    });
 }
 
 #[cfg(test)]
@@ -593,6 +664,76 @@ mod tests {
         set(&mut input, "x_mssDir", Some(-1.0));
         set(&mut input, "x_tapDnAgo", Some(25.0));
         assert_eq!(input.setup(&RULES).statuses, [Status::Watch]);
+    }
+
+    #[test]
+    fn a_triggered_setup_that_already_ran_is_ran_not_live() {
+        let mut input = bearish();
+        set(&mut input, "x_tapDnAgo", Some(10.0));
+        // Entry 102, stop 104.6: 2.6 of risk; price 2 below the entry.
+        let setup = input.setup(&RULES);
+        assert_eq!(setup.statuses, [Status::Live]);
+        assert_eq!(setup.ran, None);
+        // 3 below the entry: further than the stop distance.
+        input.close = 99.0;
+        let setup = input.setup(&RULES);
+        assert_eq!(setup.statuses, [Status::Ran]);
+        assert!(setup.ran.unwrap().contains("past the entry"));
+        // At T1 (the 24h low) is ran too.
+        input.close = 100.0;
+        input.low_24h = Some(100.0);
+        let setup = input.setup(&RULES);
+        assert_eq!(setup.statuses, [Status::Ran]);
+        assert!(setup.ran.unwrap().contains("T1"));
+        // A WATCH below its short level is waiting for the pullback, not ran.
+        let mut watch = bearish();
+        watch.close = 99.0;
+        assert_eq!(watch.setup(&RULES).statuses, [Status::Watch]);
+    }
+
+    #[test]
+    fn levels_say_what_they_are() {
+        let mut input = bearish();
+        set(&mut input, "x_s2Top", Some(97.0));
+        set(&mut input, "x_s2Bot", Some(96.0));
+        set(&mut input, "x_s2St", Some(1.0));
+        let short = input.levels(Direction::Short)[0];
+        assert_eq!((short.name, short.role), ("bear order block", "resistance"));
+        let long = input.levels(Direction::Long)[0];
+        assert_eq!(long.slot, Some("s2"));
+        assert_eq!(
+            (long.name, long.role),
+            ("bear-slot breaker (broken bear OB)", "support")
+        );
+    }
+
+    #[test]
+    fn live_setups_rank_by_entry_distance_then_t2_r_then_leverage() {
+        let trade = |distance: f64, t2_r: Option<f64>, leverage: f64| Trade {
+            direction: Direction::Short,
+            entry: 100.0,
+            entry_distance_pct: distance,
+            stop: 101.0,
+            stop_pct: 1.0,
+            t1: None,
+            t1_r: None,
+            t2: None,
+            t2_r,
+            notional_per_10: 1000.0,
+            margin_per_10: 100.0,
+            max_leverage: leverage,
+            risk_pct: 0.5,
+        };
+        let mut live = vec![
+            ("FAR".to_owned(), trade(2.0, Some(5.0), 10.0)),
+            ("LOW-R".to_owned(), trade(0.5, Some(1.0), 10.0)),
+            ("SMALL".to_owned(), trade(0.5, Some(3.0), 3.0)),
+            ("BIG".to_owned(), trade(0.5, Some(3.0), 10.0)),
+            ("NO-T2".to_owned(), trade(0.5, None, 10.0)),
+        ];
+        rank_live(&mut live);
+        let order: Vec<&str> = live.iter().map(|(coin, _)| coin.as_str()).collect();
+        assert_eq!(order, ["BIG", "SMALL", "LOW-R", "NO-T2", "FAR"]);
     }
 
     #[test]

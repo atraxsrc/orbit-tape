@@ -18,26 +18,26 @@ financial advice.
 spot_status. If a tool fails, keep going with the others and name what failed \
 in the report.
 3. Alerts. Call list_alerts first. Then call create_alert at most the plan's \
-report.max_new_alerts times in this run, each with exchange set to the plan's \
-universe exchange, channel to the plan's report.alert_channel, frequency once, \
-timeframe 1h, and the level as price. \
+report.max_new_alerts times in this run. Take each one from a coin's alerts \
+list in roman_setups and pass its symbol, condition, price and message \
+exactly as given (do not shorten or reword the message), with exchange set to \
+the plan's universe exchange, channel to the plan's report.alert_channel, \
+frequency once and timeframe 1h. \
 Never create one that duplicates an active alert on the same symbol and \
-direction within 0.5% of the level, and never create spot alerts (the user \
+direction within 0.5% of the price, and never create spot alerts (the user \
 keeps those). Priority:
-   a. The closest FLIP-WATCH flip level on BTC or ETH: crosses_above when it \
-flips the bias to bullish, crosses_below when to bearish. Message: \
-\"12H close beyond <level> flips the bias - wait for the 12H close, then the \
-pullback\".
-   b. Then the closest one or two WATCH primary levels: crosses_above for a \
-short level above price, crosses_below for a long level below price. Message: \
-the level, the stop, T1 and T2, and \"only enter after a 1H MSS\".
+   a. The closest kind flip alert on BTC or ETH.
+   b. Then the closest one or two kind watch alerts.
 4. Reply with the report, short and phone-readable, plain text, no tables:
    - One line on the market regime: BTC and ETH 12H bias, daily RSI and week %, \
 plus BTC's and ETH's bias-flip levels with their distance.
-   - LIVE setups first: pair, direction, entry, stop, T1 and T2 with their R \
-multiples, notional per $10 risked, and the prop max leverage. Then WATCH \
-pairs (primary level and distance %), then FLIP-WATCH pairs (flip level and \
-distance), then COUNTER-TREND notes (entry after the next 1H MSS that way, \
+   - LIVE setups first, in roman_setups' live order (it is ranked). The first \
+three in full: pair, direction, entry, stop, T1 and T2 with their R multiples, \
+notional per $10 risked, and the prop max leverage. Any others in one line: \
+\"Also LIVE: <pair> <direction>, ...\". Then RAN pairs in one line (\"Ran, \
+skip: <pair> <direction>, ...\"). Then WATCH pairs (direction, primary level \
+with its name, e.g. bear-slot breaker, and distance %), then FLIP-WATCH pairs \
+(flip level and distance), then COUNTER-TREND notes (entry after the next 1H MSS that way, \
 stop, target, at the plan's counter-trend risk; never call one the main \
 trade). If more LIVE setups point the same way than the plan's \
 max_correlated, say so. Say which alerts you created, or that none were \
@@ -107,9 +107,15 @@ mod tests {
             assert!(DAILY_REPORT.contains(name), "{name} unused by the prompt");
             assert!(tools.iter().any(|t| t == name), "{name} is not a tool");
         }
-        // The condition names the prompt uses are the create_alert ones.
-        for condition in ["crosses_above", "crosses_below"] {
-            assert!(DAILY_REPORT.contains(condition));
+        // Alerts come ready from roman_setups (kinds watch and flip) and go
+        // to create_alert as they are.
+        for part in [
+            "alerts list in roman_setups",
+            "symbol, condition, price and message",
+            "kind flip",
+            "kind watch",
+        ] {
+            assert!(DAILY_REPORT.contains(part), "{part}");
         }
     }
 

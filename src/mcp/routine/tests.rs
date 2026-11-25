@@ -164,8 +164,27 @@ fn roman_setups_apply_the_rules_to_the_universe() {
     assert_eq!(trade["notional_per_10"], 1175.0);
     assert_eq!(btc["flip"]["to"], "bearish");
     assert_eq!(out["watch"], json!(["BTC"]));
+    assert_eq!(btc["primary"]["name"], "broken HTF level");
+    assert_eq!(btc["primary"]["role"], "support");
+    // A ready create_alert for the WATCH level, with the whole message.
+    let alert = &btc["alerts"][0];
+    assert_eq!(alert["kind"], "watch");
+    assert_eq!(alert["symbol"], "BTC");
+    assert_eq!(alert["condition"], "crosses_below");
+    assert_eq!(alert["price"], 91999.0);
+    let message = alert["message"].as_str().unwrap();
+    for part in [
+        "BTC long WATCH at the broken HTF level 91999 (support)",
+        "Entry 91999, stop 91215.7",
+        ", T1 ",
+        ", T2 ",
+        "R)",
+        "Only enter after a 1H MSS.",
+    ] {
+        assert!(message.contains(part), "{part}: {message}");
+    }
     // Groups list coins by status.
-    for group in ["live", "watch", "flip_watch", "counter_trend"] {
+    for group in ["live", "ran", "watch", "flip_watch", "counter_trend"] {
         assert!(out[group].is_array());
     }
 }
