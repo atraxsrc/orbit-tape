@@ -44,6 +44,8 @@ Another time: systemctl --user edit orbit-tape-report.timer
 Logs: journalctl --user -u orbit-tape-report";
 
 const DEFAULT_TIMEOUT_MINUTES: u64 = 15;
+/// How often a run says it is still going (a run takes a few minutes).
+const PROGRESS_EVERY: Duration = Duration::from_secs(30);
 /// ntfy's message limit is 4096 bytes; leave room for the note.
 const NTFY_BYTES: usize = 3800;
 const DESKTOP_CHARS: usize = 900;
@@ -239,6 +241,10 @@ fn run_claude(claude: &Path, timeout: Duration) -> Result<String, String> {
     let folder = data::data_path(Some("reports"));
     std::fs::create_dir_all(&folder)
         .map_err(|error| format!("could not create {}: {error}", folder.display()))?;
+    eprintln!(
+        "orbit-tape report: running the routine with {} (a few minutes)",
+        claude.display()
+    );
     let mut child = Command::new(claude)
         .args(claude_args(&orbit_tape))
         .current_dir(&folder)
@@ -265,7 +271,15 @@ fn run_claude(claude: &Path, timeout: Duration) -> Result<String, String> {
     let stdout = reader(child.stdout.take().map(|p| Box::new(p) as _));
     let stderr = reader(child.stderr.take().map(|p| Box::new(p) as _));
     let started = Instant::now();
+    let mut next_progress = PROGRESS_EVERY;
     let status = loop {
+        if started.elapsed() >= next_progress {
+            eprintln!(
+                "orbit-tape report: still running, {}",
+                elapsed_text(started.elapsed())
+            );
+            next_progress += PROGRESS_EVERY;
+        }
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() >= timeout => {
@@ -291,6 +305,15 @@ fn run_claude(claude: &Path, timeout: Duration) -> Result<String, String> {
         return Err("claude gave an empty report".to_owned());
     }
     Ok(report)
+}
+
+/// `45s`, `2m30s`.
+fn elapsed_text(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    match seconds / 60 {
+        0 => format!("{seconds}s"),
+        minutes => format!("{minutes}m{:02}s", seconds % 60),
+    }
 }
 
 fn last_lines(text: &str, count: usize) -> String {
@@ -378,6 +401,13 @@ fn send(title: &str, body: &str, saved: Option<&Path>, channel: Channel) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn elapsed_reads_as_minutes_and_seconds() {
+        assert_eq!(elapsed_text(Duration::from_secs(30)), "30s");
+        assert_eq!(elapsed_text(Duration::from_secs(150)), "2m30s");
+        assert_eq!(elapsed_text(Duration::from_secs(605)), "10m05s");
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
