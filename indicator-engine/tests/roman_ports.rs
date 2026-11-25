@@ -135,24 +135,27 @@ fn roman_setup_matches_tradingview() {
                 ));
             }
         };
-        check("bias", plot(output, "dbg_bias"), value("x_bias"));
-        check("fib50", plot(output, "dbg_fib50"), value("x_fib50"));
+        check("bias", plot(output, "x_bias"), value("x_bias"));
+        check("fib50", plot(output, "x_fib50"), value("x_fib50"));
+        for age in ["x_htfMssAgo", "x_sfpAgo", "x_mssAgo"] {
+            check(age, plot(output, age), value(age));
+        }
         for slot in ["b1", "b2", "s1", "s2"] {
             check(
                 &format!("{slot} top"),
-                plot(output, &format!("dbg_{slot}_top")),
+                plot(output, &format!("x_{slot}Top")),
                 value(&format!("x_{slot}Top")),
             );
             check(
                 &format!("{slot} bottom"),
-                plot(output, &format!("dbg_{slot}_bot")),
+                plot(output, &format!("x_{slot}Bot")),
                 value(&format!("x_{slot}Bot")),
             );
-            // TradingView state: 0 order block, 1 breaker, +2 hidden.
+            // State: 0 order block, 1 breaker, +2 hidden, as TradingView's.
             check(
-                &format!("{slot} breaker"),
-                plot(output, &format!("dbg_{slot}_brk")),
-                value(&format!("x_{slot}St")).map(|state| (state as i64 % 2) as f64),
+                &format!("{slot} state"),
+                plot(output, &format!("x_{slot}St")),
+                value(&format!("x_{slot}St")),
             );
         }
         let event = |name: &str| value(name) == Some(0.0);
@@ -189,20 +192,18 @@ fn check_rev7(
     assert!(expected.len() > 900);
 
     let mut series = [
-        ("dbg_bias", "x_bias"),
-        ("dbg_fib50", "x_fib50"),
-        ("dbg_broken_level", "x_brkLvl"),
-        ("dbg_broken_away", "x_brkAway"),
-        ("dbg_up_flip", "x_upFlip"),
-        ("dbg_dn_flip", "x_dnFlip"),
-        ("dbg_ct_arm_up", "x_ctArmUp"),
-        ("dbg_ct_arm_down", "x_ctArmDn"),
+        ("x_bias", "x_bias"),
+        ("x_fib50", "x_fib50"),
+        ("x_brkLvl", "x_brkLvl"),
+        ("x_brkAway", "x_brkAway"),
+        ("x_bullFlip", "x_upFlip"),
+        ("x_bearFlip", "x_dnFlip"),
     ]
     .map(|(ours, theirs)| (ours.to_owned(), theirs.to_owned()))
     .to_vec();
     for slot in ["b1", "b2", "s1", "s2"] {
-        for (ours, theirs) in [("top", "Top"), ("bot", "Bot"), ("brk", "Brk")] {
-            series.push((format!("dbg_{slot}_{ours}"), format!("x_{slot}{theirs}")));
+        for field in ["Top", "Bot"] {
+            series.push((format!("x_{slot}{field}"), format!("x_{slot}{field}")));
         }
     }
     let events = [
@@ -229,6 +230,34 @@ fn check_rev7(
             if !same(ours_value, theirs_value) {
                 mismatches.push(format!(
                     "{time} {ours}: ours {ours_value:?}, TradingView {theirs_value:?}"
+                ));
+            }
+        }
+        // Values the export keeps in another form: breaker 0/1 (no hidden
+        // bit) and the counter-trend arm as two flags.
+        let mut derived = vec![
+            (
+                "x_ctArm up".to_owned(),
+                Some(f64::from(u8::from(plot(output, "x_ctArm") == Some(1.0)))),
+                value("x_ctArmUp"),
+            ),
+            (
+                "x_ctArm down".to_owned(),
+                Some(f64::from(u8::from(plot(output, "x_ctArm") == Some(-1.0)))),
+                value("x_ctArmDn"),
+            ),
+        ];
+        for slot in ["b1", "b2", "s1", "s2"] {
+            derived.push((
+                format!("x_{slot}St breaker"),
+                plot(output, &format!("x_{slot}St")).map(|state| (state as i64 % 2) as f64),
+                value(&format!("x_{slot}Brk")),
+            ));
+        }
+        for (what, ours_value, theirs_value) in derived {
+            if !same(ours_value, theirs_value) {
+                mismatches.push(format!(
+                    "{time} {what}: ours {ours_value:?}, TradingView {theirs_value:?}"
                 ));
             }
         }
@@ -319,4 +348,64 @@ fn enhanced_ob_matches_the_reference() {
         }
     }
     assert!(events > 300, "the fixture should contain plenty of events");
+}
+
+/// Every x_* setup value of the TradingView script (rev 5) on OKX 1h with the
+/// daily profile (Zone tap or SFP; major-coin max distance 5 and zone height
+/// 2), against the port on the same OKX candles, bar for bar.
+fn check_setup_values(candles: &str, export: &str) {
+    let config = IndicatorConfig::default()
+        .with("mssGate", InputValue::String("Zone tap or SFP".to_owned()))
+        .with("maxDist", InputValue::Float(5.0))
+        .with("maxHeight", InputValue::Float(2.0))
+        // rev 5 has neither
+        .with("thinBody", InputValue::Float(0.0))
+        .with("brkTap", InputValue::Bool(false));
+    let outputs = run("roman-setup.ind", candles, config);
+    let expected = read_csv(export);
+    assert!(expected.len() > 900);
+    let columns: Vec<String> = expected[0]
+        .keys()
+        .filter(|name| name.starts_with("x_"))
+        .cloned()
+        .collect();
+    assert!(columns.len() >= 23, "{columns:?}");
+
+    let mut mismatches = Vec::new();
+    for row in &expected {
+        let time: i64 = row["time"].parse().unwrap();
+        let output = outputs
+            .get(&time)
+            .expect("TradingView bar is in the candles");
+        for column in &columns {
+            let (ours, theirs) = (plot(output, column), row[column].parse::<f64>().ok());
+            if !same(ours, theirs) {
+                mismatches.push(format!(
+                    "{time} {column}: ours {ours:?}, TradingView {theirs:?}"
+                ));
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{export}: {} mismatches, first: {:#?}",
+        mismatches.len(),
+        &mismatches[..mismatches.len().min(12)]
+    );
+}
+
+#[test]
+fn roman_setup_values_match_tradingview_on_okx_btc() {
+    check_setup_values(
+        "tests/okx-btcusdt-perp-1h-20261125.csv",
+        "tests/tradingview-roman-setup-rev5-okx-btc.csv",
+    );
+}
+
+#[test]
+fn roman_setup_values_match_tradingview_on_okx_eth() {
+    check_setup_values(
+        "tests/okx-ethusdt-perp-1h-20261125.csv",
+        "tests/tradingview-roman-setup-rev5-okx-eth.csv",
+    );
 }

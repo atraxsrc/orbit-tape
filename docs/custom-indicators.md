@@ -48,6 +48,13 @@ plot(value, id = "value", title = "Value")
 IDs are `<namespace>.<name>`. The file name must be `<name>.ind`. The `core`
 namespace belongs to the built-in indicators.
 
+Add `version = "1.0"` to `indicator(...)` and raise it when you change the
+script. Orbit Tape compares it with the copies it ships: when a file in your
+indicators folder has the ID of a shipped indicator but an older version (or
+none, while the shipped one has one), the app's Indicators panel and the MCP
+tools say so and give the `cp` command that updates your copy. Your copy is
+still the one that runs.
+
 ## 2. Edit it
 
 Open the file in any editor. The language basics:

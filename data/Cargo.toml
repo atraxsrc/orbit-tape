@@ -23,6 +23,7 @@ exchange.workspace = true
 indicator_engine.workspace = true
 
 dirs-next = "2.0.0"
+toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
 open = "5.3.5"
 log = { version = "0.4.29", default-features = false, features = ["std"] }
 thiserror = { version = "2.0.18", default-features = false, features = ["std"] }

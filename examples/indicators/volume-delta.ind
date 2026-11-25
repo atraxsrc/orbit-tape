@@ -7,7 +7,7 @@
 // without trade data (na), a histogram, and coloring by a boolean output.
 
 language(1)
-indicator("Volume Delta", id = "example.volume-delta", max_bars_back = 1,
+indicator("Volume Delta", id = "example.volume-delta", version = "1.0", max_bars_back = 1,
     optional_trades = true,
     description = "Per-bar buy minus sell volume.")
 display(layer_name = "Volume Delta")

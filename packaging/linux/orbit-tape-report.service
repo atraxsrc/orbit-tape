@@ -1,0 +1,13 @@
+[Unit]
+Description=Orbit Tape daily report (the trading routine through Claude Code)
+Documentation=file:///usr/share/doc/orbit-tape/mcp.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Needs the plan file (~/.config/orbit-tape/plan.toml) and Claude Code logged
+# in. If claude is not on the service's PATH or in ~/.local/bin, set its path:
+# Environment=ORBIT_TAPE_CLAUDE=/path/to/claude
+# Options: `orbit-tape report --help`, e.g. --channel ntfy.
+ExecStart=/usr/bin/orbit-tape report
+TimeoutStartSec=20min

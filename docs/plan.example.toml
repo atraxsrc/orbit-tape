@@ -1,0 +1,79 @@
+# Orbit Tape trading plan, read by the MCP tools get_plan, roman_setups and
+# spot_status and by the daily_report prompt. Copy it to
+# ~/.config/orbit-tape/plan.toml (or point ORBIT_TAPE_PLAN at another path)
+# and replace every number here with your own. It holds personal data: keep
+# it out of any git repository. Orbit Tape only reads it.
+#
+# All numbers below are placeholders, not advice.
+
+[prop]
+name = "My prop account"        # shown in the report
+risk_pct = 0.5                  # risk per trade, % of the account
+counter_trend_risk_pct = 0.25   # risk per counter-trend trade
+max_correlated = 2              # most correlated positions at once
+max_stop_pct = 5.0              # setups with a wider stop are skipped
+default_leverage = 5            # max leverage for coins not listed below
+
+[prop.leverage]                 # max leverage by coin
+BTC = 10
+ETH = 5
+DOGE = 3
+
+[universe]
+exchange = "okx"                # okx or binance USDT perpetuals
+coins = ["BTC", "ETH", "SOL", "XRP", "DOGE"]
+
+# Roman Setup inputs, by input ID or label (list_indicators shows them).
+[roman.inputs]
+mssGate = "Zone tap or SFP"
+ctMode = true
+
+# Extra inputs for some coins, e.g. a major-coin profile.
+[[roman.overrides]]
+coins = ["BTC", "ETH"]
+inputs = { maxDist = 5, maxHeight = 2 }
+
+# Optional: a spot accumulation plan (OKX spot). Leave it out if you have none.
+[spot]
+exchange = "okx"
+symbol = "BTC-USDT"
+holdings = 0.25                 # coins held now
+goal = 0.5
+stretch_goal = 0.75
+budget = 10000                  # the plan's budget in the quote currency
+realized_price = 50000          # a reference price the report compares with
+realized_price_note = "on-chain realized price, source and date"
+zone_pct = 3.0                  # SPOT ZONE within this % of an unused buy level
+
+# Heads-up levels warn only; buy levels are lump-sum parts, used once.
+# Set used = true after you bought at a level.
+[[spot.levels]]
+price = 56000
+kind = "heads_up"
+label = "Fib 62%"
+
+[[spot.levels]]
+price = 50000
+kind = "buy"
+amount = 2500
+label = "BUY 1 (realized price)"
+used = false
+
+[[spot.levels]]
+price = 45000
+kind = "buy"
+amount = 2500
+label = "BUY 2 (wick)"
+used = false
+
+[spot.monthly]
+amount = 800                    # per monthly buy
+dates = [2027-07-05, 2027-08-02, 2027-09-06, 2027-10-04]
+skipped = []                    # planned dates you did not buy on
+spread_leftover = true          # after the last date, unused lump-sum parts
+                                # go into monthly buys on the first Monday
+
+[report]
+max_new_alerts = 2              # most alerts one daily report may create
+alert_channel = "both"          # desktop, ntfy or both
+footer = "Script / plan output, not financial advice - the decision is yours."

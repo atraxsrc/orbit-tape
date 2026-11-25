@@ -18,7 +18,7 @@
 //     (240, 4H, D, W, M) and is not checked against the chart timeframe.
 
 language(1)
-indicator("Enhanced Roman Order Block", id = "roman.enhanced-ob", max_bars_back = 32)
+indicator("Enhanced Roman Order Block", id = "roman.enhanced-ob", max_bars_back = 32, version = "1.0")
 display(view = "primary_overlay")
 style("main", title = "Order blocks", role = "primary", shade = "base")
 

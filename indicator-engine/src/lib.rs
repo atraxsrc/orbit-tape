@@ -36,8 +36,8 @@ pub use scene::{
 };
 pub use types::{
     ArrayValue, IndicatorAuthor, IndicatorConfig, IndicatorDescriptor, IndicatorId,
-    InputDescriptor, InputOption, InputType, InputValue, Qualifier, SeriesInputDescriptor, Type,
-    Value, ValueType,
+    IndicatorVersion, InputDescriptor, InputOption, InputType, InputValue, Qualifier,
+    SeriesInputDescriptor, Type, Value, ValueType,
 };
 
 /// Discover sorted `.ind` files recursively, retaining diagnostics for unreadable entries.
@@ -443,6 +443,36 @@ mod tests {
                 error
                     .iter()
                     .any(|diagnostic| diagnostic.message.contains("bases"))
+            );
+        }
+    }
+
+    #[test]
+    fn indicator_versions_parse_and_order() {
+        let version = |text: &str| IndicatorVersion::parse(text).unwrap();
+        assert!(version("7.1") > version("7"));
+        assert!(version("1.10") > version("1.9"));
+        assert_eq!(version("1.2"), version("1.2.0"));
+        assert_eq!(version(" 2.0.1 ").to_string(), "2.0.1");
+        for bad in ["", "1.", ".1", "v1", "1.2.3.4.5", "1.-2", "1.2a"] {
+            assert!(IndicatorVersion::parse(bad).is_none(), "{bad}");
+        }
+        let source = |declaration: &str| {
+            format!(
+                "language(1)\nindicator(\"Versioned\", id = \"test.versioned\"{declaration})\nformat(precision = \"base_ticker_min_tick\")\nplot(chart.close)"
+            )
+        };
+        let compiled = compile(&source(", version = \"7.1\""), "versioned.ind").unwrap();
+        assert_eq!(compiled.descriptor.version, Some(version("7.1")));
+        let compiled = compile(&source(""), "versioned.ind").unwrap();
+        assert_eq!(compiled.descriptor.version, None);
+        for bad in [", version = \"seven\"", ", version = 7"] {
+            let error = compile(&source(bad), "versioned.ind").expect_err(bad);
+            assert!(
+                error
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains("indicator version")),
+                "{bad}"
             );
         }
     }

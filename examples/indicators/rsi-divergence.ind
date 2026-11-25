@@ -13,7 +13,7 @@
 // persistent = true), and alert = true conditions.
 
 language(1)
-indicator("RSI Divergence", id = "example.rsi-divergence", max_bars_back = 60,
+indicator("RSI Divergence", id = "example.rsi-divergence", version = "1.0", max_bars_back = 60,
     description = "RSI with regular divergence labels and alerts.")
 display(attachment = "panel")
 format(precision = "fixed_step:0.1", max_decimals = 1)

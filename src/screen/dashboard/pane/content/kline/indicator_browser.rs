@@ -99,15 +99,33 @@ impl State {
                     crate::widget::BannerKind::Warning,
                 )
             }),
-            // Compile errors from live reload stay visible here until fixed.
+            // Compile errors from live reload stay visible here until fixed,
+            // and so do installed copies older than the shipped ones.
             Page::Installed => {
                 let errors = data::chart::kline::indicators::indicator_source_errors();
-                (!errors.is_empty()).then(|| {
-                    crate::widget::banner(
+                let updates = data::chart::kline::indicators::indicator_update_notices();
+                let mut banners = Vec::new();
+                if !errors.is_empty() {
+                    banners.push(crate::widget::banner(
                         format!("Indicator source errors:\n{}", errors.join("\n")),
                         crate::widget::BannerKind::Error,
-                    )
-                })
+                    ));
+                }
+                if !updates.is_empty() {
+                    banners.push(crate::widget::banner(
+                        format!("Newer shipped indicators:\n{}", updates.join("\n\n")),
+                        crate::widget::BannerKind::Warning,
+                    ));
+                }
+                match banners.len() {
+                    0 => None,
+                    1 => banners.pop(),
+                    _ => Some(
+                        iced::widget::Column::with_children(banners)
+                            .spacing(6)
+                            .into(),
+                    ),
+                }
             }
         };
 

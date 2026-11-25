@@ -9,6 +9,8 @@
 //! Logs go to stderr; stdout carries the protocol.
 
 mod alerts;
+pub(crate) mod report;
+mod routine;
 
 use crate::headless::{
     self, MAX_BARS, Market, PerpExchange, Series, alert_plots, coin, evaluate_alerts,
@@ -50,6 +52,8 @@ const MAX_SCAN_SYMBOLS: usize = 100;
 const MAX_LOOKBACK: usize = 50;
 const MAX_ALERTS: usize = 200;
 const DEFAULT_RUN_BARS: usize = 2000;
+/// Coins a scan fetches at once (each exchange caps its own share).
+const SCAN_PARALLEL: usize = 8;
 const KEY_LEVELS: &str = "key-levels.ind";
 /// Decimals for quote (USDT) volume.
 const VOLUME_DECIMALS: u32 = 2;
@@ -117,28 +121,157 @@ pub trait CandleSource: Send + Sync + 'static {
         timeframe: Timeframe,
         bars: usize,
     ) -> BoxFuture<'_, Result<Series, String>>;
+
+    /// Closed candles of an OKX spot pair such as `BTC-USDT`.
+    fn spot_candles(
+        &self,
+        pair: String,
+        timeframe: Timeframe,
+        bars: usize,
+    ) -> BoxFuture<'_, Result<Series, String>>;
 }
 
 /// Exchange candles; each exchange's symbol list is loaded once.
+///
+/// Requests run in parallel up to a per-exchange limit (the adapters' rate
+/// limiters still pace them). OKX perps and spot share one adapter, so one
+/// rate limiter, as the exchange counts requests per IP. Closed candles are
+/// kept until the next bar closes, and a series being fetched is fetched
+/// once however many tools ask for it at the same time (market_snapshot and
+/// roman_setups called together).
 #[derive(Default)]
 pub struct LiveCandles {
-    markets: Mutex<HashMap<PerpExchange, Arc<Market>>>,
+    markets: Mutex<HashMap<PerpExchange, Arc<tokio::sync::OnceCell<Arc<Market>>>>>,
+    okx_adapter: Mutex<Option<exchange::adapter::AdapterHandles>>,
+    spot: tokio::sync::OnceCell<Arc<headless::SpotMarket>>,
+    slots: Mutex<HashMap<PerpExchange, Arc<tokio::sync::Semaphore>>>,
+    cache: CandleCache,
+}
+
+/// A fetched series: the bar that was forming then, and how many bars were
+/// asked for (the exchange may have had fewer).
+struct Cached {
+    forming: u64,
+    requested: usize,
+    series: Series,
+}
+
+/// Requests in flight per exchange.
+fn parallel_requests(exchange: PerpExchange) -> usize {
+    match exchange {
+        // 20 candle requests per 2 s per IP, shared with spot; 3 at once
+        // keeps the limiter busy without bursts that earn a 429.
+        PerpExchange::Okx => 3,
+        PerpExchange::Binance => 8,
+    }
+}
+
+/// The newest `bars` candles of `cached`, if it was fetched during the bar
+/// forming at `forming` and asked for at least that many.
+fn from_cache(cached: &Cached, forming: u64, bars: usize) -> Option<Series> {
+    if cached.forming != forming || cached.requested < bars {
+        return None;
+    }
+    let mut series = cached.series.clone();
+    let extra = series.klines.len().saturating_sub(bars);
+    series.klines.drain(..extra);
+    Some(series)
+}
+
+type CandleKey = (PerpExchange, String, Timeframe);
+
+/// Closed candles by exchange, coin and timeframe, one lock per series: a
+/// second request for a series that is being fetched waits for that fetch
+/// instead of starting its own.
+#[derive(Default)]
+struct CandleCache {
+    entries: Mutex<HashMap<CandleKey, Arc<tokio::sync::Mutex<Option<Cached>>>>>,
+}
+
+impl CandleCache {
+    /// The cached series if it is fresh and long enough, else `fetch`'s.
+    async fn get_or_fetch(
+        &self,
+        key: CandleKey,
+        forming: u64,
+        bars: usize,
+        fetch: impl Future<Output = Result<Series, String>>,
+    ) -> Result<Series, String> {
+        let entry = {
+            let mut entries = self
+                .entries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Drop series of bars that closed since (unless being fetched).
+            entries.retain(|(_, _, timeframe), slot| {
+                slot.try_lock().map_or(true, |cached| {
+                    cached.as_ref().is_some_and(|cached| {
+                        cached.forming == exchange::UnixMs::now().floor_to(*timeframe).as_u64()
+                    })
+                })
+            });
+            entries.entry(key).or_default().clone()
+        };
+        let mut slot = entry.lock().await;
+        if let Some(series) = slot
+            .as_ref()
+            .and_then(|cached| from_cache(cached, forming, bars))
+        {
+            return Ok(series);
+        }
+        let series = fetch.await?;
+        *slot = Some(Cached {
+            forming,
+            requested: bars,
+            series: series.clone(),
+        });
+        Ok(series)
+    }
 }
 
 impl LiveCandles {
+    /// The exchange's perps, connected once even when many ask at once.
     async fn market(&self, exchange: PerpExchange) -> Result<Arc<Market>, String> {
-        if let Some(market) = self.lock().get(&exchange) {
-            return Ok(market.clone());
-        }
-        let market = Arc::new(Market::connect(exchange).await?);
-        self.lock().insert(exchange, market.clone());
-        Ok(market)
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<PerpExchange, Arc<Market>>> {
-        self.markets
+        let cell = self
+            .markets
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(exchange)
+            .or_default()
+            .clone();
+        cell.get_or_try_init(|| async {
+            Market::connect_with(exchange, self.adapter(exchange)?)
+                .await
+                .map(Arc::new)
+        })
+        .await
+        .cloned()
+    }
+
+    /// The exchange adapter; OKX's is shared by perps and spot.
+    fn adapter(&self, exchange: PerpExchange) -> Result<exchange::adapter::AdapterHandles, String> {
+        if exchange != PerpExchange::Okx {
+            return headless::adapter(exchange.venue());
+        }
+        let mut shared = self
+            .okx_adapter
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(handles) = shared.as_ref() {
+            return Ok(handles.clone());
+        }
+        let handles = headless::adapter(exchange.venue())?;
+        *shared = Some(handles.clone());
+        Ok(handles)
+    }
+
+    fn slots(&self, exchange: PerpExchange) -> Arc<tokio::sync::Semaphore> {
+        self.slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(exchange)
+            .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(parallel_requests(exchange))))
+            .clone()
     }
 }
 
@@ -164,8 +297,37 @@ impl CandleSource for LiveCandles {
         bars: usize,
     ) -> BoxFuture<'_, Result<Series, String>> {
         Box::pin(async move {
-            let market = self.market(exchange).await?;
-            market.closed_candles(&coin, timeframe, bars).await
+            let forming = exchange::UnixMs::now().floor_to(timeframe).as_u64();
+            let key = (exchange, coin.clone(), timeframe);
+            self.cache
+                .get_or_fetch(key, forming, bars, async {
+                    let market = self.market(exchange).await?;
+                    let slots = self.slots(exchange);
+                    let _slot = slots.acquire().await.map_err(|error| error.to_string())?;
+                    market.closed_candles(&coin, timeframe, bars).await
+                })
+                .await
+        })
+    }
+
+    fn spot_candles(
+        &self,
+        pair: String,
+        timeframe: Timeframe,
+        bars: usize,
+    ) -> BoxFuture<'_, Result<Series, String>> {
+        Box::pin(async move {
+            let spot = self
+                .spot
+                .get_or_try_init(|| async {
+                    headless::SpotMarket::connect_okx_with(self.adapter(PerpExchange::Okx)?)
+                        .await
+                        .map(Arc::new)
+                })
+                .await?;
+            let slots = self.slots(PerpExchange::Okx);
+            let _slot = slots.acquire().await.map_err(|error| error.to_string())?;
+            spot.closed_candles(&pair, timeframe, bars).await
         })
     }
 }
@@ -184,6 +346,8 @@ pub struct Paths {
     pub alerts: PathBuf,
     /// Held by the program that runs the alerts.
     pub engine_lock: PathBuf,
+    /// The user's trading plan (read only).
+    pub plan: PathBuf,
 }
 
 impl Paths {
@@ -194,6 +358,7 @@ impl Paths {
             alert_history: data::data_path(Some(data::config::alert_history::ALERT_HISTORY_PATH)),
             alerts: data::config::alert_store::AlertStore::path(),
             engine_lock: data::config::alert_store::AlertStore::engine_lock_path(),
+            plan: data::config::plan::path(),
         }
     }
 }
@@ -203,6 +368,7 @@ pub struct OrbitTapeMcp {
     paths: Arc<Paths>,
     candles: Arc<dyn CandleSource>,
     tool_router: ToolRouter<Self>,
+    prompt_router: rmcp::handler::server::router::prompt::PromptRouter<Self>,
 }
 
 // ---------------------------------------------------------------- parameters
@@ -212,7 +378,7 @@ pub struct ScanParams {
     /// Indicator name, ID or .ind path. Default: Roman Trade Setup
     /// (roman-setup).
     pub indicator: Option<String>,
-    /// Chart timeframe: 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h.
+    /// Chart timeframe: 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d 1w. Default 1h.
     pub timeframe: Option<String>,
     /// binance or okx. Default: the exchange line of the user's
     /// scan-symbols.txt, else okx.
@@ -230,7 +396,7 @@ pub struct ScanParams {
 pub struct CandlesParams {
     /// Coin or instrument, e.g. BTC, BTCUSDT, BTC-USDT-SWAP.
     pub symbol: String,
-    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h.
+    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d 1w. Default 1h.
     pub timeframe: Option<String>,
     /// binance or okx. Default: the exchange line of the user's
     /// scan-symbols.txt, else okx.
@@ -245,7 +411,7 @@ pub struct RunParams {
     pub indicator: String,
     /// Coin or instrument, e.g. BTC.
     pub symbol: String,
-    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d. Default 1h.
+    /// 1m 3m 5m 15m 30m 1h 2h 4h 12h 1d 1w. Default 1h.
     pub timeframe: Option<String>,
     /// binance or okx. Default: the exchange line of the user's
     /// scan-symbols.txt, else okx.
@@ -295,7 +461,10 @@ impl OrbitTapeMcp {
         Self {
             paths: Arc::new(paths),
             candles,
-            tool_router: Self::tool_router() + Self::alert_tool_router(),
+            tool_router: Self::tool_router()
+                + Self::alert_tool_router()
+                + Self::routine_tool_router(),
+            prompt_router: Self::report_prompt_router(),
         }
     }
 
@@ -303,6 +472,7 @@ impl OrbitTapeMcp {
         description = "Scan USDT perpetuals with an indicator and list the alert signals that fired on the last closed bar(s). Default: Roman Trade Setup on the 1h chart over the user's scan list. Takes a few seconds per coin."
     )]
     pub async fn scan(&self, Parameters(params): Parameters<ScanParams>) -> Result<String, String> {
+        use iced::futures::StreamExt;
         let (path, indicator) = self.indicator(params.indicator.as_deref())?;
         let alert_plots = alert_plots(&indicator);
         if alert_plots.is_empty() {
@@ -339,14 +509,17 @@ impl OrbitTapeMcp {
         };
         let bars = DEFAULT_RUN_BARS.max(lookback + 1);
 
+        // In parallel (the candle source limits requests per exchange), in
+        // list order.
+        let fetched: Vec<Result<Series, String>> = iced::futures::stream::iter(coins.clone())
+            .map(|coin| self.candles.closed_candles(exchange, coin, timeframe, bars))
+            .buffered(SCAN_PARALLEL)
+            .collect()
+            .await;
         let mut rows = Vec::new();
         let mut signal_count = 0;
         let mut failed = 0;
-        for coin in &coins {
-            let fetched = self
-                .candles
-                .closed_candles(exchange, coin.clone(), timeframe, bars)
-                .await;
+        for (coin, fetched) in coins.iter().zip(fetched) {
             let result = fetched.and_then(|series| {
                 evaluate_alerts(
                     &indicator,
@@ -371,11 +544,10 @@ impl OrbitTapeMcp {
                         "close": precision.price(last.close.to_f64()),
                         "signals": signals
                             .iter()
-                            .map(|signal| if lookback > 1 {
-                                format!("{} ({})", signal.title, utc(signal.bar_time))
-                            } else {
-                                signal.title.clone()
-                            })
+                            .map(|signal| json!({
+                                "condition": signal.title,
+                                "bar_utc": utc(signal.bar_time),
+                            }))
                             .collect::<Vec<_>>(),
                     }));
                 }
@@ -385,16 +557,20 @@ impl OrbitTapeMcp {
                 }
             }
         }
-        to_text(&json!({
-            "indicator": indicator.descriptor.title,
-            "path": path,
-            "exchange": exchange_id(exchange),
-            "timeframe": timeframe.to_string(),
-            "lookback_bars": lookback,
-            "signal_count": signal_count,
-            "failed_symbols": failed,
-            "rows": rows,
-        }))
+        let warnings = self.indicator_warnings(indicator.descriptor.id.as_str());
+        to_text(&with_warnings(
+            json!({
+                "indicator": indicator.descriptor.title,
+                "path": path,
+                "exchange": exchange_id(exchange),
+                "timeframe": timeframe.to_string(),
+                "lookback_bars": lookback,
+                "signal_count": signal_count,
+                "failed_symbols": failed,
+                "rows": rows,
+            }),
+            warnings,
+        ))
     }
 
     #[tool(
@@ -436,13 +612,14 @@ impl OrbitTapeMcp {
             "exchange": exchange_id(exchange),
             "timeframe": timeframe.to_string(),
             "volume_unit": "USDT",
+            "history_note": history_note(limit, &series),
             "columns": ["time_utc", "open", "high", "low", "close", "volume"],
             "candles": rows,
         }))
     }
 
     #[tool(
-        description = "Run an indicator over closed candles and return its plot values, markers, alerts and info panel for the last N bars."
+        description = "Run an indicator over closed candles and return its plot values (every plot, hidden ones too, by title; plot_ids maps titles to IDs), last_values for the newest closed bar, markers, alerts and info panel for the last N bars. Inputs by ID or label. history_note says when the exchange had fewer bars than asked for."
     )]
     pub async fn run_indicator(
         &self,
@@ -466,21 +643,27 @@ impl OrbitTapeMcp {
             .closed_candles(exchange, base.clone(), timeframe, bars)
             .await?;
         let report = indicator_report(&indicator, &config, &series, last)?;
-        to_text(&json!({
-            "indicator": indicator.descriptor.title,
-            "id": indicator.descriptor.id.as_str(),
-            "path": path,
-            "base": base,
-            "symbol": series.instrument,
-            "exchange": exchange_id(exchange),
-            "timeframe": timeframe.to_string(),
-            "bars_run": series.klines.len(),
-            "report": report,
-        }))
+        let warnings = self.indicator_warnings(indicator.descriptor.id.as_str());
+        to_text(&with_warnings(
+            json!({
+                "indicator": indicator.descriptor.title,
+                "id": indicator.descriptor.id.as_str(),
+                "path": path,
+                "base": base,
+                "symbol": series.instrument,
+                "exchange": exchange_id(exchange),
+                "timeframe": timeframe.to_string(),
+                "bars_requested": bars,
+                "bars_run": series.klines.len(),
+                "history_note": history_note(bars, &series),
+                "report": report,
+            }),
+            warnings,
+        ))
     }
 
     #[tool(
-        description = "Current Key Levels of a USDT perpetual, sorted by price, with the last close and whether each level is above or below it. By default the levels the Key Levels indicator shows with its own settings; pass levels to ask for others (4H, daily, Monday, weekly, monthly, quarterly, yearly opens, previous highs, lows and mids)."
+        description = "Current Key Levels of a USDT perpetual, sorted by price, with the last close and whether each level is above or below it. History back to the start of the year and the previous quarter is loaded; levels without a value are listed under missing with the reason (e.g. a coin listed this year). By default the levels the Key Levels indicator shows with its own settings; pass levels to ask for others (4H, daily, Monday, weekly, monthly, quarterly, yearly opens, previous highs, lows and mids)."
     )]
     pub async fn key_levels(
         &self,
@@ -494,15 +677,12 @@ impl OrbitTapeMcp {
         let wanted = key_level_selection(&indicator, params.levels.as_deref())?;
         let exchange = self.exchange(params.exchange.as_deref())?;
         let base = symbol_coin(&params.symbol)?;
+        let requested = key_levels_bars(chrono::Utc::now());
         let series = self
             .candles
-            .closed_candles(
-                exchange,
-                base.clone(),
-                Timeframe::H1,
-                key_levels_bars(chrono::Utc::now()),
-            )
+            .closed_candles(exchange, base.clone(), Timeframe::H1, requested)
             .await?;
+        let history = history_note(requested, &series);
         let precision = Precision::of(&series.ticker_info);
         let mut last_output = None;
         headless::run_closed(
@@ -518,41 +698,65 @@ impl OrbitTapeMcp {
             .last()
             .map(|kline| precision.price(kline.close.to_f64()))
             .unwrap_or_default();
-        let mut levels = indicator
+        // Levels without a value are listed with the reason, never dropped.
+        let mut levels = Vec::new();
+        let mut missing = Vec::new();
+        for plot in indicator
             .descriptor
             .plots
             .iter()
             .filter(|plot| wanted.contains(&plot.id))
-            .filter_map(|plot| {
-                let value = output
-                    .plots
-                    .iter()
-                    .find(|out| out.id == plot.id)
-                    .and_then(|out| number(&out.value))?;
-                Some((plot.label.clone(), plot.id.clone(), precision.price(value)))
-            })
-            .collect::<Vec<_>>();
+        {
+            let value = output
+                .plots
+                .iter()
+                .find(|out| out.id == plot.id)
+                .and_then(|out| number(&out.value));
+            match value {
+                Some(value) => {
+                    levels.push((plot.label.clone(), plot.id.clone(), precision.price(value)));
+                }
+                None => missing.push(json!({
+                    "label": plot.label,
+                    "id": plot.id,
+                    "reason": match &history {
+                        Some(note) => format!("not enough history: {note}"),
+                        None => "no value for this period yet".to_owned(),
+                    },
+                })),
+            }
+        }
         if levels.is_empty() {
-            return Err("Key Levels returned no levels for this history".to_owned());
+            return Err(format!(
+                "Key Levels returned no levels for this history{}",
+                history.map(|note| format!(" ({note})")).unwrap_or_default()
+            ));
         }
         levels.sort_by(|a, b| b.2.total_cmp(&a.2));
-        to_text(&json!({
-            "base": base,
-            "symbol": series.instrument,
-            "exchange": exchange_id(exchange),
-            "selection": if params.levels.is_some() { "requested" } else { "indicator defaults" },
-            "as_of_bar_utc": utc(output.time),
-            "close": close,
-            "levels": levels
-                .iter()
-                .map(|(label, id, value)| json!({
-                    "label": label,
-                    "id": id,
-                    "price": value,
-                    "side": if *value > close { "above" } else { "below" },
-                }))
-                .collect::<Vec<_>>(),
-        }))
+        let warnings = self.indicator_warnings(indicator.descriptor.id.as_str());
+        to_text(&with_warnings(
+            json!({
+                "base": base,
+                "symbol": series.instrument,
+                "exchange": exchange_id(exchange),
+                "selection": if params.levels.is_some() { "requested" } else { "indicator defaults" },
+                "as_of_bar_utc": utc(output.time),
+                "bars_run": series.klines.len(),
+                "history_note": history,
+                "missing": missing,
+                "close": close,
+                "levels": levels
+                    .iter()
+                    .map(|(label, id, value)| json!({
+                        "label": label,
+                        "id": id,
+                        "price": value,
+                        "side": if *value > close { "above" } else { "below" },
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            warnings,
+        ))
     }
 
     #[tool(
@@ -606,6 +810,7 @@ impl OrbitTapeMcp {
         description = "List the user's installed indicators: name, ID, path (relative to its indicators folder, with source user or bundled), inputs (with defaults and options) and alert conditions. Colors are #RRGGBB, #RRGGBBAA, or theme.<role> (theme.<role>@AA with alpha)."
     )]
     pub async fn list_indicators(&self) -> Result<String, String> {
+        let notices = self.update_notices();
         let indicators = self
             .installed()
             .into_iter()
@@ -617,6 +822,11 @@ impl OrbitTapeMcp {
                     "id": descriptor.id.as_str(),
                     "path": found.path,
                     "source": found.source,
+                    "version": descriptor.version.as_ref().map(ToString::to_string),
+                    "update": notices
+                        .iter()
+                        .find(|notice| notice.id == descriptor.id.as_str())
+                        .map(data::indicator_updates::UpdateNotice::message),
                     "description": descriptor.description,
                     "inputs": descriptor.inputs.iter().map(|input| {
                         let mut entry = json!({
@@ -644,7 +854,14 @@ impl OrbitTapeMcp {
                 })
             })
             .collect::<Vec<_>>();
-        to_text(&json!({ "indicators": indicators }))
+        let warnings = notices
+            .iter()
+            .map(data::indicator_updates::UpdateNotice::message)
+            .collect();
+        to_text(&with_warnings(
+            json!({ "indicators": indicators }),
+            warnings,
+        ))
     }
 
     #[tool(
@@ -691,21 +908,29 @@ impl OrbitTapeMcp {
 }
 
 #[tool_handler(router = self.tool_router)]
+#[rmcp::prompt_handler(router = self.prompt_router)]
 impl ServerHandler for OrbitTapeMcp {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("orbit-tape", env!("CARGO_PKG_VERSION")))
-            .with_instructions(
-                "Orbit Tape: crypto market tools. Candles are closed bars of USDT \
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .build(),
+        )
+        .with_server_info(Implementation::new("orbit-tape", env!("CARGO_PKG_VERSION")))
+        .with_instructions(
+            "Orbit Tape: crypto market tools. Candles are closed bars of USDT \
                  perpetuals on Binance or OKX; times are UTC. Use list_indicators to see the \
                  user's indicators and their inputs, scan for alert signals across many coins, \
                  run_indicator for one coin's values, key_levels for support and resistance \
                  levels, and alert_history for what fired. create_alert, list_alerts, \
                  update_alert, delete_alert, pause_alerts and resume_alerts manage saved \
                  alerts (price crosses and indicator conditions) that the app or orbit-tape \
-                 watch runs and sends to the desktop or the user's phone (ntfy). Nothing here \
-                 places orders or is financial advice.",
-            )
+                 watch runs and sends to the desktop or the user's phone (ntfy). For the \
+                 daily routine: get_plan reads the user's plan, market_snapshot, roman_setups \
+                 and spot_status apply it, and the daily_report prompt runs the whole \
+                 routine. Nothing here places orders or is financial advice.",
+        )
     }
 }
 
@@ -713,6 +938,25 @@ impl ServerHandler for OrbitTapeMcp {
 
 impl OrbitTapeMcp {
     /// Every installed indicator that compiles, first folder wins per ID.
+    /// The user's copies older than (or, without versions, different from)
+    /// the shipped indicator with the same ID: the first indicator folder is
+    /// the user's, the others are shipped.
+    fn update_notices(&self) -> Vec<data::indicator_updates::UpdateNotice> {
+        match self.paths.indicator_folders.split_first() {
+            Some((user, shipped)) => data::indicator_updates::find(user, shipped),
+            None => Vec::new(),
+        }
+    }
+
+    /// Warnings for a tool that ran indicator `id`.
+    pub(crate) fn indicator_warnings(&self, id: &str) -> Vec<String> {
+        self.update_notices()
+            .iter()
+            .filter(|notice| notice.id == id)
+            .map(data::indicator_updates::UpdateNotice::message)
+            .collect()
+    }
+
     fn installed(&self) -> Vec<Installed> {
         let mut found: Vec<Installed> = Vec::new();
         for (index, folder) in self.paths.indicator_folders.iter().enumerate() {
@@ -902,7 +1146,13 @@ fn indicator_report(
                 row.push(value);
             }
             rows.push(Json::Array(row));
-            for marker in output.markers.iter() {
+            // A marker without a price is one the script did not show on
+            // this bar (`visible = false`).
+            for marker in output
+                .markers
+                .iter()
+                .filter(|marker| marker.value.is_some())
+            {
                 markers.push(json!({
                     "time_utc": utc(output.time),
                     "id": marker.id,
@@ -919,19 +1169,69 @@ fn indicator_report(
             }
         },
     )?;
+    // Plots by title (hidden ones too); a missing or repeated title falls
+    // back to the plot ID.
+    let names = plot_names(plots);
     let mut columns = vec!["time_utc".to_owned(), "close".to_owned()];
-    columns.extend(plots.iter().map(|plot| plot.id.clone()));
+    columns.extend(names.iter().cloned());
+    let last_values: serde_json::Map<String, Json> = match rows.last() {
+        Some(Json::Array(row)) => names
+            .iter()
+            .cloned()
+            .zip(row.iter().skip(2).cloned())
+            .collect(),
+        _ => serde_json::Map::new(),
+    };
     Ok(json!({
         "columns": columns,
-        "plot_titles": plots
+        "last_values": last_values,
+        "plot_ids": names
             .iter()
-            .map(|plot| (plot.id.clone(), plot.label.clone()))
+            .zip(plots)
+            .map(|(name, plot)| (name.clone(), plot.id.clone()))
             .collect::<BTreeMap<_, _>>(),
         "rows": rows,
         "markers": markers,
         "alerts": alerts,
         "info_panel": info,
     }))
+}
+
+/// Each plot's name in reports: its title, or its ID when the title is
+/// missing or used by another plot too.
+fn plot_names(plots: &[indicator_engine::PlotDescriptor]) -> Vec<String> {
+    let title = |plot: &indicator_engine::PlotDescriptor| {
+        let label = plot.label.trim();
+        (!label.is_empty()).then(|| label.to_owned())
+    };
+    plots
+        .iter()
+        .map(|plot| match title(plot) {
+            Some(label)
+                if plots
+                    .iter()
+                    .filter(|other| title(other).as_deref() == Some(label.as_str()))
+                    .count()
+                    == 1 =>
+            {
+                label
+            }
+            _ => plot.id.clone(),
+        })
+        .collect()
+}
+
+/// Says when the exchange had less history than asked for (a coin listed
+/// recently, or the exchange's own limit).
+fn history_note(requested: usize, series: &Series) -> Option<String> {
+    let got = series.klines.len();
+    (got < requested).then(|| {
+        let since = series.klines.first().map_or_else(
+            || "none".to_owned(),
+            |kline| utc(kline.time.as_u64() as i64),
+        );
+        format!("asked for {requested} bars, the exchange has {got} (oldest {since})")
+    })
 }
 
 /// 1H bars back to the start of the previous quarter or the year, whichever
@@ -1147,6 +1447,14 @@ fn utc(time_ms: i64) -> String {
         .unwrap_or_default()
 }
 
+/// `out` with a `warnings` list when there are any.
+fn with_warnings(mut out: Json, warnings: Vec<String>) -> Json {
+    if !warnings.is_empty() {
+        out["warnings"] = json!(warnings);
+    }
+    out
+}
+
 fn number(value: &Value) -> Option<f64> {
     match value {
         Value::Float(value) if value.is_finite() => Some(*value),
@@ -1191,9 +1499,46 @@ mod tests {
     const FIXTURE: &str = "indicators/market/tests/binance-btcusdt-perp-1h-20250601-20260115.csv";
 
     /// BTC 1h candles from a CSV; every other coin or timeframe is unlisted.
-    struct FixtureCandles;
+    pub(super) struct FixtureCandles;
 
-    fn fixture_info() -> TickerInfo {
+    /// Longer candles from the 1h fixture; only complete ones, like the
+    /// exchanges' closed candles.
+    fn aggregate(hours: &[Kline], timeframe: Timeframe) -> Vec<Kline> {
+        let per_bar = (timeframe.to_milliseconds() / Timeframe::H1.to_milliseconds()) as usize;
+        let mut groups: Vec<(u64, Vec<&Kline>)> = Vec::new();
+        for kline in hours {
+            let open = kline.time.floor_to(timeframe).as_u64();
+            match groups.last_mut() {
+                Some((time, group)) if *time == open => group.push(kline),
+                _ => groups.push((open, vec![kline])),
+            }
+        }
+        groups
+            .into_iter()
+            .filter(|(_, group)| group.len() == per_bar)
+            .map(|(time, group)| {
+                Kline::new(
+                    time,
+                    group[0].open.to_f64(),
+                    group
+                        .iter()
+                        .map(|k| k.high.to_f64())
+                        .fold(f64::MIN, f64::max),
+                    group
+                        .iter()
+                        .map(|k| k.low.to_f64())
+                        .fold(f64::MAX, f64::min),
+                    group[group.len() - 1].close.to_f64(),
+                    exchange::Volume::TotalOnly(exchange::unit::Qty::from_f64(
+                        group.iter().map(|k| k.volume.total().to_f64()).sum(),
+                    )),
+                    fixture_info().min_ticksize,
+                )
+            })
+            .collect()
+    }
+
+    pub(super) fn fixture_info() -> TickerInfo {
         TickerInfo::new(
             Ticker::new("BTCUSDT", Exchange::BinanceLinear),
             0.1,
@@ -1203,6 +1548,25 @@ mod tests {
     }
 
     impl CandleSource for FixtureCandles {
+        /// BTC-USDT spot is the BTC fixture under the spot pair's name.
+        fn spot_candles(
+            &self,
+            pair: String,
+            timeframe: Timeframe,
+            bars: usize,
+        ) -> BoxFuture<'_, Result<Series, String>> {
+            Box::pin(async move {
+                if pair != "BTC-USDT" {
+                    return Err(format!("no OKX spot pair {pair}"));
+                }
+                let mut series = self
+                    .closed_candles(PerpExchange::Okx, "BTC".to_owned(), timeframe, bars)
+                    .await?;
+                series.instrument = pair;
+                Ok(series)
+            })
+        }
+
         fn resolve(
             &self,
             exchange: PerpExchange,
@@ -1233,51 +1597,68 @@ mod tests {
             bars: usize,
         ) -> BoxFuture<'_, Result<Series, String>> {
             Box::pin(async move {
-                if coin != "BTC" || timeframe != Timeframe::H1 {
+                if coin != "BTC" {
                     return Err(format!("no {} USDT perpetual for {coin}", exchange.name()));
                 }
-                let ticker_info = TickerInfo::new(
-                    Ticker::new("BTCUSDT", Exchange::BinanceLinear),
-                    0.1,
-                    0.001,
-                    None,
-                );
-                let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURE);
-                let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-                let mut klines = text
-                    .lines()
-                    .skip(1)
-                    .map(|line| {
-                        let field = line
-                            .split(',')
-                            .map(|value| value.parse::<f64>().unwrap())
-                            .collect::<Vec<_>>();
-                        Kline::new(
-                            field[0] as u64,
-                            field[1],
-                            field[2],
-                            field[3],
-                            field[4],
-                            exchange::Volume::TotalOnly(exchange::unit::Qty::from_f64(field[5])),
-                            ticker_info.min_ticksize,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let first = klines.len().saturating_sub(bars);
-                klines.drain(..first);
-                Ok(Series {
-                    instrument: "BTCUSDT".to_owned(),
-                    ticker_info,
-                    klines,
-                })
+                csv_series(FIXTURE, "BTCUSDT", fixture_info(), timeframe, bars)
             })
         }
+    }
+
+    /// The newest `bars` candles of a 1h candle CSV, aggregated to `timeframe`.
+    pub(super) fn csv_series(
+        file: &str,
+        instrument: &str,
+        ticker_info: TickerInfo,
+        timeframe: Timeframe,
+        bars: usize,
+    ) -> Result<Series, String> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
+        let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        let mut klines = text
+            .lines()
+            .skip(1)
+            .map(|line| {
+                let field = line
+                    .split(',')
+                    .map(|value| value.parse::<f64>().unwrap())
+                    .collect::<Vec<_>>();
+                Kline::new(
+                    field[0] as u64,
+                    field[1],
+                    field[2],
+                    field[3],
+                    field[4],
+                    exchange::Volume::TotalOnly(exchange::unit::Qty::from_f64(field[5])),
+                    ticker_info.min_ticksize,
+                )
+            })
+            .collect::<Vec<_>>();
+        if timeframe != Timeframe::H1 {
+            klines = aggregate(&klines, timeframe);
+        }
+        let first = klines.len().saturating_sub(bars);
+        klines.drain(..first);
+        Ok(Series {
+            instrument: instrument.to_owned(),
+            ticker_info,
+            klines,
+        })
     }
 
     /// Every request fails, like an exchange that is down.
     struct DownCandles;
 
     impl CandleSource for DownCandles {
+        fn spot_candles(
+            &self,
+            _: String,
+            _: Timeframe,
+            _: usize,
+        ) -> BoxFuture<'_, Result<Series, String>> {
+            Box::pin(async { Err("candles: connection refused".to_owned()) })
+        }
+
         fn resolve(
             &self,
             _: PerpExchange,
@@ -1297,29 +1678,30 @@ mod tests {
         }
     }
 
-    fn repo(path: &str) -> PathBuf {
+    pub(super) fn repo(path: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
     }
 
-    fn server_with(candles: Arc<dyn CandleSource>, paths: Paths) -> OrbitTapeMcp {
+    pub(super) fn server_with(candles: Arc<dyn CandleSource>, paths: Paths) -> OrbitTapeMcp {
         OrbitTapeMcp::new(paths, candles)
     }
 
-    fn paths() -> Paths {
+    pub(super) fn paths() -> Paths {
         Paths {
             indicator_folders: vec![repo("indicators")],
             symbols_file: repo("target/no-such-scan-symbols.txt"),
             alert_history: repo("target/no-such-alert-history.json"),
             alerts: repo("target/no-such-alerts.json"),
             engine_lock: repo("target/no-such-alert-engine"),
+            plan: repo("docs/plan.example.toml"),
         }
     }
 
-    fn server() -> OrbitTapeMcp {
+    pub(super) fn server() -> OrbitTapeMcp {
         server_with(Arc::new(FixtureCandles), paths())
     }
 
-    fn block_on<T>(future: impl Future<Output = T>) -> T {
+    pub(super) fn block_on<T>(future: impl Future<Output = T>) -> T {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1327,11 +1709,11 @@ mod tests {
             .block_on(future)
     }
 
-    fn parse(result: Result<String, String>) -> Json {
+    pub(super) fn parse(result: Result<String, String>) -> Json {
         serde_json::from_str(&result.expect("tool succeeds")).unwrap()
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
+    pub(super) fn temp_dir(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("orbit-tape-mcp-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1346,7 +1728,7 @@ mod tests {
             timeframe: None,
             exchange: Some("binance".into()),
             symbols: Some(vec!["BTCUSDT".into(), "DOGE".into(), "btc".into()]),
-            lookback: Some(24),
+            lookback: Some(50),
             inputs: Some(BTreeMap::from([("ctMode".into(), "true".into())])),
         }))));
         assert_eq!(out["indicator"], "Roman Trade Setup (H12 to H1)");
@@ -1358,7 +1740,12 @@ mod tests {
         assert_eq!(rows[0]["symbol"], "BTCUSDT");
         assert_eq!(rows[0]["last_closed_bar"], "2026-01-15 23:00");
         assert_eq!(rows[0]["close"], 95567.3);
-        assert!(rows[0]["signals"].is_array());
+        let signals = rows[0]["signals"].as_array().unwrap();
+        assert!(!signals.is_empty(), "50 bars of BTC have a Roman signal");
+        for signal in signals {
+            assert!(signal["condition"].is_string(), "{signal}");
+            assert!(signal["bar_utc"].as_str().unwrap().starts_with("2026-01-1"));
+        }
         assert_eq!(rows[1]["base"], "DOGE");
         assert!(
             rows[1]["error"]
@@ -1516,8 +1903,12 @@ mod tests {
         let columns = report["columns"].as_array().unwrap();
         assert_eq!(
             columns[..3],
-            [json!("time_utc"), json!("close"), json!("sma1")]
+            [json!("time_utc"), json!("close"), json!("SMA 1")]
         );
+        assert_eq!(report["plot_ids"]["SMA 1"], "sma1");
+        assert!(report["last_values"]["SMA 1"].is_f64());
+        assert_eq!(out["bars_requested"], 500);
+        assert_eq!(out["history_note"], Json::Null);
         let rows = report["rows"].as_array().unwrap();
         assert_eq!(rows.len(), 3);
         assert!(rows[2][2].is_f64(), "{:?}", rows[2]);
@@ -1533,6 +1924,40 @@ mod tests {
         }))));
         assert_eq!(roman["report"]["rows"].as_array().unwrap().len(), 200);
         assert!(roman["report"]["alerts"].is_array());
+        // Only markers the script showed, each with a price.
+        let markers = roman["report"]["markers"].as_array().unwrap();
+        assert!(markers.len() < 200, "{} markers", markers.len());
+        assert!(markers.iter().all(|marker| marker["price"].is_f64()));
+        // The setup values carry the TradingView titles, hidden or not.
+        let last_values = &roman["report"]["last_values"];
+        for title in [
+            "x_bias",
+            "x_tapUpAgo",
+            "x_mssDir",
+            "x_b1St",
+            "x_ctArm",
+            "x_bullFlip",
+        ] {
+            assert_eq!(roman["report"]["plot_ids"][title], title);
+            assert!(last_values.get(title).is_some(), "{title} missing");
+        }
+        assert!(last_values["x_bias"].is_number());
+
+        // More history than the exchange has: run on what there is, and say so.
+        let long = parse(block_on(server().run_indicator(Parameters(RunParams {
+            indicator: "market.sma".into(),
+            symbol: "BTC".into(),
+            timeframe: None,
+            exchange: None,
+            inputs: None,
+            last: Some(1),
+            bars: Some(MAX_BARS),
+        }))));
+        let note = long["history_note"].as_str().expect("a history note");
+        assert!(
+            note.starts_with(&format!("asked for {MAX_BARS} bars, the exchange has ")),
+            "{note}"
+        );
 
         let error = block_on(server().run_indicator(Parameters(RunParams {
             indicator: "market.sma".into(),
@@ -1556,6 +1981,19 @@ mod tests {
         assert_eq!(out["as_of_bar_utc"], "2026-01-15 23:00");
         assert_eq!(out["base"], "BTC");
         assert_eq!(out["selection"], "indicator defaults");
+        // The fixture is shorter than a year: said, and every missing level
+        // says why.
+        let note = out["history_note"].as_str().expect("a history note");
+        assert!(note.starts_with("asked for "), "{note}");
+        for missing in out["missing"].as_array().unwrap() {
+            assert!(
+                missing["reason"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("not enough history"),
+                "{missing}"
+            );
+        }
         let levels = out["levels"].as_array().unwrap();
         let ids = levels
             .iter()
@@ -2020,5 +2458,101 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("at most 50"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------ routine
+
+    #[test]
+    fn get_plan_returns_the_plan_and_names_a_missing_one() {
+        let out = parse(block_on(server().get_plan()));
+        assert!(out["path"].as_str().unwrap().ends_with("plan.example.toml"));
+        assert_eq!(out["plan"]["universe"]["exchange"], "okx");
+        assert!(out["plan"]["prop"]["leverage"]["BTC"].is_number());
+        assert!(out["plan"]["spot"]["monthly"]["dates"][0].is_string());
+
+        let missing = server_with(
+            Arc::new(FixtureCandles),
+            Paths {
+                plan: repo("target/no-such-plan.toml"),
+                ..paths()
+            },
+        );
+        let error = block_on(missing.get_plan()).unwrap_err();
+        assert!(error.contains("plan.example.toml"), "{error}");
+    }
+
+    #[test]
+    fn a_series_asked_for_twice_at_once_is_fetched_once() {
+        let cache = CandleCache::default();
+        let fetches = std::sync::atomic::AtomicUsize::new(0);
+        let forming = exchange::UnixMs::now().floor_to(Timeframe::H1).as_u64();
+        let fetch = || async {
+            fetches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // Still fetching when the second request comes.
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            FixtureCandles
+                .closed_candles(PerpExchange::Binance, "BTC".into(), Timeframe::H1, 100)
+                .await
+        };
+        let key = || (PerpExchange::Okx, "BTC".to_owned(), Timeframe::H1);
+        let (first, second) = block_on(async {
+            iced::futures::join!(
+                cache.get_or_fetch(key(), forming, 100, fetch()),
+                cache.get_or_fetch(key(), forming, 50, fetch()),
+            )
+        });
+        assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(first.unwrap().klines.len(), 100);
+        assert_eq!(second.unwrap().klines.len(), 50);
+        // More bars than were fetched: a new fetch.
+        block_on(cache.get_or_fetch(key(), forming, 200, fetch())).unwrap();
+        assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // A failed fetch is not cached.
+        let other = (PerpExchange::Okx, "ETH".to_owned(), Timeframe::H1);
+        let failed = block_on(
+            cache.get_or_fetch(other.clone(), forming, 10, async { Err("down".to_owned()) }),
+        );
+        assert!(failed.is_err());
+        block_on(cache.get_or_fetch(other, forming, 10, fetch())).unwrap();
+        assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn cached_candles_last_until_the_next_bar() {
+        let klines = |n: u64| {
+            (0..n)
+                .map(|i| {
+                    Kline::new(
+                        i * 3_600_000,
+                        1.0,
+                        1.0,
+                        1.0,
+                        1.0,
+                        exchange::Volume::TotalOnly(0.0.into()),
+                        fixture_info().min_ticksize,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let cached = Cached {
+            forming: 100,
+            requested: 50,
+            series: Series {
+                instrument: "BTCUSDT".to_owned(),
+                ticker_info: fixture_info(),
+                klines: klines(50),
+            },
+        };
+        let hit = from_cache(&cached, 100, 20).expect("same bar, fewer bars");
+        assert_eq!(hit.klines.len(), 20);
+        assert_eq!(hit.klines[0].time.as_u64(), 30 * 3_600_000);
+        assert!(from_cache(&cached, 100, 51).is_none(), "asked for more");
+        assert!(from_cache(&cached, 200, 20).is_none(), "a bar closed since");
+        // The exchange had fewer than asked for: still a hit.
+        let short = Cached {
+            requested: 2000,
+            ..cached
+        };
+        assert_eq!(from_cache(&short, 100, 1500).unwrap().klines.len(), 50);
     }
 }

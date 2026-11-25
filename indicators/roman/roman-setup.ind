@@ -22,7 +22,7 @@
 //     is not checked against the chart timeframe.
 
 language(1)
-indicator("Roman Trade Setup (H12 to H1)", id = "roman.roman-setup", max_bars_back = 64)
+indicator("Roman Trade Setup (H12 to H1)", id = "roman.roman-setup", max_bars_back = 64, version = "7.1")
 display(view = "primary_overlay")
 
 // Pivot tie rule, shared by the HTF and LTF pivots: a bar on the left (older)
@@ -751,6 +751,14 @@ mssCtDn = rawMssDn && ctArmDn && !alnDn
 mssUp = alnUp || mssCtUp
 mssDn = alnDn || mssCtDn
 
+// Last LTF MSS (bias aligned or counter-trend), for the setup values.
+var mssBar = na
+var mssDir = 0
+if mssUp || mssDn {
+    mssBar := bar_index
+    mssDir := select(mssUp, 1, -1)
+}
+
 var mssLblOn = false
 var mssLblIdx = na
 var mssLblY = na
@@ -933,25 +941,42 @@ plot(alnDn, id = "ltf_mss_down", title = "LTF MSS down", alert = true)
 plot(mssCtUp, id = "ltf_ct_mss_up", title = "LTF counter-trend MSS up", alert = true)
 plot(mssCtDn, id = "ltf_ct_mss_down", title = "LTF counter-trend MSS down", alert = true)
 
-// ============================= DEBUG EXPORT ==================================
-// Hidden values for comparing with TradingView via orbit-tape-indicator run.
-plot(bias, id = "dbg_bias", display = "none")
-plot(fib50, id = "dbg_fib50", display = "none")
-plot(brkLvl, id = "dbg_broken_level", display = "none")
-plot(upFlip, id = "dbg_up_flip", display = "none")
-plot(dnFlip, id = "dbg_dn_flip", display = "none")
-plot(select(brkAway, 1, 0), id = "dbg_broken_away", display = "none")
-plot(select(ctArmUp, 1, 0), id = "dbg_ct_arm_up", display = "none")
-plot(select(ctArmDn, 1, 0), id = "dbg_ct_arm_down", display = "none")
-plot(select(bOn1, bTop1, na), id = "dbg_b1_top", display = "none")
-plot(select(bOn1, bBot1, na), id = "dbg_b1_bot", display = "none")
-plot(select(bOn1, select(bBrk1, 1, 0), na), id = "dbg_b1_brk", display = "none")
-plot(select(bOn2, bTop2, na), id = "dbg_b2_top", display = "none")
-plot(select(bOn2, bBot2, na), id = "dbg_b2_bot", display = "none")
-plot(select(bOn2, select(bBrk2, 1, 0), na), id = "dbg_b2_brk", display = "none")
-plot(select(sOn1, sTop1, na), id = "dbg_s1_top", display = "none")
-plot(select(sOn1, sBot1, na), id = "dbg_s1_bot", display = "none")
-plot(select(sOn1, select(sBrk1, 1, 0), na), id = "dbg_s1_brk", display = "none")
-plot(select(sOn2, sTop2, na), id = "dbg_s2_top", display = "none")
-plot(select(sOn2, sBot2, na), id = "dbg_s2_bot", display = "none")
-plot(select(sOn2, select(sBrk2, 1, 0), na), id = "dbg_s2_brk", display = "none")
+// ============================= SETUP VALUES ==================================
+// Hidden values with the same titles as the TradingView script's x_* plots,
+// for tools that read the setup (orbit-tape mcp roman_setups, run_indicator)
+// and for comparing with TradingView. Ages are chart bars; na = never.
+plot(bias, id = "x_bias", title = "x_bias", display = "none")
+plot(fib50, id = "x_fib50", title = "x_fib50", display = "none")
+plot(select(na(lastEvB), na, bar_index - lastEvB), id = "x_htfMssAgo", title = "x_htfMssAgo", display = "none")
+plot(sfpDir, id = "x_sfpDir", title = "x_sfpDir", display = "none")
+plot(select(na(sfpBar), na, bar_index - sfpBar), id = "x_sfpAgo", title = "x_sfpAgo", display = "none")
+plot(mssDir, id = "x_mssDir", title = "x_mssDir", display = "none")
+plot(select(na(mssBar), na, bar_index - mssBar), id = "x_mssAgo", title = "x_mssAgo", display = "none")
+plot(select(na(tapUpBar), na, bar_index - tapUpBar), id = "x_tapUpAgo", title = "x_tapUpAgo", display = "none")
+plot(select(na(tapDnBar), na, bar_index - tapDnBar), id = "x_tapDnAgo", title = "x_tapDnAgo", display = "none")
+plot(select(armUp, 1, 0), id = "x_armUp", title = "x_armUp", display = "none")
+plot(select(armDn, 1, 0), id = "x_armDn", title = "x_armDn", display = "none")
+// Zone slots: na = empty. State 0 order block, 1 breaker, +2 hidden (too far).
+plot(select(bOn1, bTop1, na), id = "x_b1Top", title = "x_b1Top", display = "none")
+plot(select(bOn1, bBot1, na), id = "x_b1Bot", title = "x_b1Bot", display = "none")
+plot(select(bOn1, select(bBrk1, 1, 0) + select(bFar1, 2, 0), na), id = "x_b1St", title = "x_b1St", display = "none")
+plot(select(bOn2, bTop2, na), id = "x_b2Top", title = "x_b2Top", display = "none")
+plot(select(bOn2, bBot2, na), id = "x_b2Bot", title = "x_b2Bot", display = "none")
+plot(select(bOn2, select(bBrk2, 1, 0) + select(bFar2, 2, 0), na), id = "x_b2St", title = "x_b2St", display = "none")
+plot(select(sOn1, sTop1, na), id = "x_s1Top", title = "x_s1Top", display = "none")
+plot(select(sOn1, sBot1, na), id = "x_s1Bot", title = "x_s1Bot", display = "none")
+plot(select(sOn1, select(sBrk1, 1, 0) + select(sFar1, 2, 0), na), id = "x_s1St", title = "x_s1St", display = "none")
+plot(select(sOn2, sTop2, na), id = "x_s2Top", title = "x_s2Top", display = "none")
+plot(select(sOn2, sBot2, na), id = "x_s2Bot", title = "x_s2Bot", display = "none")
+plot(select(sOn2, select(sBrk2, 1, 0) + select(sFar2, 2, 0), na), id = "x_s2St", title = "x_s2St", display = "none")
+// Broken HTF level (retest line) and counter-trend.
+plot(brkLvl, id = "x_brkLvl", title = "x_brkLvl", display = "none")
+plot(select(brkAway, 1, 0), id = "x_brkAway", title = "x_brkAway", display = "none")
+plot(ctDir, id = "x_ctDir", title = "x_ctDir", display = "none")
+plot(select(na(ctBar), na, bar_index - ctBar), id = "x_ctAgo", title = "x_ctAgo", display = "none")
+plot(ctWick, id = "x_ctWick", title = "x_ctWick", display = "none")
+plot(select(ctArmUp, 1, select(ctArmDn, -1, 0)), id = "x_ctArm", title = "x_ctArm", display = "none")
+// Bias flip levels: a 12H CLOSE above x_bullFlip is the next bullish MSS, below
+// x_bearFlip the next bearish one.
+plot(upFlip, id = "x_bullFlip", title = "x_bullFlip", display = "none")
+plot(dnFlip, id = "x_bearFlip", title = "x_bearFlip", display = "none")

@@ -7,7 +7,7 @@
 // chart, and a fill between two plots.
 
 language(1)
-indicator("VWAP Bands", id = "example.vwap-bands", max_bars_back = 1,
+indicator("VWAP Bands", id = "example.vwap-bands", version = "1.0", max_bars_back = 1,
     description = "Rolling VWAP with standard deviation bands.")
 display(view = "plot", attachment = "overlay", layer_name = "VWAP")
 format(precision = "base_ticker_min_tick")

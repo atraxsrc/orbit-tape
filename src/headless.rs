@@ -38,7 +38,7 @@ impl PerpExchange {
         }
     }
 
-    fn venue(self) -> Venue {
+    pub fn venue(self) -> Venue {
         match self {
             Self::Binance => Venue::Binance,
             Self::Okx => Venue::Okex,
@@ -85,9 +85,9 @@ pub fn coin(symbol: &str) -> String {
         .to_owned()
 }
 
-/// Chart timeframes the exchanges serve as candles.
+/// Timeframes the exchanges serve as candles: the chart ones plus 1w.
 pub fn timeframes() -> impl Iterator<Item = Timeframe> {
-    Timeframe::KLINE.into_iter()
+    Timeframe::KLINE.into_iter().chain([Timeframe::W1])
 }
 
 pub fn parse_timeframe(text: &str) -> Result<Timeframe, String> {
@@ -103,6 +103,7 @@ pub fn parse_timeframe(text: &str) -> Result<Timeframe, String> {
 }
 
 /// One instrument's closed candles, oldest first.
+#[derive(Clone)]
 pub struct Series {
     /// The exchange's name for it, e.g. `BTCUSDT` or `BTC-USDT-SWAP`.
     pub instrument: String,
@@ -118,14 +119,28 @@ pub struct Market {
     metadata: HashMap<Ticker, Option<TickerInfo>>,
 }
 
+/// An exchange adapter for one venue: its own HTTP client and rate limiter.
+/// Share one between [`Market`] and [`SpotMarket`] on the same exchange so
+/// they keep to one request budget.
+pub fn adapter(venue: Venue) -> Result<AdapterHandles, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|error| format!("could not build the HTTP client: {error}"))?;
+    Ok(AdapterHandles::spawn_venues(&client, [venue], None))
+}
+
 impl Market {
     pub async fn connect(exchange: PerpExchange) -> Result<Self, String> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|error| format!("could not build the HTTP client: {error}"))?;
-        let handles = AdapterHandles::spawn_venues(&client, [exchange.venue()], None);
+        Self::connect_with(exchange, adapter(exchange.venue())?).await
+    }
+
+    /// Connects through `handles`, an adapter for the exchange's venue.
+    pub async fn connect_with(
+        exchange: PerpExchange,
+        handles: AdapterHandles,
+    ) -> Result<Self, String> {
         let metadata = handles
             .fetch_ticker_metadata(exchange.venue(), &[MarketKind::LinearPerps])
             .await
@@ -163,11 +178,53 @@ impl Market {
             .ok_or_else(|| format!("no {} USDT perpetual for {coin}", self.exchange.name()))?;
         let interval = timeframe.to_milliseconds();
         // Open time of the bar that is still forming; everything before it is closed.
-        let forming = UnixMs::now().as_u64() / interval * interval;
+        let forming = UnixMs::now().floor_to(timeframe).as_u64();
         let from = forming.saturating_sub(interval * bars as u64);
         let klines = fetch_klines(&self.handles, ticker_info, timeframe, from, forming).await?;
         Ok(Series {
             instrument,
+            ticker_info,
+            klines,
+        })
+    }
+}
+
+/// OKX spot pairs (e.g. `BTC-USDT`): the symbol list (loaded once) and the
+/// adapter that fetches candles.
+pub struct SpotMarket {
+    handles: AdapterHandles,
+    metadata: HashMap<Ticker, Option<TickerInfo>>,
+}
+
+impl SpotMarket {
+    /// Connects through `handles`, an OKX adapter (e.g. the perps' one).
+    pub async fn connect_okx_with(handles: AdapterHandles) -> Result<Self, String> {
+        let metadata = handles
+            .fetch_ticker_metadata(Venue::Okex, &[MarketKind::Spot])
+            .await
+            .map_err(|error| format!("could not load OKX spot symbols: {error}"))?;
+        Ok(Self { handles, metadata })
+    }
+
+    /// The last `bars` closed candles of a pair such as `BTC-USDT`.
+    pub async fn closed_candles(
+        &self,
+        pair: &str,
+        timeframe: Timeframe,
+        bars: usize,
+    ) -> Result<Series, String> {
+        let pair = pair.trim().to_uppercase();
+        let ticker_info = self
+            .metadata
+            .get(&Ticker::new(&pair, Exchange::OkexSpot))
+            .copied()
+            .flatten()
+            .ok_or_else(|| format!("no OKX spot pair {pair}"))?;
+        let forming = UnixMs::now().floor_to(timeframe).as_u64();
+        let from = forming.saturating_sub(timeframe.to_milliseconds() * bars as u64);
+        let klines = fetch_klines(&self.handles, ticker_info, timeframe, from, forming).await?;
+        Ok(Series {
+            instrument: pair,
             ticker_info,
             klines,
         })
@@ -189,6 +246,39 @@ async fn fetch_klines(
     Ok(klines)
 }
 
+/// Pauses before each retry of a request the exchange refused with HTTP 429.
+const RATE_LIMIT_RETRIES: [std::time::Duration; 4] = [
+    std::time::Duration::from_secs(1),
+    std::time::Duration::from_secs(2),
+    std::time::Duration::from_secs(4),
+    std::time::Duration::from_secs(8),
+];
+
+/// Runs `request`, and again after each pause in `pauses` while the
+/// exchange answers "too many requests". Other errors return at once.
+async fn retry_rate_limited<T, F, Fut>(
+    pauses: &[std::time::Duration],
+    mut request: F,
+) -> Result<T, exchange::adapter::AdapterError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, exchange::adapter::AdapterError>>,
+{
+    let mut pauses = pauses.iter();
+    loop {
+        match request().await {
+            Err(error) if error.is_rate_limited() => match pauses.next() {
+                Some(pause) => {
+                    log::warn!("rate limited, trying again in {pause:?}: {error}");
+                    tokio::time::sleep(*pause).await;
+                }
+                None => return Err(error),
+            },
+            result => return result,
+        }
+    }
+}
+
 /// Candles with open times in `[from, to)`, oldest first; maybe none.
 pub async fn fetch_kline_range(
     handles: &AdapterHandles,
@@ -200,10 +290,11 @@ pub async fn fetch_kline_range(
     let mut klines: Vec<Kline> = Vec::new();
     let mut next = from;
     while next < to {
-        let page = handles
-            .fetch_klines_page(ticker_info, timeframe, UnixMs::new(next), UnixMs::new(to))
-            .await
-            .map_err(|error| format!("candles: {error}"))?;
+        let page = retry_rate_limited(&RATE_LIMIT_RETRIES, || {
+            handles.fetch_klines_page(ticker_info, timeframe, UnixMs::new(next), UnixMs::new(to))
+        })
+        .await
+        .map_err(|error| format!("candles: {error}"))?;
         if page.next_from.as_u64() <= next {
             break;
         }
@@ -459,6 +550,54 @@ pub fn format_price(price: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use exchange::adapter::AdapterError;
+    use std::time::Duration;
+
+    fn too_many() -> AdapterError {
+        AdapterError::http_status_failed(reqwest::StatusCode::TOO_MANY_REQUESTS, "429".into())
+    }
+
+    fn run<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn rate_limited_requests_are_tried_again() {
+        let pauses = [Duration::ZERO; 4];
+        // Two refusals, then an answer: three tries.
+        let mut tries = 0;
+        let result = run(retry_rate_limited(&pauses, || {
+            tries += 1;
+            let refused = tries <= 2;
+            async move { if refused { Err(too_many()) } else { Ok(tries) } }
+        }));
+        assert_eq!(result.unwrap(), 3);
+        // Refused every time: the first try and one per pause, then the error.
+        let mut tries = 0;
+        let result: Result<(), _> = run(retry_rate_limited(&pauses, || {
+            tries += 1;
+            async { Err(too_many()) }
+        }));
+        assert!(result.unwrap_err().is_rate_limited());
+        assert_eq!(tries, 5);
+        // Other errors are not retried.
+        let mut tries = 0;
+        let result: Result<(), _> = run(retry_rate_limited(&pauses, || {
+            tries += 1;
+            async {
+                Err(AdapterError::http_status_failed(
+                    reqwest::StatusCode::BAD_REQUEST,
+                    "400".into(),
+                ))
+            }
+        }));
+        assert!(!result.unwrap_err().is_rate_limited());
+        assert_eq!(tries, 1);
+    }
 
     #[test]
     fn reads_coins_and_timeframes() {
@@ -482,9 +621,10 @@ mod tests {
         assert_eq!(PerpExchange::parse("bybit"), None);
         assert_eq!(parse_timeframe("4H").unwrap(), Timeframe::H4);
         assert_eq!(parse_timeframe("1d").unwrap(), Timeframe::D1);
+        assert_eq!(parse_timeframe("1W").unwrap(), Timeframe::W1);
         assert_eq!(
             parse_timeframe("7h").unwrap_err(),
-            "unknown timeframe '7h' (use one of 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1d)"
+            "unknown timeframe '7h' (use one of 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1d, 1w)"
         );
     }
 

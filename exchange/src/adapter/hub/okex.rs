@@ -44,6 +44,7 @@ fn timeframe_to_okx_bar(tf: Timeframe) -> Option<&'static str> {
         Timeframe::H4 => "4H",
         Timeframe::H12 => "12Hutc",
         Timeframe::D1 => "1Dutc",
+        Timeframe::W1 => "1Wutc",
         _ => return None,
     })
 }

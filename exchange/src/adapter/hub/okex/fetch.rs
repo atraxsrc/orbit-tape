@@ -14,6 +14,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 const MAX_KLINE_BARS: u64 = 300;
+/// OKX's error code for too many requests.
+const OKX_RATE_LIMITED: &str = "50011";
 
 pub(super) async fn fetch_ticker_metadata(
     hub: &mut HttpHub<OkexLimiter>,
@@ -298,6 +300,13 @@ pub(super) async fn fetch_klines(
 
     let doc: Value = hub.http_json_with_limiter(&url, 1, None, None).await?;
 
+    // OKX can also say "too many requests" in the body.
+    if doc["code"].as_str() == Some(OKX_RATE_LIMITED) {
+        return Err(AdapterError::http_status_failed(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            format!("OKX kline request rate limited: {}", doc["msg"]),
+        ));
+    }
     if doc["code"].as_str() != Some("0") {
         return Err(AdapterError::ParseError(format!(
             "OKX kline request failed: {} ({})",

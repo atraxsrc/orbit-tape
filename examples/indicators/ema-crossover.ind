@@ -7,7 +7,7 @@
 // their own colors, and boolean plots marked as alerts.
 
 language(1)
-indicator("EMA Crossover", id = "example.ema-crossover", max_bars_back = 1,
+indicator("EMA Crossover", id = "example.ema-crossover", version = "1.0", max_bars_back = 1,
     description = "Fast and slow EMA with crossover alerts.")
 // Draw over the price chart instead of in a separate panel. A source input
 // can also take another indicator's output, which needs this plot view.

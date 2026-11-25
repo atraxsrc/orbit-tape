@@ -39,6 +39,8 @@ assets = [
     ["packaging/linux/orbit-tape-scan.service", "usr/lib/systemd/user/", "644"],
     ["packaging/linux/orbit-tape-scan.timer", "usr/lib/systemd/user/", "644"],
     ["packaging/linux/orbit-tape-watch.service", "usr/lib/systemd/user/", "644"],
+    ["packaging/linux/orbit-tape-report.service", "usr/lib/systemd/user/", "644"],
+    ["packaging/linux/orbit-tape-report.timer", "usr/lib/systemd/user/", "644"],
     ["assets/app-icon/hicolor/16x16/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/16x16/apps/", "644"],
     ["assets/app-icon/hicolor/24x24/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/24x24/apps/", "644"],
     ["assets/app-icon/hicolor/32x32/apps/io.github.atraxsrc.OrbitTape.png", "usr/share/icons/hicolor/32x32/apps/", "644"],
@@ -52,9 +54,11 @@ assets = [
     ["indicator-engine/LICENSE", "usr/share/doc/orbit-tape/LICENSE-Apache-2.0-indicator-engine", "644"],
     ["exchange/LICENSE", "usr/share/doc/orbit-tape/LICENSE-MIT-exchange", "644"],
     ["indicators/roman/*.ind", "usr/share/doc/orbit-tape/indicators/roman/", "644"],
+    ["indicators/market/*.ind", "usr/share/doc/orbit-tape/indicators/market/", "644"],
     ["examples/indicators/*.ind", "usr/share/doc/orbit-tape/examples/indicators/", "644"],
     ["docs/custom-indicators.md", "usr/share/doc/orbit-tape/custom-indicators.md", "644"],
     ["docs/mcp.md", "usr/share/doc/orbit-tape/mcp.md", "644"],
+    ["docs/plan.example.toml", "usr/share/doc/orbit-tape/plan.example.toml", "644"],
     ["README.md", "usr/share/doc/orbit-tape/README.md", "644"],
 ]
 

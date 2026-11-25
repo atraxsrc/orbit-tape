@@ -29,6 +29,7 @@ impl LoweringContext {
         let mut optional_trades = false;
         let mut bases = None;
         let mut max_bars_back = 5_000;
+        let mut version = None;
         if let Some(call) = call {
             self.validate_named_arguments(
                 call,
@@ -43,6 +44,7 @@ impl LoweringContext {
                     "optional_trades",
                     "bases",
                     "max_bars_back",
+                    "version",
                 ],
             );
             if let Some(value) = self.static_argument(call, 0, "indicator title") {
@@ -128,6 +130,18 @@ impl LoweringContext {
                     );
                 }
             }
+            if let Some(value) = self.static_named_value(call, "version") {
+                match value {
+                    Value::String(text) => match IndicatorVersion::parse(&text) {
+                        Some(parsed) => version = Some(parsed),
+                        None => self.error(
+                            call.span,
+                            "indicator version must be numbers with dots, like \"1.2\"",
+                        ),
+                    },
+                    _ => self.error(call.span, "indicator version must be a string literal"),
+                }
+            }
             bases = self.indicator_bases(call);
             if let Some(value) = self.static_named_value(call, "max_bars_back") {
                 if let Value::Int(value) = value
@@ -169,6 +183,7 @@ impl LoweringContext {
             optional_trades,
             bases,
             max_bars_back,
+            version,
             inputs: Vec::new(),
             series_inputs: Vec::new(),
             plots: Vec::new(),

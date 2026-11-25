@@ -26,9 +26,9 @@ pub use core::runtime::IndicatorHost;
 
 pub use loader::{
     IndicatorCatalogPaths, IndicatorReloadReport, indicator_source_errors,
-    initialize_indicator_catalog, initialize_indicator_catalog_with_paths,
-    reload_indicator_catalog, remove_indicator_source, watched_indicator_paths,
-    write_indicator_source,
+    indicator_update_notices, initialize_indicator_catalog,
+    initialize_indicator_catalog_with_paths, reload_indicator_catalog, remove_indicator_source,
+    watched_indicator_paths, write_indicator_source,
 };
 pub(crate) use registry::install_catalog_with_bundled_diagnostics;
 pub use registry::{

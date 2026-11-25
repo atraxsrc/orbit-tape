@@ -28,18 +28,28 @@ pub enum AdapterErrorKind {
 pub struct FetchError {
     detail: String,
     message: &'static str,
+    /// The exchange answered HTTP 429 (too many requests).
+    rate_limited: bool,
 }
 
 impl FetchError {
     /// Create a `FetchError` with an arbitrary detail and user-facing message.
     pub fn new(detail: String, message: &'static str) -> Self {
-        Self { detail, message }
+        Self {
+            detail,
+            message,
+            rate_limited: false,
+        }
     }
 
     fn from_reqwest_detail(error: &reqwest::Error, detail: String) -> Self {
         let message = ReqwestErrorKind::from_error(error).ui_message();
 
-        Self { detail, message }
+        Self {
+            detail,
+            message,
+            rate_limited: false,
+        }
     }
 
     fn from_status_detail(status: reqwest::StatusCode, detail: String) -> Self {
@@ -53,7 +63,11 @@ impl FetchError {
             "Request failed. Check logs for details."
         };
 
-        Self { detail, message }
+        Self {
+            detail,
+            message,
+            rate_limited: status == reqwest::StatusCode::TOO_MANY_REQUESTS,
+        }
     }
 
     pub fn ui_message(&self) -> &'static str {
@@ -121,6 +135,12 @@ impl AdapterError {
 
     pub fn http_status_failed(status: reqwest::StatusCode, detail: String) -> Self {
         Self::FetchError(FetchError::from_status_detail(status, detail))
+    }
+
+    /// The exchange refused the request for too many requests (HTTP 429);
+    /// trying again after a pause may work.
+    pub fn is_rate_limited(&self) -> bool {
+        matches!(self, Self::FetchError(error) if error.rate_limited)
     }
 
     pub fn ui_message(&self) -> String {
