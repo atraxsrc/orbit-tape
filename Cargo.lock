@@ -3331,7 +3331,7 @@ dependencies = [
 
 [[package]]
 name = "orbit-tape"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "arrow-array",
  "arrow-ipc",
@@ -3372,7 +3372,7 @@ dependencies = [
 
 [[package]]
 name = "orbit-tape-data"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "chrono",
  "dirs-next",
@@ -3397,7 +3397,7 @@ dependencies = [
 
 [[package]]
 name = "orbit-tape-exchange"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3427,7 +3427,7 @@ dependencies = [
 
 [[package]]
 name = "orbit-tape-indicator-engine"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "chrono",
  "ring",

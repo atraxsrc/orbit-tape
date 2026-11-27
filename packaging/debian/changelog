@@ -1,3 +1,11 @@
+orbit-tape (0.13.1-1) unstable; urgency=medium
+
+  * orbit-tape --version (-V) prints the version and --help (-h) lists the
+    commands and options. An unknown option or command is refused with a
+    hint instead of opening the app.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Fri, 27 Nov 2026 09:00:00 +0100
+
 orbit-tape (0.13.0-1) unstable; urgency=medium
 
   * Saved alerts on OKX USDT spot pairs: create_alert takes market (perp,
