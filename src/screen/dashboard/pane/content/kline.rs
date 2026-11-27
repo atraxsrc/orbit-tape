@@ -320,11 +320,9 @@ impl KlineChart {
                         .add_price_alert(anchor, &chart_settings.drawing),
                     context_menu::Message::ArmAlert(id) => self.drawings.set_alert(id, true),
                     // Removing an alert from the menu removes its line too; the
-                    // line toolbar's Alert checkbox keeps the line.
-                    context_menu::Message::RemoveAlert(id) => self.drawings.update(
-                        drawing::Event::Tools(DrawingMessage::DeleteDrawing(id)),
-                        &mut chart_settings.drawing,
-                    ),
+                    // line toolbar's Alert checkbox keeps the line. Deleting
+                    // drawings never removes an alert line.
+                    context_menu::Message::RemoveAlert(id) => self.drawings.remove_alert_line(id),
                     context_menu::Message::RemoveAllAlerts => self.drawings.remove_alert_lines(),
                     context_menu::Message::RemoveAllDrawings => self.drawings.update(
                         drawing::Event::Tools(DrawingMessage::DeleteAllDrawings),
@@ -960,7 +958,11 @@ impl KlineChart {
                 .iter()
                 .filter(|drawing| drawing.alert.is_some() && !drawing.locked)
                 .count(),
-            drawings: drawings.len(),
+            // "Remove all drawings" keeps the alert lines, so they don't count.
+            drawings: drawings
+                .iter()
+                .filter(|drawing| drawing.alert.is_none())
+                .count(),
             indicators: self.indicators.selected_indicators().len(),
             studies: self.studies.active().count(),
         };
