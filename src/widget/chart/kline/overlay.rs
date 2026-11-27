@@ -70,6 +70,17 @@ impl CountdownVariant {
     }
 }
 
+/// An indicator line's last value, drawn as a badge on its panel's price
+/// axis. `y` is the line's own height; badges are spread apart before
+/// drawing.
+#[derive(Debug, Clone)]
+pub(super) struct IndicatorPriceLabel {
+    panel_index: usize,
+    y: f32,
+    text: String,
+    color: iced::Color,
+}
+
 pub(super) struct OverlayView<'a> {
     pub(super) coordinates: ChartCoordinates<'a>,
     pub(super) indicators: IndicatorView<'a>,
@@ -198,6 +209,7 @@ impl OverlayView<'_> {
         scene: &Scene,
         bounds: Rectangle,
         palette: &Extended,
+        generated_accents: &[iced::Color; ACCENT_COUNT],
         drawing_magnet: bool,
         pixels: PixelGeometry,
     ) -> AxisBadgeInputs {
@@ -215,6 +227,7 @@ impl OverlayView<'_> {
                 }
             }
         }
+        let price_labels = self.indicator_price_labels(scene, palette, generated_accents);
         let variants = timers
             .into_iter()
             .map(|timer| {
@@ -225,6 +238,7 @@ impl OverlayView<'_> {
                     drawing_magnet,
                     pixels,
                     timer.as_deref(),
+                    &price_labels,
                 )
             })
             .collect();
@@ -239,10 +253,15 @@ impl OverlayView<'_> {
         drawing_magnet: bool,
         pixels: PixelGeometry,
         timer_text: Option<&str>,
+        price_labels: &[IndicatorPriceLabel],
     ) -> CountdownVariant {
         let mut before_timer = PreparedChrome::new(bounds);
         let frame = &mut before_timer;
         let mut badge_filter = AxisBadgeFilter::default();
+
+        // Drawn first and outside the filter, so the crosshair and last
+        // price badges paint over them instead of hiding them.
+        self.fill_indicator_price_labels(frame, scene, price_labels);
 
         if scene.interaction.readouts_visible()
             && let Some(cursor) = scene.interaction.cursor
@@ -315,6 +334,176 @@ impl OverlayView<'_> {
             before_timer,
             timer,
             after_timer,
+        }
+    }
+
+    /// Last-value labels for every visible indicator line whose indicator
+    /// has "Labels on price scale" on: overlay lines on the price chart and
+    /// line plots in indicator panels.
+    fn indicator_price_labels(
+        &self,
+        scene: &Scene,
+        palette: &Extended,
+        generated_accents: &[iced::Color; ACCENT_COUNT],
+    ) -> Vec<IndicatorPriceLabel> {
+        let Some(series) = self.coordinates.series.first() else {
+            return Vec::new();
+        };
+        let plot_y = scene.layout.regions.plot.y;
+        let mut labels = Vec::new();
+        let mut push_label = |value_id,
+                              output: &data::chart::kline::IndicatorOutputRef,
+                              panel_index: usize,
+                              map_y: &dyn Fn(f64) -> Option<f32>,
+                              format: &dyn Fn(f64) -> String| {
+            if self.indicators.indicator_is_unavailable(Some(value_id))
+                || !self.indicators.indicator_price_labels(value_id)
+            {
+                return;
+            }
+            let Some(channel) = self.indicators.overlay_channels_for_layer(Some(output)) else {
+                return;
+            };
+            let Some((source_index, value)) = self.indicators.indicator_value_at_view_end(
+                scene,
+                series,
+                value_id,
+                channel.source,
+            ) else {
+                return;
+            };
+            let Some(y) = map_y(value) else {
+                return;
+            };
+            let color = self.indicators.overlay_channel_color_for_output_at(
+                series,
+                source_index,
+                Some(value_id),
+                Some(output),
+                &channel,
+                palette,
+                generated_accents,
+            );
+            labels.push(IndicatorPriceLabel {
+                panel_index,
+                y: plot_y + y,
+                text: format(value),
+                color: iced::Color { a: 1.0, ..color },
+            });
+        };
+
+        if let Some(panel_id) = self.coordinates.composition.primary_panel_id()
+            && let Some(panel) = self.coordinates.composition.panel(panel_id)
+        {
+            let anchor = scene
+                .primary
+                .series_percent_anchors
+                .first()
+                .copied()
+                .flatten();
+            for layer in panel.layers.iter().filter(|layer| layer.visible) {
+                let Some(resolved) = self
+                    .indicators
+                    .resolved_indicator_layer_for_composition_layer(layer)
+                else {
+                    continue;
+                };
+                if !resolved.purpose.is_plot() || !resolved.mark.is_series_line_like() {
+                    continue;
+                }
+                push_label(
+                    resolved.base_output.instance_id,
+                    &resolved.presentation_output,
+                    scene.primary.panel_index,
+                    &|value| Some(scene.map_primary_plot_with_anchor_f32(value as f32, anchor)),
+                    &|value| scene.format_primary_cursor_label(value as f32),
+                );
+            }
+        }
+
+        for indicator_panel in &scene.indicator_panels {
+            let panel_index = indicator_panel.panel_index;
+            for layer in self.indicators.panel_output_layers(panel_index) {
+                if !layer.visible || !layer.purpose.is_plot() || !layer.mark.is_series_line_like() {
+                    continue;
+                }
+                let output = &layer.presentation_output;
+                let independent_scale = self
+                    .indicators
+                    .indicator_output_spec(output)
+                    .is_some_and(|spec| spec.independent_scale);
+                push_label(
+                    output.instance_id,
+                    output,
+                    panel_index,
+                    &|value| scene.map_indicator_plot_scaled(panel_index, value, independent_scale),
+                    &|value| {
+                        self.coordinates
+                            .format_panel_axis_value(panel_index, value, 0.01)
+                    },
+                );
+            }
+        }
+        labels
+    }
+
+    fn fill_indicator_price_labels(
+        &self,
+        frame: &mut PreparedChrome,
+        scene: &Scene,
+        labels: &[IndicatorPriceLabel],
+    ) {
+        let label_height = TEXT_SIZE + 6.0;
+        let mut panels: Vec<usize> = labels.iter().map(|label| label.panel_index).collect();
+        panels.sort_unstable();
+        panels.dedup();
+        for panel_index in panels {
+            let Some(bounds) = self.drawing.panel_plot_bounds_in_overlay(panel_index) else {
+                continue;
+            };
+            // A line above or below the visible range gets no label, rather
+            // than one pinned to the edge at a price the axis doesn't show.
+            let in_panel: Vec<&IndicatorPriceLabel> = labels
+                .iter()
+                .filter(|label| {
+                    label.panel_index == panel_index
+                        && (bounds.y..=bounds.y + bounds.height).contains(&label.y)
+                })
+                .collect();
+            let desired: Vec<f32> = in_panel.iter().map(|label| label.y).collect();
+            let placements = place_non_overlapping_labels(
+                &desired,
+                bounds.y,
+                bounds.y + bounds.height,
+                label_height,
+                1.0,
+            );
+            for (label, center) in in_panel.into_iter().zip(placements) {
+                let Some(center) = center else {
+                    continue;
+                };
+                let rect = scene.layout.y_axis_badge_bounds(
+                    center - label_height * 0.5,
+                    label_height,
+                    label.text.chars().count() as f32 * CHAR_W,
+                );
+                let text_color = if data::config::theme::is_dark(label.color) {
+                    iced::Color::WHITE
+                } else {
+                    iced::Color::BLACK
+                };
+                frame.fill_rectangle(rect.position(), rect.size(), label.color);
+                frame.fill_text(canvas::Text {
+                    content: label.text.clone(),
+                    position: Point::new(rect.x + Y_AXIS_LABEL_LEFT_INSET, center),
+                    color: text_color,
+                    size: TEXT_SIZE.into(),
+                    align_x: iced::Alignment::Start.into(),
+                    align_y: iced::Alignment::Center.into(),
+                    font: style::AZERET_MONO,
+                    ..Default::default()
+                });
+            }
         }
     }
 

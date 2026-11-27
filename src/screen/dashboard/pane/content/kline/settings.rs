@@ -392,6 +392,7 @@ pub enum IndicatorIdSettingsMessage {
         shade: ThemeColorShade,
     },
     FillVisible(bool),
+    PriceLabels(bool),
     LineWidth {
         slot: String,
         width: u8,
@@ -575,6 +576,7 @@ fn kline_indicator_cfg_view<'a>(
 
     let mark_section =
         indicator_mark_section(instance_id, indicator.clone(), mark, &unavailable_marks);
+    let price_labels = style_config.price_labels;
     let channel_style_section = indicator_channel_style_section(
         instance_id,
         indicator.clone(),
@@ -608,6 +610,18 @@ fn kline_indicator_cfg_view<'a>(
         style_sections.push(mark_section.into_element());
     }
     style_sections.extend(channel_style_section);
+    if definition.has_numeric_plot_layers() {
+        let toggle = checkbox(price_labels)
+            .label("Labels on price scale")
+            .spacing(8)
+            .text_size(crate::style::text_size::SECTION)
+            .on_toggle(move |visible| Message::Indicator {
+                instance_id,
+                message: IndicatorIdSettingsMessage::PriceLabels(visible),
+            })
+            .width(Length::Fill);
+        style_sections.push(inspector::modal_container(toggle));
+    }
     let style_content = if style_sections.is_empty() {
         None
     } else {
@@ -2259,6 +2273,12 @@ impl InspectorState {
                     )),
                     IndicatorIdSettingsMessage::FillVisible(visible) => Some(
                         ChartCommand::indicator_style(IndicatorStyleCommand::FillVisibility {
+                            id: instance_id,
+                            visible,
+                        }),
+                    ),
+                    IndicatorIdSettingsMessage::PriceLabels(visible) => Some(
+                        ChartCommand::indicator_style(IndicatorStyleCommand::PriceLabels {
                             id: instance_id,
                             visible,
                         }),

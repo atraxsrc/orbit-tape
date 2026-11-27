@@ -161,6 +161,10 @@ pub enum IndicatorStyleCommand {
         id: IndicatorInstanceId,
         visible: bool,
     },
+    PriceLabels {
+        id: IndicatorInstanceId,
+        visible: bool,
+    },
     LineWidth {
         id: IndicatorInstanceId,
         slot: String,
@@ -498,6 +502,13 @@ impl IndicatorState {
                 visible,
             }) => {
                 if self.instances.update_fill_visibility(id, visible) {
+                    IndicatorChange::Visual
+                } else {
+                    IndicatorChange::Unchanged
+                }
+            }
+            IndicatorCommand::StyleChanged(IndicatorStyleCommand::PriceLabels { id, visible }) => {
+                if self.instances.update_price_labels(id, visible) {
                     IndicatorChange::Visual
                 } else {
                     IndicatorChange::Unchanged
