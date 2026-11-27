@@ -25,7 +25,7 @@
 // With "Merge Levels" on, levels at exactly the same price share one label.
 
 language(1)
-indicator("Key Levels", id = "market.key-levels", version = "1.0", max_bars_back = 1, bases = ["time"],
+indicator("Key Levels", id = "market.key-levels", version = "1.1", max_bars_back = 1, bases = ["time"],
     description = "Daily, weekly, monthly, quarterly and yearly opens, highs, lows and mids, Monday range and FX sessions.")
 display(view = "primary_overlay")
 plot(na, id = "anchor", display = "none", pane = "main", layer = true)
@@ -86,7 +86,7 @@ yOpen = input.bool(true, "Open", group = "Yearly")
 yRange = input.bool(false, "Current high/low", group = "Yearly")
 yMid = input.bool(true, "Mid", group = "Yearly")
 yShort = input.bool(false, "Shorthand", group = "Yearly")
-yColor = input.color(theme.danger, "Color", group = "Yearly")
+yColor = input.color(color.rgb(171, 71, 188), "Color", group = "Yearly")
 
 lonOn = input.bool(false, "London", group = "Sessions (UTC)")
 lonStart = input.int(8, "London start hour", min = 0, max = 23, group = "Sessions (UTC)")
