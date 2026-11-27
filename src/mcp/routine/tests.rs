@@ -430,7 +430,7 @@ fn an_older_installed_copy_is_named_in_the_output() {
         .iter()
         .find(|indicator| indicator["id"] == "market.key-levels")
         .unwrap();
-    assert_eq!(key_levels["version"], "1.1");
+    assert_eq!(key_levels["version"], "1.0");
     assert_eq!(key_levels["update"], Json::Null);
     // The same version: nothing to say.
     std::fs::write(folder.join("roman-setup.ind"), &current).unwrap();
