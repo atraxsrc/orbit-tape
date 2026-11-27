@@ -1,3 +1,14 @@
+orbit-tape (0.13.0-1) unstable; urgency=medium
+
+  * Saved alerts on OKX USDT spot pairs: create_alert takes market (perp,
+    the default, or spot, e.g. BTC-USDT); spot alerts say "OKX spot" in
+    their summary and the alert list.
+  * roman_setups: a WATCH level's ready alert, when price is already
+    inside the zone, waits at the zone's near edge instead of the close,
+    so it fires when price leaves the zone and comes back.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Fri, 27 Nov 2026 08:30:00 +1100
+
 orbit-tape (0.12.0-1) unstable; urgency=medium
 
   * orbit-tape mcp: an MCP server for Claude with read-only market tools

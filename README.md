@@ -61,7 +61,8 @@ work; see [Credits](#credits).
   condition on a market and timeframe, also with no chart open) are saved in
   `alerts.json`, listed under the bell in the sidebar with pause, once or
   every bar, and desktop, phone ([ntfy](https://ntfy.sh)) or both. Claude can
-  create and manage them through the MCP server. They fire while the app is
+  create and manage them through the MCP server, on USDT perpetuals or OKX
+  spot pairs. They fire while the app is
   open, and with `orbit-tape watch` also while it is closed. See
   [docs/mcp.md](docs/mcp.md#alerts).
 - **Headless scan, watcher and MCP server:** `orbit-tape scan` runs an
