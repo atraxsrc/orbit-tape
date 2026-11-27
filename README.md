@@ -5,6 +5,7 @@
 
 **Order flow on orbit - a native crypto charting desk for COSMIC**
 
+[![CI](https://github.com/atraxsrc/orbit-tape/actions/workflows/ci.yml/badge.svg)](https://github.com/atraxsrc/orbit-tape/actions/workflows/ci.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Rust 2024](https://img.shields.io/badge/Rust-2024-orange.svg?logo=rust)](https://doc.rust-lang.org/edition-guide/rust-2024/)
 [![Made with iced](https://iced.rs/badge.svg)](https://github.com/iced-rs/iced)
@@ -335,31 +336,31 @@ Orbit Tape does what it set out to do. What is left is polish:
 
 The `.deb` is the supported package; it fits COSMIC better than a sandboxed
 format, so there are no Flatpak plans. Contributions are welcome, see
-[Contributing and building](#contributing-and-building).
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Contributing and building
 
 ```sh
-cargo build                                  # debug build
-cargo fmt --all --check                      # formatting
-cargo clippy --workspace --all-targets       # lints
-cargo test --workspace                       # tests
-cargo run -p orbit-tape-indicator-engine --bin orbit-tape-indicator -- \
-    test data/indicators/sources --namespace core
+cargo build                                                           # debug build
+cargo fmt --all --check                                               # formatting
+cargo clippy --workspace --all-targets --all-features -- -D warnings  # lints
+cargo test --workspace                                                # tests, no network needed
 ```
 
-- Formatting is `rustfmt` with the defaults; CI runs `cargo fmt --check` and
-  `cargo clippy -- -D warnings`.
-- Commits are small and focused, with a short `area: what changed` subject
-  (for example `deb: cargo-deb packaging`) and a body that explains why.
-- Changes follow the license of the component they touch (see [License](#license)).
+CI runs these, plus the indicator checks, on every pull request. Bug
+reports, fixes and example indicators are welcome; for bigger changes open
+an issue first. The full guide (checks, commit style, indicator ports,
+licensing) is in [CONTRIBUTING.md](CONTRIBUTING.md), and security problems
+go through private reporting, see [SECURITY.md](SECURITY.md).
 
 Code map: [docs/ARCHITECTURE-NOTES.md](docs/ARCHITECTURE-NOTES.md).
 
 ## Privacy
 
 Orbit Tape has no telemetry, analytics or accounts. It talks to the exchanges
-you use and, only when you open it, the community indicator catalog on GitHub. See
+you use and, only when you open it, the community indicator catalog on GitHub.
+Alerts go to ntfy only if you set it up, and the MCP server and daily report
+share data only with the AI client you run them in. See
 [PRIVACY.md](PRIVACY.md) for details.
 
 ## Credits
