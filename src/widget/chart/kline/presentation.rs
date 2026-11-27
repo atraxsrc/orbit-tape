@@ -578,6 +578,34 @@ impl<'a> IndicatorView<'a> {
         .and_then(OutputValue::as_number)
     }
 
+    /// A channel's calculation index and value at the last bar in view
+    /// (offset-aware), whatever the cursor is doing. Used for the
+    /// last-value labels on the price axis.
+    pub(super) fn indicator_value_at_view_end(
+        &self,
+        scene: &Scene,
+        series: &KlineSeries,
+        value_id: PanelValueId,
+        channel_id: &str,
+    ) -> Option<(usize, f64)> {
+        let source_index = self.indicator_source_index_at_or_before_unit_for_channel(
+            scene,
+            0,
+            scene.x.max_unit,
+            value_id,
+            channel_id,
+        )?;
+        let value = self
+            .indicator_raw_output_value_for_series_at_channel(
+                series,
+                value_id,
+                channel_id,
+                source_index,
+            )?
+            .as_number()?;
+        value.is_finite().then_some((source_index, value))
+    }
+
     /// Resolve the calculation bar that owns a channel at a chart coordinate.
     /// This is the inverse of `for_each_indicator_output_index_with_units` and
     /// is intentionally offset-aware for crosshair and legend readouts.
@@ -1123,6 +1151,12 @@ impl<'a> IndicatorView<'a> {
         self.indicator_output_spec(output)
             .and_then(|spec| spec.style_slot.as_deref())
             .unwrap_or_else(|| self.indicator_default_style_slot(output.instance_id))
+    }
+
+    pub(super) fn indicator_price_labels(&self, value_id: PanelValueId) -> bool {
+        self.indicator_instance(value_id)
+            .map(|instance| instance.style_overrides.price_labels)
+            .unwrap_or(true)
     }
 
     pub(super) fn indicator_fill_visible(&self, value_id: PanelValueId) -> bool {

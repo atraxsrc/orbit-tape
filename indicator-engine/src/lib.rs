@@ -2347,6 +2347,46 @@ mod tests {
     }
 
     #[test]
+    fn source_inputs_take_an_optional_group() {
+        let grouped = compile(
+            r#"
+                language(1)
+                indicator("Grouped source", id = "test.grouped-source")
+                display(attachment = "panel")
+                format(precision = "base_ticker_min_tick")
+                len = input.int(20, "Length", group = "Average")
+                source = input.source(chart.close, "Source", group = "Average")
+                plain = input.source(chart.open, "Plain")
+                plot(ta.sma(source, len) - plain, id = "value")
+            "#,
+            "grouped-source.ind",
+        )
+        .expect("a grouped source input should compile");
+        let inputs = &grouped.descriptor.series_inputs;
+        assert_eq!(inputs[0].group.as_deref(), Some("Average"));
+        assert_eq!(inputs[1].group, None);
+
+        let diagnostics = compile(
+            r#"
+                language(1)
+                indicator("Bad group", id = "test.bad-group")
+                display(attachment = "panel")
+                format(precision = "base_ticker_min_tick")
+                source = input.source(chart.close, "Source", group = 1)
+                plot(source, id = "value")
+            "#,
+            "bad-group.ind",
+        )
+        .expect_err("a non-string group should be refused");
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("group must be a string literal")),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn sourceable_defaults_to_false_and_requires_visible_numeric_output() {
         let default = compile(
             r#"

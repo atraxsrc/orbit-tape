@@ -342,7 +342,7 @@ impl LoweringContext {
         _span: Span,
     ) -> Option<crate::hir::StatementId> {
         self.validate_positional_arguments(call, 2, "input.source");
-        self.validate_named_arguments(call, &["defval", "title", "allow_indicator"]);
+        self.validate_named_arguments(call, &["defval", "title", "allow_indicator", "group"]);
         let positional_count = call
             .arguments
             .iter()
@@ -418,11 +418,13 @@ impl LoweringContext {
             }
             None => true,
         };
+        let group = self.static_named_string(call, "group");
         self.declarations.series_inputs.push(SeriesInputDescriptor {
             id: name.to_owned(),
             label,
             default_field,
             allow_indicator,
+            group,
         });
         let slot = SourceInputSlot(self.ir.program.source_inputs.len());
         self.ir.program.source_inputs.push((slot, name.to_owned()));

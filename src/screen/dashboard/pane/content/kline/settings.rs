@@ -112,6 +112,7 @@ impl<'a> SettingsContext<'a> {
                         return IndicatorSourceSetting {
                             input_id: input.id.clone(),
                             label: input.label.clone(),
+                            group: input.group.clone(),
                             selected: None,
                             choices: Vec::new(),
                         };
@@ -176,6 +177,7 @@ impl<'a> SettingsContext<'a> {
                 IndicatorSourceSetting {
                     input_id: input.id.clone(),
                     label: input.label.clone(),
+                    group: input.group.clone(),
                     selected,
                     choices,
                 }
@@ -390,6 +392,7 @@ pub enum IndicatorIdSettingsMessage {
         shade: ThemeColorShade,
     },
     FillVisible(bool),
+    PriceLabels(bool),
     LineWidth {
         slot: String,
         width: u8,
@@ -439,6 +442,7 @@ pub enum IndicatorSourceSelection {
 struct IndicatorSourceSetting {
     input_id: String,
     label: String,
+    group: Option<String>,
     selected: Option<IndicatorSourceChoice>,
     choices: Vec<IndicatorSourceChoice>,
 }
@@ -572,6 +576,7 @@ fn kline_indicator_cfg_view<'a>(
 
     let mark_section =
         indicator_mark_section(instance_id, indicator.clone(), mark, &unavailable_marks);
+    let price_labels = style_config.price_labels;
     let channel_style_section = indicator_channel_style_section(
         instance_id,
         indicator.clone(),
@@ -605,6 +610,18 @@ fn kline_indicator_cfg_view<'a>(
         style_sections.push(mark_section.into_element());
     }
     style_sections.extend(channel_style_section);
+    if definition.has_numeric_plot_layers() {
+        let toggle = checkbox(price_labels)
+            .label("Labels on price scale")
+            .spacing(8)
+            .text_size(crate::style::text_size::SECTION)
+            .on_toggle(move |visible| Message::Indicator {
+                instance_id,
+                message: IndicatorIdSettingsMessage::PriceLabels(visible),
+            })
+            .width(Length::Fill);
+        style_sections.push(inspector::modal_container(toggle));
+    }
     let style_content = if style_sections.is_empty() {
         None
     } else {
@@ -709,28 +726,27 @@ fn indicator_settings_content<'a>(
     theme_accents: ThemeAccents,
 ) -> Option<Element<'a, Message>> {
     let mut inputs = Vec::new();
+    // Ungrouped source pickers come first, as before. A picker with a group
+    // joins the end of that group's box (the first one, if the group shows
+    // up more than once); a group with only pickers gets a box at the end.
+    let mut grouped_sources: Vec<(String, Vec<Element<'a, Message>>)> = Vec::new();
     for source_setting in &composition.source_settings {
-        let section = if source_setting.choices.is_empty() {
-            inspector::setting_section(source_setting.label.clone(), text("Unavailable"))
-        } else {
-            let instance_id = modal.instance_id();
-            let input_id = source_setting.input_id.clone();
-            let picker = pick_list(
-                source_setting.choices.clone(),
-                source_setting.selected.clone(),
-                move |choice| Message::Indicator {
-                    instance_id,
-                    message: IndicatorIdSettingsMessage::SourceSelected {
-                        input_id: input_id.clone(),
-                        selection: choice.selection.clone(),
-                    },
-                },
-            )
-            .width(Length::Fill);
-            inspector::setting_section(source_setting.label.clone(), picker)
-        };
-        inputs.push(inspector::modal_container(section.into_element()));
+        let section = indicator_source_view(source_setting, modal);
+        match &source_setting.group {
+            Some(group) => match grouped_sources.iter_mut().find(|(name, _)| name == group) {
+                Some((_, sections)) => sections.push(section),
+                None => grouped_sources.push((group.clone(), vec![section])),
+            },
+            None => inputs.push(inspector::modal_container(section)),
+        }
     }
+    let mut flush_group =
+        |inputs: &mut Vec<Element<'a, Message>>, group: String, mut sections: Vec<_>| {
+            if let Some(index) = grouped_sources.iter().position(|(name, _)| *name == group) {
+                sections.extend(grouped_sources.remove(index).1);
+            }
+            inputs.push(indicator_group_box(group, sections));
+        };
     let mut grouped_settings: Option<(String, Vec<Element<'a, Message>>)> = None;
 
     for setting in settings {
@@ -753,22 +769,25 @@ fn indicator_settings_content<'a>(
                     continue;
                 }
 
-                if let Some((_, sections)) = grouped_settings.take() {
-                    inputs.push(inspector::modal_container(column(sections).spacing(12)));
+                if let Some((active_group, sections)) = grouped_settings.take() {
+                    flush_group(&mut inputs, active_group, sections);
                 }
                 grouped_settings = Some((group, vec![section]));
             }
             None => {
-                if let Some((_, sections)) = grouped_settings.take() {
-                    inputs.push(inspector::modal_container(column(sections).spacing(12)));
+                if let Some((active_group, sections)) = grouped_settings.take() {
+                    flush_group(&mut inputs, active_group, sections);
                 }
                 inputs.push(inspector::modal_container(section));
             }
         }
     }
 
-    if let Some((_, sections)) = grouped_settings {
-        inputs.push(inspector::modal_container(column(sections).spacing(12)));
+    if let Some((active_group, sections)) = grouped_settings {
+        flush_group(&mut inputs, active_group, sections);
+    }
+    for (group, sections) in grouped_sources {
+        inputs.push(indicator_group_box(group, sections));
     }
 
     if inputs.is_empty() {
@@ -780,6 +799,40 @@ fn indicator_settings_content<'a>(
                 .into(),
         )
     }
+}
+
+/// One settings group's box, headed by the group name from the script.
+fn indicator_group_box<'a>(
+    group: String,
+    sections: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let heading: Element<'a, Message> = crate::widget::text::section(group).into();
+    inspector::modal_container(column(std::iter::once(heading).chain(sections)).spacing(12))
+}
+
+fn indicator_source_view<'a>(
+    source_setting: &IndicatorSourceSetting,
+    modal: &'a IndicatorSettingsState,
+) -> Element<'a, Message> {
+    if source_setting.choices.is_empty() {
+        return inspector::setting_section(source_setting.label.clone(), text("Unavailable"))
+            .into_element();
+    }
+    let instance_id = modal.instance_id();
+    let input_id = source_setting.input_id.clone();
+    let picker = pick_list(
+        source_setting.choices.clone(),
+        source_setting.selected.clone(),
+        move |choice| Message::Indicator {
+            instance_id,
+            message: IndicatorIdSettingsMessage::SourceSelected {
+                input_id: input_id.clone(),
+                selection: choice.selection.clone(),
+            },
+        },
+    )
+    .width(Length::Fill);
+    inspector::setting_section(source_setting.label.clone(), picker).into_element()
 }
 
 fn indicator_setting_view<'a>(
@@ -2220,6 +2273,12 @@ impl InspectorState {
                     )),
                     IndicatorIdSettingsMessage::FillVisible(visible) => Some(
                         ChartCommand::indicator_style(IndicatorStyleCommand::FillVisibility {
+                            id: instance_id,
+                            visible,
+                        }),
+                    ),
+                    IndicatorIdSettingsMessage::PriceLabels(visible) => Some(
+                        ChartCommand::indicator_style(IndicatorStyleCommand::PriceLabels {
                             id: instance_id,
                             visible,
                         }),

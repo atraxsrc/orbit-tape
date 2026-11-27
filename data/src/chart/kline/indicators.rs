@@ -194,6 +194,8 @@ pub struct IndicatorSourceInput {
     pub label: String,
     pub default_label: String,
     pub allow_indicator: bool,
+    /// Settings group the picker sits in; `None` shows it above the groups.
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

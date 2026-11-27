@@ -436,6 +436,8 @@ impl std::fmt::Display for LineStrokeStyle {
 #[serde(default)]
 pub struct IndicatorStyleOverrides {
     pub fill_visible: bool,
+    /// Last-value labels for the indicator's lines on the price axis.
+    pub price_labels: bool,
     #[serde(default)]
     colors: BTreeMap<String, ThemeColor>,
     #[serde(default)]
@@ -448,6 +450,7 @@ impl Default for IndicatorStyleOverrides {
     fn default() -> Self {
         Self {
             fill_visible: true,
+            price_labels: true,
             colors: BTreeMap::new(),
             line_widths: BTreeMap::new(),
             stroke_styles: BTreeMap::new(),
@@ -531,6 +534,7 @@ impl IndicatorStyleOverrides {
 
     pub fn clear(&mut self) -> bool {
         let changed = !self.fill_visible
+            || !self.price_labels
             || !self.colors.is_empty()
             || !self.line_widths.is_empty()
             || !self.stroke_styles.is_empty();
@@ -538,6 +542,7 @@ impl IndicatorStyleOverrides {
         self.line_widths.clear();
         self.stroke_styles.clear();
         self.fill_visible = true;
+        self.price_labels = true;
         changed
     }
 }
@@ -884,6 +889,19 @@ impl IndicatorInstanceStore {
                     return false;
                 }
                 instance.style_overrides.fill_visible = visible;
+                true
+            })
+    }
+
+    pub fn update_price_labels(&mut self, id: IndicatorInstanceId, visible: bool) -> bool {
+        self.instances
+            .iter_mut()
+            .find(|instance| instance.id == id)
+            .is_some_and(|instance| {
+                if instance.style_overrides.price_labels == visible {
+                    return false;
+                }
+                instance.style_overrides.price_labels = visible;
                 true
             })
     }
@@ -1581,5 +1599,27 @@ fn value_precision_into_domain(precision: ValuePrecision) -> DomainPanelValuePre
             DomainPanelValuePrecision::FixedPower10(exchange::unit::Power10::new(power))
         }
         ValuePrecision::FixedStep(step) => DomainPanelValuePrecision::FixedStep(step),
+    }
+}
+
+#[cfg(test)]
+mod style_override_tests {
+    use super::IndicatorStyleOverrides;
+
+    #[test]
+    fn price_labels_default_on_for_saved_layouts_and_reset() {
+        // A layout saved before price labels existed has no such field.
+        let saved: IndicatorStyleOverrides =
+            serde_json::from_str(r#"{"fill_visible":false}"#).expect("old overrides load");
+        assert!(saved.price_labels);
+        assert!(!saved.fill_visible);
+
+        let mut overrides = IndicatorStyleOverrides {
+            price_labels: false,
+            ..IndicatorStyleOverrides::default()
+        };
+        assert!(overrides.clear(), "turning labels back on is a change");
+        assert!(overrides.price_labels);
+        assert!(!overrides.clear(), "already at defaults");
     }
 }

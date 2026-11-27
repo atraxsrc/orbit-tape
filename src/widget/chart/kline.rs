@@ -579,6 +579,7 @@ impl<'a> KlineWidget<'a> {
             scene,
             bounds,
             palette,
+            accents,
             drawing_magnet,
             root_pixels,
         );
