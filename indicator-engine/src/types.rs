@@ -643,6 +643,9 @@ pub struct SeriesInputDescriptor {
     pub label: String,
     pub default_field: crate::frame::FrameField,
     pub allow_indicator: bool,
+    /// Settings group the source picker is shown in, like `group` on the
+    /// other inputs. `None` keeps it above the grouped inputs.
+    pub group: Option<String>,
 }
 
 /// A script version: one to four whole numbers with dots (`7`, `1.2`,

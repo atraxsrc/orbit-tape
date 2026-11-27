@@ -233,6 +233,9 @@ plot(ta.sma(source, 20), id = "average")
 or `open_interest`. `allow_indicator` defaults to `true`; such inputs require
 view `plot`, attachment `overlay` or `panel`, and a visible numeric plot layer.
 Use `allow_indicator = false` for a base-only input in any view.
+`group = "..."` (a string literal) puts the source picker in that settings
+group, after the group's other inputs; without it the picker sits above the
+grouped inputs.
 
 Bindings consume same-index visible numeric plots of active indicators with
 `sourceable = true`, within the same Kline pane and base series/timeframe.

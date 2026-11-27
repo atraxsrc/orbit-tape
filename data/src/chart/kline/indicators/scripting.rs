@@ -666,6 +666,7 @@ fn definition_from_compiled(compiled: &CompiledIndicator) -> Result<IndicatorDef
                     .unwrap_or("Declared default")
                     .to_owned(),
                 allow_indicator: input.allow_indicator,
+                group: input.group.clone(),
             })
             .collect::<Vec<_>>(),
     )
