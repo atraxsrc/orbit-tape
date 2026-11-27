@@ -3,7 +3,8 @@
 //! watch` runs them; these tools only write the file. Still no orders, keys
 //! or trading actions.
 
-use super::{OrbitTapeMcp, inputs, symbol_coin, timeframe, to_text, utc, venue_id};
+use super::{OrbitTapeMcp, inputs, market_id, symbol_coin, timeframe, to_text, utc, venue_id};
+use crate::headless::PerpExchange;
 use crate::headless::{alert_plots, indicator_config};
 use data::config::alert_store::{
     AlertKind, AlertStore, Channel, Creator, Frequency, MAX_ACTIVE, PriceCross, StoredAlert,
@@ -22,8 +23,11 @@ pub struct CreateAlertParams {
     /// Coin or instrument, e.g. BTC, ETHUSDT, BTC-USDT-SWAP.
     pub symbol: String,
     /// binance or okx. Default: the exchange line of the user's
-    /// scan-symbols.txt, else okx.
+    /// scan-symbols.txt, else okx (always okx for spot).
     pub exchange: Option<String>,
+    /// perp (the USDT perpetual) or spot (the USDT spot pair, OKX only, e.g.
+    /// BTC-USDT). Default perp.
+    pub market: Option<String>,
     /// crosses_above, crosses_below or crosses (either way) a price, or
     /// indicator for an indicator's alert condition on a closed bar.
     pub condition: String,
@@ -106,6 +110,21 @@ fn parse_channel(text: &str) -> Result<Channel, String> {
     }
 }
 
+/// Which market an alert watches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Market {
+    Perp,
+    Spot,
+}
+
+fn parse_market(text: &str) -> Result<Market, String> {
+    match text.trim().to_lowercase().as_str() {
+        "perp" | "perps" | "perpetual" | "swap" => Ok(Market::Perp),
+        "spot" => Ok(Market::Spot),
+        _ => Err(format!("unknown market '{text}' (perp or spot)")),
+    }
+}
+
 fn valid_price(price: f64) -> Result<f64, String> {
     if price.is_finite() && price > 0.0 {
         Ok(price)
@@ -129,6 +148,7 @@ pub fn alert_json(alert: &StoredAlert) -> Json {
         "summary": alert.summary(),
         "symbol": alert.symbol(),
         "exchange": venue_id(alert.ticker.exchange.venue()),
+        "market": market_id(alert.ticker.market_type()),
         "timeframe": alert.timeframe.to_string(),
         "frequency": match alert.frequency {
             Frequency::Once => "once",
@@ -216,13 +236,31 @@ impl OrbitTapeMcp {
 #[tool_router(router = alert_tool_router, vis = "pub(crate)")]
 impl OrbitTapeMcp {
     #[tool(
-        description = "Create a saved alert that Orbit Tape runs (also while the app is closed, when the user runs orbit-tape watch): a price crossing a level on live trades, or an indicator's alert condition on a closed bar. Returns the alert ID and a one-line summary. At most 50 active alerts. Only writes the local alerts file; places no orders."
+        description = "Create a saved alert that Orbit Tape runs (also while the app is closed, when the user runs orbit-tape watch): a price crossing a level on live trades, or an indicator's alert condition on a closed bar. On a USDT perpetual (default) or, with market spot, an OKX USDT spot pair such as BTC-USDT. Returns the alert ID and a one-line summary. At most 50 active alerts. Only writes the local alerts file; places no orders."
     )]
     pub async fn create_alert(
         &self,
         Parameters(params): Parameters<CreateAlertParams>,
     ) -> Result<String, String> {
-        let exchange = self.exchange(params.exchange.as_deref())?;
+        let market = params
+            .market
+            .as_deref()
+            .map_or(Ok(Market::Perp), parse_market)?;
+        let exchange = match market {
+            Market::Perp => self.exchange(params.exchange.as_deref())?,
+            Market::Spot => match params.exchange.as_deref() {
+                None => PerpExchange::Okx,
+                Some(text) => match super::perp_exchange(text)? {
+                    PerpExchange::Okx => PerpExchange::Okx,
+                    other => {
+                        return Err(format!(
+                            "spot alerts are OKX only, not {}; use exchange okx",
+                            other.name()
+                        ));
+                    }
+                },
+            },
+        };
         let coin = symbol_coin(&params.symbol)?;
         let timeframe = timeframe(params.timeframe.as_deref())?;
         let channel = params
@@ -304,13 +342,28 @@ impl OrbitTapeMcp {
             .as_deref()
             .map_or(Ok(default_frequency), parse_frequency)?;
 
-        let (_, ticker_info) = self.candles.resolve(exchange, coin.clone()).await?;
-        let last_close = self
-            .candles
-            .closed_candles(exchange, coin, Timeframe::M1, 1)
-            .await
-            .ok()
-            .and_then(|series| series.klines.last().map(|kline| kline.close.to_f64()));
+        let (ticker_info, last_close) = match market {
+            Market::Perp => {
+                let (_, ticker_info) = self.candles.resolve(exchange, coin.clone()).await?;
+                let last_close = self
+                    .candles
+                    .closed_candles(exchange, coin, Timeframe::M1, 1)
+                    .await
+                    .ok()
+                    .and_then(|series| series.klines.last().map(|kline| kline.close.to_f64()));
+                (ticker_info, last_close)
+            }
+            // The pair's details come with its candles; an hour of them, so
+            // a quiet pair still has one.
+            Market::Spot => {
+                let series = self
+                    .candles
+                    .spot_candles(format!("{coin}-USDT"), Timeframe::M1, 60)
+                    .await?;
+                let last_close = series.klines.last().map(|kline| kline.close.to_f64());
+                (series.ticker_info, last_close)
+            }
+        };
 
         let alert = self.change_store(|store| {
             let alert = StoredAlert {

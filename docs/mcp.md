@@ -194,9 +194,13 @@ alerts made in the app are saved there too.
   `every_bar` for indicator alerts.
 - **Channels:** `desktop` notifications, `ntfy` push messages to your phone,
   or `both`. ntfy needs a topic in Settings > Alerts (see below).
+- **Markets:** USDT perpetuals on Binance or OKX by default; with
+  `market: "spot"`, OKX USDT spot pairs (e.g. `BTC-USDT`). Spot alerts show
+  `OKX spot` in their summary.
 - At most 50 alerts can be active. Everything is checked before an alert is
-  saved: the exchange, that the symbol is a listed USDT perpetual, the
-  timeframe, the indicator, the alert condition, the inputs and the price.
+  saved: the exchange, that the symbol is a listed USDT perpetual (or OKX
+  spot pair), the timeframe, the indicator, the alert condition, the inputs
+  and the price.
 
 ### Alerts while the app is closed
 

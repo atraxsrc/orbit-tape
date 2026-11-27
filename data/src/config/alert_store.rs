@@ -320,9 +320,14 @@ impl StoredAlert {
         self.ticker.display_symbol_and_type().0
     }
 
-    /// The exchange's display name, e.g. `OKX`.
+    /// The exchange's display name, e.g. `OKX`, with `spot` after it for a
+    /// spot pair (Binance names its spot pairs like its perpetuals).
     pub fn exchange_name(&self) -> String {
-        self.ticker.exchange.venue().to_string()
+        let venue = self.ticker.exchange.venue();
+        match self.ticker.market_type() {
+            exchange::adapter::MarketKind::Spot => format!("{venue} spot"),
+            _ => venue.to_string(),
+        }
     }
 
     /// What it waits for, e.g. `price crosses above 62000`.
@@ -483,6 +488,25 @@ mod tests {
         assert!(done.summary().ends_with("(once, desktop, done)"));
         assert_eq!(trim_float(0.000_123_4), "0.0001234");
         assert_eq!(trim_float(-3.5), "-3.5");
+    }
+
+    #[test]
+    fn spot_summaries_say_spot() {
+        let spot = StoredAlert {
+            ticker: Ticker::new("BTC-USDT", Exchange::OkexSpot),
+            kind: AlertKind::Price {
+                cross: PriceCross::Below,
+                level: 57_700.0,
+            },
+            ..price_alert("s")
+        };
+        assert_eq!(
+            spot.summary(),
+            "BTC-USDT OKX spot 1h: price crosses below 57700 (once, desktop)"
+        );
+        let json = serde_json::to_value(&spot).unwrap();
+        assert_eq!(json["ticker"], "OKXSpot:BTC-USDT");
+        assert_eq!(serde_json::from_value::<StoredAlert>(json).unwrap(), spot);
     }
 
     #[test]

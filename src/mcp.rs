@@ -1562,6 +1562,12 @@ mod tests {
                 let mut series = self
                     .closed_candles(PerpExchange::Okx, "BTC".to_owned(), timeframe, bars)
                     .await?;
+                series.ticker_info = TickerInfo::new(
+                    Ticker::new("BTC-USDT", Exchange::OkexSpot),
+                    0.1,
+                    0.00001,
+                    None,
+                );
                 series.instrument = pair;
                 Ok(series)
             })
@@ -2395,6 +2401,53 @@ mod tests {
             out["summary"],
             "BTCUSDT Binance 1h: any roman.roman-setup alert (ctMode=true) (every bar, desktop)"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_price_alert_on_an_okx_spot_pair() {
+        let (server, dir) = alert_server("spot");
+        let out = parse(create(
+            &server,
+            json!({"symbol": "BTC", "market": "spot", "condition": "crosses_below", "price": 57700, "channel": "desktop"}),
+        ));
+        assert_eq!(
+            out["summary"],
+            "BTC-USDT OKX spot 1h: price crosses below 57700 (once, desktop)"
+        );
+        assert_eq!(out["alert"]["market"], "spot");
+        assert_eq!(out["alert"]["exchange"], "okx");
+        let saved: data::config::alert_store::AlertStore =
+            data::config::shared_file::read(&dir.join("alerts.json")).unwrap();
+        assert_eq!(
+            saved.alerts[0].ticker,
+            Ticker::new("BTC-USDT", Exchange::OkexSpot)
+        );
+        // Perp alerts say perp.
+        let perp = parse(create(
+            &server,
+            json!({"symbol": "BTC", "exchange": "okx", "condition": "crosses_above", "price": 61200}),
+        ));
+        assert_eq!(perp["alert"]["market"], "perp");
+
+        let error = create(
+            &server,
+            json!({"symbol": "BTC", "exchange": "binance", "market": "spot", "condition": "crosses_below", "price": 1}),
+        )
+        .unwrap_err();
+        assert!(error.contains("spot alerts are OKX only"), "{error}");
+        let error = create(
+            &server,
+            json!({"symbol": "NOPE", "market": "spot", "condition": "crosses_below", "price": 1}),
+        )
+        .unwrap_err();
+        assert!(error.contains("no OKX spot pair NOPE-USDT"), "{error}");
+        let error = create(
+            &server,
+            json!({"symbol": "BTC", "market": "futures", "condition": "crosses_below", "price": 1}),
+        )
+        .unwrap_err();
+        assert!(error.contains("unknown market"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
