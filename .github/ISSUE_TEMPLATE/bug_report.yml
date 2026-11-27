@@ -1,0 +1,52 @@
+name: Bug report
+description: Something does not work as described.
+labels: [bug]
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Thanks for the report. Please check the log for private details (proxy hosts, server addresses, ntfy topics) before you paste it.
+    - type: input
+      id: version
+      attributes:
+          label: Version
+          description: Output of `orbit-tape --version`, or the version shown in Settings.
+          placeholder: orbit-tape v0.13.1
+      validations:
+          required: true
+    - type: input
+      id: system
+      attributes:
+          label: Distribution and desktop
+          placeholder: Pop!_OS 26.04, COSMIC
+      validations:
+          required: true
+    - type: dropdown
+      id: install
+      attributes:
+          label: Installed from
+          options:
+              - .deb from the releases page
+              - built from source
+      validations:
+          required: true
+    - type: textarea
+      id: what
+      attributes:
+          label: What happened
+          description: What you did, what you expected and what happened instead. Exchange, symbol and timeframe help for chart problems.
+      validations:
+          required: true
+    - type: textarea
+      id: steps
+      attributes:
+          label: Steps to reproduce
+          placeholder: |
+              1. Open a BTCUSDT 1h candlestick chart on OKX
+              2. ...
+    - type: textarea
+      id: log
+      attributes:
+          label: Log
+          description: Relevant lines from `~/.local/share/orbit-tape/orbit-tape-current.log` (or `journalctl --user -u orbit-tape-watch` for the watcher).
+          render: text
