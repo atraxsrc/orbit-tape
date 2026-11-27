@@ -78,14 +78,14 @@ a desktop theme role such as `theme.danger` (`theme.text@f0` with alpha).
 | `test_indicator` | Same as `orbit-tape-indicator test`: check, then run on synthetic bars. | `path`, `namespace` |
 | `list_indicators` | Your installed indicators: name, ID, path relative to its indicators folder (`roman/roman-setup.ind`) with `source` `user` or `bundled`, inputs with defaults and options, and alert conditions. | none |
 | `alert_history` | The newest alerts that fired (in the app or `orbit-tape watch`), from the saved history: fire time, the bar it fired on (`bar_utc`, null for alerts saved by older versions), exchange, market, timeframe, condition, price (a number) and `missed_while_closed`. | `last` (default 20, at most 200) |
-| `create_alert` | Saves an alert: a price crossing a level, or an indicator's alert condition on a closed bar. Returns its ID, a one-line summary and whether a program runs the alerts now. | `symbol`, `exchange`, `condition` (`crosses_above`, `crosses_below`, `crosses`, `indicator`), `price`, `indicator`, `alert` (one condition; default any), `inputs`, `timeframe` (default 1h), `frequency` (`once` or `every_bar`), `channel` (`desktop`, `ntfy`, `both`), `message` |
+| `create_alert` | Saves an alert: a price crossing a level, or an indicator's alert condition on a closed bar. Returns its ID, a one-line summary and whether a program runs the alerts now. | `symbol`, `exchange`, `market` (`perp` default, or `spot`: OKX USDT spot pairs such as `BTC-USDT`), `condition` (`crosses_above`, `crosses_below`, `crosses`, `indicator`), `price`, `indicator`, `alert` (one condition; default any), `inputs`, `timeframe` (default 1h), `frequency` (`once` or `every_bar`), `channel` (`desktop`, `ntfy`, `both`), `message` |
 | `list_alerts` | The saved alerts with ID, summary, status (`active`, `paused`, `fired`), who made them and any error. | none |
 | `update_alert` | Changes an alert's price, direction, frequency, channel, message, or pauses/resumes it. | `id` and the fields to change |
 | `delete_alert` | Deletes an alert. | `id` |
 | `pause_alerts` / `resume_alerts` | Pauses or resumes alerts by ID, or all of them. Resuming all skips `once` alerts that already fired. | `ids` (optional) |
 | `get_plan` | Your trading plan file (see [Daily routine](#daily-routine)), checked, with the per-coin Roman Setup inputs and leverage filled in. | none |
 | `market_snapshot` | Per coin of the plan's universe: close, day % and the 24h high and low (a rolling 24 hours of 1h bars), week % (against 7 days ago), RSI(14) 1D, 4H and 1W, daily ATR(14), the 1M high and low, the 3M low, SMA200 1D and 1W and price against them, and Roman Setup's 12H bias. `notes` says what was missing. | `coins`, `exchange` |
-| `roman_setups` | Roman Setup on every coin of the plan with its inputs, and the routine's rules applied: the primary bias-aligned level and its distance, entry, stop (beyond the area plus 0.3 daily ATR), T1 and T2 with R multiples, notional and margin per $10 risked. Each level is named (e.g. a bear-slot breaker is a broken bear order block, so it supports a long). Statuses `LIVE` (ranked: closest to the entry, then best R to T2, then higher max leverage), `RAN` (triggered, but price is at or past T1 or further past the entry than the stop distance), `WATCH`, `FLIP-WATCH`, `COUNTER-TREND`, and coins grouped by them; a setup whose stop is over the plan's maximum is skipped with the reason. Each coin's `alerts` holds ready `create_alert` arguments for its WATCH and FLIP-WATCH levels, with the full message (level, entry, stop, T1/T2, "Only enter after a 1H MSS"). | `coins` |
+| `roman_setups` | Roman Setup on every coin of the plan with its inputs, and the routine's rules applied: the primary bias-aligned level and its distance, entry, stop (beyond the area plus 0.3 daily ATR), T1 and T2 with R multiples, notional and margin per $10 risked. Each level is named (e.g. a bear-slot breaker is a broken bear order block, so it supports a long). Statuses `LIVE` (ranked: closest to the entry, then best R to T2, then higher max leverage), `RAN` (triggered, but price is at or past T1 or further past the entry than the stop distance), `WATCH`, `FLIP-WATCH`, `COUNTER-TREND`, and coins grouped by them; a setup whose stop is over the plan's maximum is skipped with the reason. Each coin's `alerts` holds ready `create_alert` arguments for its WATCH and FLIP-WATCH levels, with the full message (level, entry, stop, T1/T2, "Only enter after a 1H MSS"); when price is already inside the WATCH zone, that alert waits at the zone's near edge, so it fires when price leaves the zone and comes back. | `coins` |
 | `spot_status` | The plan's spot accumulation on OKX spot: price against the reference price, the next level below, RSI 1D and 1W, against SMA200 1W, monthly buys done and next (skipped dates do not count), lump-sum parts left and how they are spread after the last date, and whether today is a SPOT ZONE, with the reasons. | `date` (default today) |
 
 Indicators are found by `.ind` path, ID (`roman.roman-setup`), short name
@@ -194,9 +194,13 @@ alerts made in the app are saved there too.
   `every_bar` for indicator alerts.
 - **Channels:** `desktop` notifications, `ntfy` push messages to your phone,
   or `both`. ntfy needs a topic in Settings > Alerts (see below).
+- **Markets:** USDT perpetuals on Binance or OKX by default; with
+  `market: "spot"`, OKX USDT spot pairs (e.g. `BTC-USDT`). Spot alerts show
+  `OKX spot` in their summary.
 - At most 50 alerts can be active. Everything is checked before an alert is
-  saved: the exchange, that the symbol is a listed USDT perpetual, the
-  timeframe, the indicator, the alert condition, the inputs and the price.
+  saved: the exchange, that the symbol is a listed USDT perpetual (or OKX
+  spot pair), the timeframe, the indicator, the alert condition, the inputs
+  and the price.
 
 ### Alerts while the app is closed
 

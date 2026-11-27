@@ -253,13 +253,28 @@ fn ready_alerts(coin: &str, setup: &setups::Setup, precision: Precision) -> Vec<
             (Some(price), None) => format!(", {name} {}", shown(precision, price)),
             _ => String::new(),
         };
+        // Inside the zone the entry is the close, and an alert there fires on
+        // the next tick the wrong way. Watch the near edge instead: it fires
+        // when price leaves the zone and comes back.
+        let inside = level.distance_pct == 0.0 && level.kind != setups::LevelKind::BrokenLevel;
+        let (price, note) = if inside {
+            (
+                level.near,
+                format!(
+                    " Price was inside the zone; this fires when it leaves and comes back to {}.",
+                    shown(precision, level.near)
+                ),
+            )
+        } else {
+            (trade.entry, String::new())
+        };
         alerts.push(json!({
             "kind": "watch",
             "symbol": coin,
             "condition": condition,
-            "price": precision.price(trade.entry),
+            "price": precision.price(price),
             "message": format!(
-                "{coin} {side} WATCH at the {} {zone} ({}). Entry {}, stop {}{}{}. Only enter after a 1H MSS.",
+                "{coin} {side} WATCH at the {} {zone} ({}). Entry {}, stop {}{}{}. Only enter after a 1H MSS.{note}",
                 level.name,
                 level.role,
                 shown(precision, trade.entry),
@@ -523,7 +538,7 @@ impl OrbitTapeMcp {
     }
 
     #[tool(
-        description = "Roman Setup (H12 bias, H1 execution) on every coin of the plan's universe (or the coins given) with the plan's inputs, and the routine's rules applied: the primary bias-aligned level (nearest resistance zone or broken level for a bearish bias, support for a bullish one, on the trade's side of price) and its distance %, entry (its near edge, or the broken level or 50% fib if nearer; the close when price is inside), stop beyond the area + 0.3 daily ATR, T1 (24h low/high) and T2 (1M low/high) with R multiples, notional and margin per $10 risked at the plan's max leverage. Each level has a name and role (e.g. bear-slot breaker (broken bear OB), support: a long from a bear slot is a broken bear order block). Statuses: LIVE (a tap on the bias side in the last 24 1h bars and a bias-aligned 1h MSS after it; the live list is ranked: closest to the entry, then best R to T2, then higher max leverage), RAN (triggered like LIVE but price is at or past T1 or further past the entry than the stop distance: not a trade now; ran says why), WATCH (within 5% of the primary level), FLIP-WATCH (within 3% of the 12H bias-flip level), COUNTER-TREND (armed after an HTF SFP against the bias: entry after the next 1h MSS, stop beyond the SFP wick + 0.2 ATR, counter-trend risk). Setups whose stop is over the plan's max stop % are skipped with the reason. Each coin's alerts list holds ready create_alert arguments (symbol, condition, price, message) for its WATCH level and its FLIP-WATCH flip level. Script output, not advice."
+        description = "Roman Setup (H12 bias, H1 execution) on every coin of the plan's universe (or the coins given) with the plan's inputs, and the routine's rules applied: the primary bias-aligned level (nearest resistance zone or broken level for a bearish bias, support for a bullish one, on the trade's side of price) and its distance %, entry (its near edge, or the broken level or 50% fib if nearer; the close when price is inside), stop beyond the area + 0.3 daily ATR, T1 (24h low/high) and T2 (1M low/high) with R multiples, notional and margin per $10 risked at the plan's max leverage. Each level has a name and role (e.g. bear-slot breaker (broken bear OB), support: a long from a bear slot is a broken bear order block). Statuses: LIVE (a tap on the bias side in the last 24 1h bars and a bias-aligned 1h MSS after it; the live list is ranked: closest to the entry, then best R to T2, then higher max leverage), RAN (triggered like LIVE but price is at or past T1 or further past the entry than the stop distance: not a trade now; ran says why), WATCH (within 5% of the primary level), FLIP-WATCH (within 3% of the 12H bias-flip level), COUNTER-TREND (armed after an HTF SFP against the bias: entry after the next 1h MSS, stop beyond the SFP wick + 0.2 ATR, counter-trend risk). Setups whose stop is over the plan's max stop % are skipped with the reason. Each coin's alerts list holds ready create_alert arguments (symbol, condition, price, message) for its WATCH level (at the zone's near edge while price is inside the zone) and its FLIP-WATCH flip level. Script output, not advice."
     )]
     pub async fn roman_setups(
         &self,

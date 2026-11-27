@@ -437,3 +437,55 @@ fn an_older_installed_copy_is_named_in_the_output() {
     let out = parse(block_on(server.roman_setups(btc_only())));
     assert!(out.get("warnings").is_none(), "{out}");
 }
+
+#[test]
+fn a_watch_alert_inside_the_zone_waits_at_the_near_edge() {
+    // Bearish at 103, inside the resistance order block 102-104.
+    let mut input = setups::CoinInput {
+        close: 103.0,
+        atr: Some(2.0),
+        high_24h: Some(104.0),
+        low_24h: Some(98.0),
+        high_1m: Some(110.0),
+        low_1m: Some(90.0),
+        values: BTreeMap::new(),
+    };
+    for (name, value) in [
+        ("x_bias", -1.0),
+        ("x_s1Top", 104.0),
+        ("x_s1Bot", 102.0),
+        ("x_s1St", 0.0),
+        ("x_fib50", 103.0),
+        ("x_bullFlip", 120.0),
+        ("x_tapDnAgo", 30.0),
+        ("x_mssDir", -1.0),
+        ("x_mssAgo", 5.0),
+        ("x_ctArm", 0.0),
+    ] {
+        input.values.insert(name.to_owned(), Some(value));
+    }
+    let rules = setups::Rules {
+        max_stop_pct: 5.0,
+        leverage: 5.0,
+        risk_pct: 0.5,
+        counter_trend_risk_pct: 0.25,
+    };
+    let setup = input.setup(&rules);
+    assert_eq!(setup.statuses, [setups::Status::Watch]);
+    assert_eq!(setup.primary.unwrap().distance_pct, 0.0);
+    let alerts = ready_alerts("TEST", &setup, Precision::of(&fixture_info()));
+    let watch = &alerts[0];
+    assert_eq!(watch["condition"], "crosses_above");
+    // The near edge, not the close (the entry).
+    assert_eq!(watch["price"], 102.0);
+    let message = watch["message"].as_str().unwrap();
+    assert!(message.contains("Entry 103,"), "{message}");
+    assert!(message.contains("comes back to 102."), "{message}");
+
+    // Outside the zone the alert is still at the entry.
+    input.close = 100.0;
+    let setup = input.setup(&rules);
+    let alerts = ready_alerts("TEST", &setup, Precision::of(&fixture_info()));
+    assert_eq!(alerts[0]["price"], 102.0);
+    assert!(!alerts[0]["message"].as_str().unwrap().contains("inside"));
+}
