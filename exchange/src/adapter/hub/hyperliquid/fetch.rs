@@ -269,6 +269,7 @@ fn insert_ticker_from_ctx(
             mark_price: Price::from_f64(ctx.mark_price),
             daily_price_chg: daily_price_chg_pct(price, ctx.prev_day_price),
             daily_volume: Qty::from_f64(ctx.day_notional_volume),
+            utc_day_open: None,
         },
     );
 }

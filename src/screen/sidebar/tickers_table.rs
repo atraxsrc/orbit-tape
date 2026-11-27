@@ -349,8 +349,10 @@ impl TickersTable {
         None
     }
 
-    pub fn subscription(&self) -> Subscription<Message> {
-        let stats_fetch = iced::time::every(Duration::from_secs(if self.is_shown {
+    /// `keep_fresh`: another panel shows prices (the watchlist), so refresh
+    /// as often as when the table is open.
+    pub fn subscription(&self, keep_fresh: bool) -> Subscription<Message> {
+        let stats_fetch = iced::time::every(Duration::from_secs(if self.is_shown || keep_fresh {
             ACTIVE_UPDATE_INTERVAL
         } else {
             INACTIVE_UPDATE_INTERVAL
@@ -1398,7 +1400,26 @@ impl TickersTable {
         Some(col.into())
     }
 
-    fn label_with_suffix(&self, ticker: Ticker) -> String {
+    /// The latest price stats of a ticker, if its exchange's were fetched.
+    pub fn stats(&self, ticker: &Ticker) -> Option<&TickerStats> {
+        self.row_index
+            .get(ticker)
+            .and_then(|index| self.ticker_rows.get(*index))
+            .map(|row| &row.stats)
+    }
+
+    /// The ticker's last price, formatted to its tick size.
+    pub fn price_display(&self, ticker: &Ticker) -> Option<&str> {
+        self.display_cache
+            .get(ticker)
+            .and_then(|data| data.mark_price_display.as_deref())
+    }
+
+    pub fn ticker_info(&self, ticker: &Ticker) -> Option<TickerInfo> {
+        self.metadata.tickers().get(ticker).copied().flatten()
+    }
+
+    pub(crate) fn label_with_suffix(&self, ticker: Ticker) -> String {
         let mut s = if let Some(dd) = self.display_cache.get(&ticker) {
             dd.display_ticker.clone()
         } else {

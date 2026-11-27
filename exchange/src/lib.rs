@@ -685,6 +685,56 @@ pub struct TickerStats {
     /// 24h volume in USD
     #[serde(deserialize_with = "de_qty_from_number")]
     pub daily_volume: Qty,
+    /// Price at 00:00 UTC today, where the exchange gives it in its ticker
+    /// list (OKX `sodUtc0`); `None` elsewhere.
+    #[serde(skip)]
+    pub utc_day_open: Option<Price>,
+}
+
+impl TickerStats {
+    /// Change since 00:00 UTC as (price change, percent), when the
+    /// exchange gave the day's open.
+    pub fn utc_day_change(&self) -> Option<(Price, f32)> {
+        let open = self.utc_day_open?;
+        let open_f = open.to_f64();
+        if open_f <= 0.0 {
+            return None;
+        }
+        let change = self.mark_price - open;
+        Some((change, (change.to_f64() / open_f * 100.0) as f32))
+    }
+}
+
+#[cfg(test)]
+mod ticker_stats_tests {
+    use super::*;
+
+    fn stats(last: f64, open: Option<f64>) -> TickerStats {
+        TickerStats {
+            mark_price: Price::from_f64(last),
+            daily_price_chg: 9.9,
+            daily_volume: Qty::from_f64(1.0),
+            utc_day_open: open.map(Price::from_f64),
+        }
+    }
+
+    #[test]
+    fn change_since_utc_open() {
+        // XAU on OKX, 2026-11-27: sodUtc0 3574.4, last 3652.4.
+        let (abs, pct) = stats(3652.4, Some(3574.4)).utc_day_change().unwrap();
+        assert!((abs.to_f64() - 78.0).abs() < 1e-9, "{}", abs.to_f64());
+        assert!((pct - 2.1822).abs() < 1e-3, "{pct}");
+
+        let (abs, pct) = stats(90.0, Some(100.0)).utc_day_change().unwrap();
+        assert!((abs.to_f64() + 10.0).abs() < 1e-9);
+        assert!((pct + 10.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn no_utc_open_no_change() {
+        assert!(stats(1.0, None).utc_day_change().is_none());
+        assert!(stats(1.0, Some(0.0)).utc_day_change().is_none());
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

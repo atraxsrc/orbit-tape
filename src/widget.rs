@@ -23,6 +23,7 @@ pub mod column_drag;
 pub mod decorate;
 pub mod inspector;
 pub mod multi_split;
+pub mod resize_handle;
 pub mod series_editor;
 pub mod study_configurator;
 pub mod toast;

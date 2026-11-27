@@ -14,17 +14,22 @@ use iced::{
 use rustc_hash::FxHashMap;
 
 pub mod tickers_table;
+pub mod watchlist;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     ToggleSidebarMenu(Option<sidebar::Menu>),
     SetSidebarPosition(sidebar::Position),
     TickersTable(self::tickers_table::Message),
+    ToggleWatchlist,
+    Watchlist(self::watchlist::Message),
 }
 
 pub struct Sidebar {
     pub state: data::Sidebar,
     pub tickers_table: TickersTable,
+    /// The watchlist shows its edit controls.
+    watchlist_editing: bool,
 }
 
 pub enum Action {
@@ -34,6 +39,11 @@ pub enum Action {
     ),
     ErrorOccurred(data::InternalError),
     MenuChanged(Option<sidebar::Menu>),
+    /// A ticker clicked in the watchlist, for the panes of this link group.
+    WatchlistSelected(exchange::TickerInfo, Option<data::layout::pane::LinkGroup>),
+    /// The watchlist or the favorites changed: save the state now, so the
+    /// change survives the app being killed instead of closed.
+    Persist,
 }
 
 impl Sidebar {
@@ -51,10 +61,14 @@ impl Sidebar {
                 TickersTable::new(handles, metadata)
             };
 
+        let mut state = sidebar_state.clone();
+        state.watchlist.sync(&tickers_table.favorited_tickers);
+
         (
             Self {
-                state: sidebar_state.clone(),
+                state,
                 tickers_table,
+                watchlist_editing: false,
             },
             initial_fetch.map(Message::TickersTable),
         )
@@ -70,8 +84,34 @@ impl Sidebar {
             Message::SetSidebarPosition(position) => {
                 self.state.position = position;
             }
+            Message::ToggleWatchlist => {
+                let watchlist = &mut self.state.watchlist;
+                watchlist.open = !watchlist.open;
+                self.watchlist_editing = false;
+                if watchlist.open {
+                    // Fresh prices now rather than at the next 5 minute tick.
+                    return self.update(Message::TickersTable(tickers_table::Message::FetchStats));
+                }
+            }
+            Message::Watchlist(msg) => {
+                let saves_now = msg.saves_now();
+                let leaves_edit_mode =
+                    matches!(msg, watchlist::Message::ToggleEdit) && self.watchlist_editing;
+                let before = self.state.watchlist.clone();
+                let (task, action) = self.update_watchlist(msg);
+                let changed = saves_now && self.state.watchlist != before;
+                if action.is_none() && (changed || leaves_edit_mode) {
+                    return (task, Some(Action::Persist));
+                }
+                return (task, action);
+            }
             Message::TickersTable(msg) => {
                 let action = self.tickers_table.update(msg);
+                // Starring or unstarring in the table changes the watchlist.
+                let changed = self
+                    .state
+                    .watchlist
+                    .sync(&self.tickers_table.favorited_tickers);
 
                 match action {
                     Some(tickers_table::Action::TickerSelected(ticker_info, content)) => {
@@ -89,6 +129,7 @@ impl Sidebar {
                     Some(tickers_table::Action::FocusWidget(id)) => {
                         return (iced::widget::operation::focus(id), None);
                     }
+                    None if changed => return (Task::none(), Some(Action::Persist)),
                     None => {}
                 }
             }
@@ -97,7 +138,76 @@ impl Sidebar {
         (Task::none(), None)
     }
 
-    pub fn view(&self, audio_volume: Option<f32>, unread_alerts: usize) -> Element<'_, Message> {
+    fn update_watchlist(&mut self, message: watchlist::Message) -> (Task<Message>, Option<Action>) {
+        let list = &mut self.state.watchlist;
+        match message {
+            watchlist::Message::Select(ticker) => {
+                if let Some(info) = self.tickers_table.ticker_info(&ticker) {
+                    return (
+                        Task::none(),
+                        Some(Action::WatchlistSelected(info, list.link_group)),
+                    );
+                }
+            }
+            watchlist::Message::ToggleSection(index) => {
+                list.toggle_collapsed(index);
+            }
+            watchlist::Message::ToggleEdit => {
+                self.watchlist_editing = !self.watchlist_editing;
+            }
+            watchlist::Message::MoveTicker(ticker, direction) => {
+                list.move_ticker(ticker, direction);
+            }
+            watchlist::Message::MoveSection(index, direction) => {
+                list.move_section(index, direction);
+            }
+            watchlist::Message::RenameSection(index, name) => {
+                list.rename_section(index, name);
+            }
+            watchlist::Message::AddSection => list.add_section(),
+            watchlist::Message::SetLinkGroup(group) => list.link_group = group,
+            watchlist::Message::SortBy(column) => list.cycle_sort(column),
+            watchlist::Message::DragSection(crate::widget::column_drag::DragEvent::Dropped {
+                index,
+                target_index,
+            }) => {
+                list.drop_section(index, target_index);
+            }
+            watchlist::Message::DragSection(_) => {}
+            watchlist::Message::SetSectionColor(index, color) => {
+                list.set_section_color(index, color);
+            }
+            watchlist::Message::ResizeColumn(index, dx) => {
+                list.resize_column(index, dx);
+            }
+            watchlist::Message::Resize(dx) => {
+                // The handle is on the panel's outer edge.
+                let dx = match self.state.position {
+                    sidebar::Position::Left => dx,
+                    sidebar::Position::Right => -dx,
+                };
+                list.resize(dx);
+            }
+            watchlist::Message::RemoveSection(index) => {
+                list.remove_section(index);
+            }
+            watchlist::Message::Unstar(ticker) => {
+                if self.tickers_table.favorited_tickers.contains(&ticker) {
+                    return self.update(Message::TickersTable(
+                        tickers_table::Message::FavoriteTicker(ticker),
+                    ));
+                }
+            }
+        }
+        (Task::none(), None)
+    }
+
+    pub fn view(
+        &self,
+        audio_volume: Option<f32>,
+        unread_alerts: usize,
+        accents: crate::theme::ThemeAccents,
+    ) -> Element<'_, Message> {
         let state = &self.state;
 
         let tooltip_position = if state.position == sidebar::Position::Left {
@@ -121,16 +231,39 @@ impl Sidebar {
             column![]
         };
 
+        let watchlist: Element<'_, Message> = if state.watchlist.open {
+            let panel = watchlist::view(
+                &state.watchlist,
+                &self.tickers_table,
+                self.watchlist_editing,
+                accents,
+            )
+            .map(Message::Watchlist);
+            let handle = crate::widget::resize_handle::resize_handle(|dx| {
+                Message::Watchlist(watchlist::Message::Resize(dx))
+            });
+            // The handle sits on the edge away from the nav bar.
+            match state.position {
+                sidebar::Position::Left => row![panel, handle].spacing(2).into(),
+                sidebar::Position::Right => row![handle, panel].spacing(2).into(),
+            }
+        } else {
+            column![].into()
+        };
+        let any_open = is_table_open || state.watchlist.open;
+
         match state.position {
-            sidebar::Position::Left => row![nav_buttons, tickers_table],
-            sidebar::Position::Right => row![tickers_table, nav_buttons],
+            sidebar::Position::Left => row![nav_buttons, tickers_table, watchlist],
+            sidebar::Position::Right => row![watchlist, tickers_table, nav_buttons],
         }
-        .spacing(if is_table_open { 8 } else { 4 })
+        .spacing(if any_open { 8 } else { 4 })
         .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        self.tickers_table.subscription().map(Message::TickersTable)
+        self.tickers_table
+            .subscription(self.state.watchlist.open)
+            .map(Message::TickersTable)
     }
 
     fn nav_buttons(
@@ -213,8 +346,22 @@ impl Sidebar {
             )
         };
 
+        let watchlist_button = {
+            let is_open = self.state.watchlist.open;
+            button_with_tooltip(
+                icon_text(Icon::StarFilled, 14)
+                    .width(24)
+                    .align_x(Alignment::Center),
+                Message::ToggleWatchlist,
+                Some("Watchlist"),
+                tooltip_position,
+                move |theme, status| crate::style::button::transparent(theme, status, is_open),
+            )
+        };
+
         column![
             ticker_search_button,
+            watchlist_button,
             layout_modal_button,
             audio_btn,
             alerts_btn,

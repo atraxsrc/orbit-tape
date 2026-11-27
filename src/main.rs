@@ -814,8 +814,40 @@ impl OrbitTape {
 
                         return self.map_dashboard_task(dashboard_task, None);
                     }
+                    Some(screen::sidebar::Action::WatchlistSelected(ticker_info, group)) => {
+                        let main_window_id = self.main_window.id;
+                        let data_sources = Arc::clone(&self.data_sources);
+                        if self.layout_manager.active_layout_id().is_none() {
+                            return task.map(Message::Sidebar);
+                        }
+
+                        // The watchlist's link group first; with no pane in
+                        // it, the focused pane as the ticker list does.
+                        let dashboard = self.active_dashboard_mut();
+                        let dashboard_task = group
+                            .and_then(|group| {
+                                dashboard.switch_tickers_in_link_group(
+                                    &data_sources,
+                                    main_window_id,
+                                    group,
+                                    ticker_info,
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                dashboard.switch_tickers_in_group(
+                                    &data_sources,
+                                    main_window_id,
+                                    ticker_info,
+                                )
+                            });
+
+                        return self.map_dashboard_task(dashboard_task, None);
+                    }
                     Some(screen::sidebar::Action::ErrorOccurred(err)) => {
                         self.notifications.push(Toast::error(err.to_string()));
+                    }
+                    Some(screen::sidebar::Action::Persist) => {
+                        return Task::batch([task.map(Message::Sidebar), self.save_now()]);
                     }
                     None => {}
                 }
@@ -1117,7 +1149,11 @@ impl OrbitTape {
         let content = if id == self.main_window.id {
             let sidebar_view = self
                 .sidebar
-                .view(self.audio_stream.volume(), self.alert_history.unread())
+                .view(
+                    self.audio_stream.volume(),
+                    self.alert_history.unread(),
+                    self.theme.accents(),
+                )
                 .map(Message::Sidebar);
             let dashboard_view = dashboard
                 .view(

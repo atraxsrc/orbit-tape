@@ -57,6 +57,13 @@
   </supports>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.13.3" date="2026-11-27">
+      <description>
+        <p>A watchlist panel with sections, change since 00:00 UTC, sorting
+        and resizable columns, and clicks that load a link group. Deleting
+        drawings keeps price alert lines.</p>
+      </description>
+    </release>
     <release version="0.13.2" date="2026-11-27">
       <description>
         <p>Last-value labels for indicator lines on the price axis, headed

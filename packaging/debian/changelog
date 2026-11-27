@@ -1,3 +1,16 @@
+orbit-tape (0.13.3-1) unstable; urgency=medium
+
+  * Watchlist panel (star button in the sidebar): the favorites in
+    sections that can be renamed, colored, collapsed, reordered and
+    dragged by their title. Last, Chg and Chg% since 00:00 UTC, sortable
+    and resizable columns, a resizable panel, and a click loads the
+    ticker into a chosen link group.
+  * Watchlist and favorite changes are saved right away.
+  * Deleting drawings keeps price alert lines; an alert line is removed
+    with "Remove alert".
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Fri, 27 Nov 2026 16:00:00 +0100
+
 orbit-tape (0.13.2-1) unstable; urgency=medium
 
   * Indicator lines show their last value on the price axis, on the

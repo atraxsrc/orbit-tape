@@ -131,6 +131,13 @@ pub(super) async fn fetch_ticker_metadata(
     Ok(map)
 }
 
+/// The price at 00:00 UTC today from an OKX ticker (`sodUtc0`).
+fn utc_day_open(item: &Value) -> Option<Price> {
+    serde_util::value_as_f64(&item["sodUtc0"])
+        .filter(|open| *open > 0.0)
+        .map(Price::from_f64)
+}
+
 pub(super) async fn fetch_ticker_stats(
     hub: &mut HttpHub<OkexLimiter>,
     markets: &[MarketKind],
@@ -187,6 +194,7 @@ pub(super) async fn fetch_ticker_stats(
                     mark_price: Price::from_f64(last_price),
                     daily_price_chg,
                     daily_volume: Qty::from_f64(vol24h),
+                    utc_day_open: utc_day_open(item),
                 },
             );
         }
@@ -254,6 +262,7 @@ pub(super) async fn fetch_ticker_stats(
                     mark_price: Price::from_f64(last_price),
                     daily_price_chg,
                     daily_volume: Qty::from_f64(vol24h * last_price),
+                    utc_day_open: utc_day_open(item),
                 },
             );
         }
