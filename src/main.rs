@@ -7,6 +7,7 @@ mod alert_engine;
 mod alerts;
 mod audio;
 mod blur;
+mod cli;
 mod connector;
 mod daily_report;
 mod deferred;
@@ -59,12 +60,18 @@ use std::sync::Arc;
 fn main() {
     // Headless subcommands: no window, no logger, no data migration.
     let arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    match arguments.first().map(String::as_str) {
-        Some("scan") => std::process::exit(scan::run(&arguments[1..])),
-        Some("mcp") => std::process::exit(mcp::run(&arguments[1..])),
-        Some("watch") => std::process::exit(watch::run(&arguments[1..])),
-        Some("report") => std::process::exit(daily_report::run(&arguments[1..])),
-        _ => {}
+    let launch = cli::parse(&arguments);
+    if let Some(code) = cli::handle_simple(&launch) {
+        std::process::exit(code);
+    }
+    if let cli::Launch::Command(command, rest) = launch {
+        let code = match command {
+            "scan" => scan::run(rest),
+            "mcp" => mcp::run(rest),
+            "watch" => watch::run(rest),
+            _ => daily_report::run(rest),
+        };
+        std::process::exit(code);
     }
 
     logger::install_panic_hook();
