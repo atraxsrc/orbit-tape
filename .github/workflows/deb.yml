@@ -43,6 +43,10 @@ jobs:
                   echo "version=$version" >> "$GITHUB_OUTPUT"
 
             - name: Build the .deb
+              env:
+                  # build.rs: with HEAD on the version tag, the app shows
+                  # v<version> instead of v<version>-dev (<sha>).
+                  ORBIT_TAPE_OFFICIAL_RELEASE: "1"
               run: bash scripts/package-deb.sh --output "target/debian/orbit-tape_${{ steps.version.outputs.version }}_amd64.deb"
 
             - name: Checksums

@@ -6,6 +6,7 @@ fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/refs");
     println!("cargo:rerun-if-changed=.git/packed-refs");
+    println!("cargo:rerun-if-env-changed=ORBIT_TAPE_OFFICIAL_RELEASE");
 
     let Some(git_sha) = git_output(&["rev-parse", "--short=7", "HEAD"]) else {
         return;
@@ -36,10 +37,11 @@ fn is_official_release_build() -> bool {
         return false;
     }
 
+    // deb.yml, run by a pushed version tag.
     let workflow = env::var("GITHUB_WORKFLOW").unwrap_or_default();
-    let event = env::var("GITHUB_EVENT_NAME").unwrap_or_default();
+    let ref_type = env::var("GITHUB_REF_TYPE").unwrap_or_default();
 
-    workflow == "Release" && event == "workflow_dispatch"
+    workflow == "Debian package" && ref_type == "tag"
 }
 
 fn env_var_is_truthy(name: &str) -> bool {

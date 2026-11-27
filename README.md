@@ -182,6 +182,10 @@ cargo build --release --locked
 ./target/release/orbit-tape
 ```
 
+`orbit-tape --help` lists the commands (`scan`, `watch`, `mcp`, `report`) and
+options, and `orbit-tape --version` prints the version. Each command has its
+own `--help`.
+
 `rust-toolchain.toml` pins the Rust version; rustup installs it on the first
 build. To build the `.deb` yourself: `scripts/package-deb.sh` (installs
 `cargo-deb` if needed and writes `target/debian/orbit-tape_<version>-1_amd64.deb`).
