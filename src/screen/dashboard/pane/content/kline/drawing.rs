@@ -315,6 +315,18 @@ impl DrawingState {
         self.record_update(update, before)
     }
 
+    /// Deletes one price alert line and so its saved alert. The drawing
+    /// delete actions leave alert lines alone.
+    pub(super) fn remove_alert_line(&mut self, id: DrawingId) -> DrawingUpdate {
+        let before = self.tools.edit_state();
+        let update = if self.tools.remove_alert_line(id) {
+            DrawingUpdate::AtomicEdit
+        } else {
+            DrawingUpdate::None
+        };
+        self.record_update(update, before)
+    }
+
     /// Deletes every unlocked line that carries a price alert.
     pub(super) fn remove_alert_lines(&mut self) -> DrawingUpdate {
         let before = self.tools.edit_state();
@@ -503,6 +515,21 @@ where
     } else {
         SharedValue::Mixed(representative)
     }
+}
+
+/// Tooltip on an alert line's disabled delete button in the drawings list.
+const ALERT_LINE_DELETE_HINT: &str =
+    "An alert: remove it with right click > Remove alert, or in the alerts panel";
+
+/// The drawings list name of a drawing; price alert lines read apart from
+/// plain lines.
+fn object_label(drawing: &DrawingEntity) -> String {
+    let title = match &drawing.alert {
+        Some(alert) if alert.armed => "Price alert",
+        Some(_) => "Price alert (fired)",
+        None => drawing.object.title(),
+    };
+    format!("{title} #{}", drawing.id.0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1232,7 +1259,13 @@ impl DrawingTools {
 
         controls = controls.push(drawing_toolbar_divider());
 
-        if selection.capabilities.has_editable() {
+        // Delete removes the selected drawings but not alert lines; with only
+        // alert lines selected there is nothing for it to do.
+        if selection
+            .selected
+            .iter()
+            .any(|drawing| !drawing.locked && Self::is_plain_drawing(drawing))
+        {
             controls = controls.push(
                 iced::widget::button(style::icon_text(style::Icon::TrashBin, 12))
                     .style(|theme, status| style::button::cancel(theme, status, false))
@@ -1263,7 +1296,7 @@ impl DrawingTools {
         Message: Clone + 'a + 'static,
     {
         let selected = self.selected_drawings.contains(&drawing.id);
-        let object_label = format!("{} #{}", drawing.object.title(), drawing.id.0);
+        let object_label = object_label(drawing);
 
         let toolbar_button = iced::widget::button(
             iced::widget::row![
@@ -1284,12 +1317,21 @@ impl DrawingTools {
             .style(|theme, status| style::button::cancel(theme, status, false))
             .padding([2, 6]);
 
-        let remove_button = if drawing.locked {
-            remove_button
+        let remove_button: Element<'a, Message> = if drawing.alert.is_some() {
+            // Deleting the line would delete the saved alert.
+            tooltip(
+                remove_button,
+                Some(ALERT_LINE_DELETE_HINT),
+                TooltipPosition::Left,
+            )
+        } else if drawing.locked {
+            remove_button.into()
         } else {
-            remove_button.on_press(on_sidebar_message(DrawingMessage::DeleteDrawing(
-                drawing.id,
-            )))
+            remove_button
+                .on_press(on_sidebar_message(DrawingMessage::DeleteDrawing(
+                    drawing.id,
+                )))
+                .into()
         };
 
         iced::widget::row![toolbar_button, remove_button]
@@ -1367,7 +1409,8 @@ impl DrawingTools {
                 .style(|theme, status| style::button::cancel(theme, status, false))
                 .width(iced::Length::Fill);
 
-        if !self.drawings.is_empty() {
+        // "Remove All" keeps the alert lines, so it shows only with others.
+        if self.drawings.iter().any(Self::is_plain_drawing) {
             content = content.push(row![
                 iced::widget::space::horizontal(),
                 remove_all_button.on_press(on_sidebar_message(DrawingMessage::DeleteAllDrawings))
@@ -1763,8 +1806,29 @@ impl DrawingTools {
         object_changed || default_changed
     }
 
+    /// Deletes a drawing. A line with a price alert stays: deleting it
+    /// would delete the saved alert, so that takes an alert action
+    /// ([`Self::remove_alert_line`]).
     fn remove_drawing(&mut self, id: DrawingId) -> bool {
         let Some(index) = self.drawings.iter().position(|drawing| drawing.id == id) else {
+            return false;
+        };
+
+        if self.drawings[index].locked || self.drawings[index].alert.is_some() {
+            return false;
+        }
+
+        self.remove_drawing_at(index)
+    }
+
+    /// Deletes a price alert line, and with it the saved alert ("Remove
+    /// alert" in the chart menu).
+    fn remove_alert_line(&mut self, id: DrawingId) -> bool {
+        let Some(index) = self
+            .drawings
+            .iter()
+            .position(|drawing| drawing.id == id && drawing.alert.is_some())
+        else {
             return false;
         };
 
@@ -1772,7 +1836,11 @@ impl DrawingTools {
             return false;
         }
 
-        self.drawings.remove(index);
+        self.remove_drawing_at(index)
+    }
+
+    fn remove_drawing_at(&mut self, index: usize) -> bool {
+        let id = self.drawings.remove(index).id;
 
         self.selected_drawings.retain(|selected| *selected != id);
 
@@ -1784,15 +1852,23 @@ impl DrawingTools {
         true
     }
 
+    /// A drawing that the drawing delete actions remove: anything but a
+    /// price alert line.
+    fn is_plain_drawing(drawing: &DrawingEntity) -> bool {
+        drawing.alert.is_none()
+    }
+
+    /// Deletes every drawing but the price alert lines.
     fn remove_all_drawings(&mut self) -> bool {
-        if self.drawings.is_empty()
+        if !self.drawings.iter().any(Self::is_plain_drawing)
             && matches!(self.interaction, DrawingInteraction::Idle)
             && self.selected_drawings.is_empty()
         {
             return false;
         }
 
-        self.drawings.clear();
+        self.drawings
+            .retain(|drawing| !Self::is_plain_drawing(drawing));
         self.selected_drawings.clear();
         self.interaction = DrawingInteraction::Idle;
         true
@@ -2517,18 +2593,134 @@ mod price_alert_tests {
         assert_eq!(state.tools.time_drawings()[0].alert, None);
     }
 
+    /// An alert line and a plain line, in that order.
+    fn alert_and_plain_line(state: &mut DrawingState) -> (DrawingId, DrawingId) {
+        let settings = DrawingSettings::default();
+        state.add_price_alert(anchor(), &settings);
+        state.add_price_alert(anchor(), &settings);
+        let alert = state.tools.active_drawings()[0].id;
+        let plain = state.tools.active_drawings()[1].id;
+        state.set_alert(plain, false);
+        (alert, plain)
+    }
+
+    fn ids(state: &DrawingState) -> Vec<DrawingId> {
+        state
+            .tools
+            .active_drawings()
+            .iter()
+            .map(|drawing| drawing.id)
+            .collect()
+    }
+
     #[test]
-    fn deleting_alert_line_removes_it() {
+    fn deleting_a_drawing_keeps_alert_lines() {
         let mut state = DrawingState::default();
         let mut settings = DrawingSettings::default();
-        state.add_price_alert(anchor(), &settings);
-        let id = state.tools.active_drawings()[0].id;
+        let (alert, plain) = alert_and_plain_line(&mut state);
+
         let update = state.update(
-            Event::Tools(DrawingMessage::DeleteDrawing(id)),
+            Event::Tools(DrawingMessage::DeleteDrawing(alert)),
+            &mut settings,
+        );
+        assert!(matches!(update, DrawingUpdate::None), "{update:?}");
+        assert_eq!(ids(&state), [alert, plain]);
+
+        let update = state.update(
+            Event::Tools(DrawingMessage::DeleteDrawing(plain)),
             &mut settings,
         );
         assert!(matches!(update, DrawingUpdate::AtomicEdit), "{update:?}");
-        assert!(state.tools.time_drawings().is_empty());
+        assert_eq!(ids(&state), [alert]);
+    }
+
+    #[test]
+    fn delete_key_keeps_selected_alert_lines() {
+        let mut state = DrawingState::default();
+        let mut settings = DrawingSettings::default();
+        let (alert, plain) = alert_and_plain_line(&mut state);
+        state.tools.select_drawings(vec![alert, plain]);
+
+        let update = state.update(
+            Event::Tools(DrawingMessage::DeleteSelectedDrawing),
+            &mut settings,
+        );
+        assert!(matches!(update, DrawingUpdate::AtomicEdit), "{update:?}");
+        assert_eq!(ids(&state), [alert]);
+        assert_eq!(state.tools.selected_drawings, [alert]);
+    }
+
+    #[test]
+    fn remove_all_drawings_keeps_alert_lines() {
+        let mut state = DrawingState::default();
+        let mut settings = DrawingSettings::default();
+        let (alert, _) = alert_and_plain_line(&mut state);
+
+        let update = state.update(
+            Event::Tools(DrawingMessage::DeleteAllDrawings),
+            &mut settings,
+        );
+        assert!(matches!(update, DrawingUpdate::AtomicEdit), "{update:?}");
+        assert_eq!(ids(&state), [alert]);
+
+        // Only alert lines left: nothing to remove.
+        let update = state.update(
+            Event::Tools(DrawingMessage::DeleteAllDrawings),
+            &mut settings,
+        );
+        assert!(matches!(update, DrawingUpdate::None), "{update:?}");
+        assert_eq!(ids(&state), [alert]);
+    }
+
+    #[test]
+    fn remove_alert_deletes_only_alert_lines() {
+        let mut state = DrawingState::default();
+        let (alert, plain) = alert_and_plain_line(&mut state);
+
+        assert!(matches!(
+            state.remove_alert_line(plain),
+            DrawingUpdate::None
+        ));
+        assert!(matches!(
+            state.remove_alert_line(alert),
+            DrawingUpdate::AtomicEdit
+        ));
+        assert_eq!(ids(&state), [plain]);
+    }
+
+    #[test]
+    fn alert_lines_have_their_own_label() {
+        let mut state = DrawingState::default();
+        let (alert, plain) = alert_and_plain_line(&mut state);
+        let label = |state: &DrawingState, id: DrawingId| {
+            object_label(
+                state
+                    .tools
+                    .active_drawings()
+                    .iter()
+                    .find(|drawing| drawing.id == id)
+                    .unwrap(),
+            )
+        };
+
+        assert_eq!(label(&state, alert), format!("Price alert #{}", alert.0));
+        assert_eq!(
+            label(&state, plain),
+            format!("Horizontal Line #{}", plain.0)
+        );
+
+        // Fired: the engine turned a `once` alert off.
+        let fired = state
+            .tools
+            .drawings
+            .iter_mut()
+            .find(|d| d.id == alert)
+            .unwrap();
+        fired.alert.as_mut().unwrap().armed = false;
+        assert_eq!(
+            label(&state, alert),
+            format!("Price alert (fired) #{}", alert.0)
+        );
     }
 
     #[test]
