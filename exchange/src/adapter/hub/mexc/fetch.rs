@@ -295,6 +295,7 @@ pub(super) async fn fetch_ticker_stats(
                 mark_price: Price::from_f64(last_price),
                 daily_price_chg,
                 daily_volume: Qty::from_f64(volume_in_usd),
+                utc_day_open: None,
             };
 
             ticker_prices_map.insert(Ticker::new(symbol, exchange), ticker_stats);
@@ -359,6 +360,7 @@ pub(super) async fn fetch_ticker_stats(
                 mark_price: Price::from_f64(last_price),
                 daily_price_chg,
                 daily_volume: Qty::from_f64(volume_in_usd),
+                utc_day_open: None,
             };
 
             ticker_prices_map.insert(ticker, ticker_stats);

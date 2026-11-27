@@ -17,7 +17,11 @@ use crate::{
 use data::{
     UserTimezone,
     chart::kline::{ChartSettings, indicators::manifest},
-    layout::{WindowSpec, pane::ContentKind, presets},
+    layout::{
+        WindowSpec,
+        pane::{ContentKind, LinkGroup},
+        presets,
+    },
     stream::PersistStreamKind,
 };
 use exchange::{
@@ -779,6 +783,42 @@ impl Dashboard {
         )
     }
 
+    /// Loads the ticker into every pane of `group`, in all windows. `None`
+    /// when no pane is in the group.
+    pub fn switch_tickers_in_link_group(
+        &mut self,
+        data_sources: &DataSources,
+        main_window: window::Id,
+        group: LinkGroup,
+        ticker_info: TickerInfo,
+    ) -> Option<Task<Message>> {
+        let pane_infos: Vec<(window::Id, pane_grid::Pane, ContentKind)> = self
+            .iter_all_panes_mut(main_window)
+            .filter_map(|(window, pane, state)| {
+                (state.link_group == Some(group)).then(|| (window, pane, state.content.kind()))
+            })
+            .collect();
+        if pane_infos.is_empty() {
+            return None;
+        }
+
+        let tasks: Vec<Task<Message>> = pane_infos
+            .iter()
+            .map(|(window, pane, content_kind)| {
+                self.init_pane(
+                    data_sources,
+                    main_window,
+                    *window,
+                    *pane,
+                    ticker_info,
+                    *content_kind,
+                )
+            })
+            .collect();
+
+        Some(Task::batch(tasks))
+    }
+
     pub fn switch_tickers_in_group(
         &mut self,
         data_sources: &DataSources,
@@ -800,32 +840,8 @@ impl Dashboard {
         });
 
         if let Some(group) = link_group {
-            let pane_infos: Vec<(window::Id, pane_grid::Pane, ContentKind)> = self
-                .iter_all_panes_mut(main_window)
-                .filter_map(|(window, pane, state)| {
-                    if state.link_group == Some(group) {
-                        Some((window, pane, state.content.kind()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            let tasks: Vec<Task<Message>> = pane_infos
-                .iter()
-                .map(|(window, pane, content_kind)| {
-                    self.init_pane(
-                        data_sources,
-                        main_window,
-                        *window,
-                        *pane,
-                        ticker_info,
-                        *content_kind,
-                    )
-                })
-                .collect();
-
-            Task::batch(tasks)
+            self.switch_tickers_in_link_group(data_sources, main_window, group, ticker_info)
+                .unwrap_or_else(Task::none)
         } else if let Some((window, pane)) = self.focus {
             if let Some(state) = self.get_mut_pane(main_window, window, pane) {
                 let content_kind = state.content.kind();

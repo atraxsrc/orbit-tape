@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::tickers_table;
+use crate::watchlist::Watchlist;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
@@ -10,6 +11,8 @@ pub struct Sidebar {
     pub active_menu: Option<Menu>,
     #[serde(default)]
     pub tickers_table: Option<tickers_table::Settings>,
+    #[serde(default)]
+    pub watchlist: Watchlist,
 }
 
 impl Sidebar {
@@ -36,6 +39,7 @@ impl Default for Sidebar {
             position: Position::Left,
             active_menu: None,
             tickers_table: None,
+            watchlist: Watchlist::default(),
         }
     }
 }

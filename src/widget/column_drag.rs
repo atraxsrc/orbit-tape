@@ -52,6 +52,9 @@ pub struct Column<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     clip: bool,
     children: Vec<Element<'a, Message, Theme, Renderer>>,
     on_drag: Option<Box<dyn Fn(DragEvent) -> Message + 'a>>,
+    /// Grab items by their top `height` px, full width (a title bar),
+    /// instead of the strip down their left edge.
+    grab_top: Option<f32>,
 }
 
 impl<'a, Message, Theme, Renderer> Column<'a, Message, Theme, Renderer>
@@ -95,6 +98,39 @@ where
             clip: false,
             children,
             on_drag: None,
+            grab_top: None,
+        }
+    }
+
+    /// Items are picked up by their top `height` pixels, across the full
+    /// width, instead of the left strip.
+    pub fn grab_top(mut self, height: f32) -> Self {
+        self.grab_top = Some(height);
+        self
+    }
+
+    /// Whether `point` is on a grab area: the left strip of the column, or
+    /// with [`Self::grab_top`] the top of an item.
+    fn on_grab_area(&self, layout: Layout<'_>, point: Point) -> bool {
+        match self.grab_top {
+            None => {
+                let bounds = layout.bounds();
+                Rectangle {
+                    x: bounds.x,
+                    y: bounds.y,
+                    width: DRAG_HANDLE_WIDTH,
+                    height: bounds.height,
+                }
+                .contains(point)
+            }
+            Some(height) => layout.children().any(|child| {
+                let child = child.bounds();
+                Rectangle {
+                    height: height.min(child.height),
+                    ..child
+                }
+                .contains(point)
+            }),
         }
     }
 
@@ -337,17 +373,10 @@ where
                 let bounds = layout.bounds();
 
                 if let Some(cursor_position) = cursor.position_over(bounds) {
-                    let drag_handle_bounds = Rectangle {
-                        x: bounds.x,
-                        y: bounds.y,
-                        width: DRAG_HANDLE_WIDTH,
-                        height: bounds.height,
-                    };
+                    let on_grab_area = self.on_grab_area(layout, cursor_position);
 
                     for (index, child_layout) in layout.children().enumerate() {
-                        if cursor.is_over(drag_handle_bounds)
-                            && child_layout.bounds().contains(cursor_position)
-                        {
+                        if on_grab_area && child_layout.bounds().contains(cursor_position) {
                             *action = Action::Picking {
                                 index,
                                 origin: cursor_position,
@@ -445,15 +474,10 @@ where
                 return mouse::Interaction::Grabbing;
             }
             _ => {
-                let bounds = layout.bounds();
-                let drag_handle_bounds = Rectangle {
-                    x: bounds.x,
-                    y: bounds.y,
-                    width: DRAG_HANDLE_WIDTH,
-                    height: bounds.height,
-                };
-
-                if cursor.position_in(drag_handle_bounds).is_some() {
+                if cursor
+                    .position_over(layout.bounds())
+                    .is_some_and(|point| self.on_grab_area(layout, point))
+                {
                     return mouse::Interaction::Grab;
                 }
             }

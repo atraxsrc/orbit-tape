@@ -337,6 +337,7 @@ pub(super) async fn fetch_ticker_stats(
             mark_price: Price::from_f64(last_price),
             daily_price_chg: price_change_pt,
             daily_volume,
+            utc_day_open: None,
         };
 
         ticker_price_map.insert(ticker, ticker_stats);
