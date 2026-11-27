@@ -731,7 +731,7 @@ fn indicator_settings_content<'a>(
             if let Some(index) = grouped_sources.iter().position(|(name, _)| *name == group) {
                 sections.extend(grouped_sources.remove(index).1);
             }
-            inputs.push(inspector::modal_container(column(sections).spacing(12)));
+            inputs.push(indicator_group_box(group, sections));
         };
     let mut grouped_settings: Option<(String, Vec<Element<'a, Message>>)> = None;
 
@@ -772,8 +772,8 @@ fn indicator_settings_content<'a>(
     if let Some((active_group, sections)) = grouped_settings {
         flush_group(&mut inputs, active_group, sections);
     }
-    for (_, sections) in grouped_sources {
-        inputs.push(inspector::modal_container(column(sections).spacing(12)));
+    for (group, sections) in grouped_sources {
+        inputs.push(indicator_group_box(group, sections));
     }
 
     if inputs.is_empty() {
@@ -785,6 +785,15 @@ fn indicator_settings_content<'a>(
                 .into(),
         )
     }
+}
+
+/// One settings group's box, headed by the group name from the script.
+fn indicator_group_box<'a>(
+    group: String,
+    sections: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let heading: Element<'a, Message> = crate::widget::text::section(group).into();
+    inspector::modal_container(column(std::iter::once(heading).chain(sections)).spacing(12))
 }
 
 fn indicator_source_view<'a>(
