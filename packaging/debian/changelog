@@ -1,3 +1,15 @@
+orbit-tape (0.13.2-1) unstable; urgency=medium
+
+  * Indicator lines show their last value on the price axis, on the
+    crosshair badge background in the line's color. Each indicator's Style
+    tab has "Labels on price scale", on by default.
+  * Indicator settings groups are headed with their names. input.source
+    takes group, and SMA x4 (1.1) shows Show, Length and Source in each
+    SMA group.
+  * The Saved alerts list shows when each alert fired.
+
+ -- atraxsrc <92285717+atraxsrc@users.noreply.github.com>  Fri, 27 Nov 2026 14:00:00 +0100
+
 orbit-tape (0.13.1-1) unstable; urgency=medium
 
   * orbit-tape --version (-V) prints the version and --help (-h) lists the
