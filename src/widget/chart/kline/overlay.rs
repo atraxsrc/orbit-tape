@@ -261,7 +261,7 @@ impl OverlayView<'_> {
 
         // Drawn first and outside the filter, so the crosshair and last
         // price badges paint over them instead of hiding them.
-        self.fill_indicator_price_labels(frame, scene, price_labels);
+        self.fill_indicator_price_labels(frame, scene, palette, price_labels);
 
         if scene.interaction.readouts_visible()
             && let Some(cursor) = scene.interaction.cursor
@@ -451,8 +451,12 @@ impl OverlayView<'_> {
         &self,
         frame: &mut PreparedChrome,
         scene: &Scene,
+        palette: &Extended,
         labels: &[IndicatorPriceLabel],
     ) {
+        // Same background as the crosshair badge, so every label looks
+        // alike; the value is written in the line's color.
+        let background = palette.background.strong.color;
         let label_height = TEXT_SIZE + 6.0;
         let mut panels: Vec<usize> = labels.iter().map(|label| label.panel_index).collect();
         panels.sort_unstable();
@@ -487,16 +491,11 @@ impl OverlayView<'_> {
                     label_height,
                     label.text.chars().count() as f32 * CHAR_W,
                 );
-                let text_color = if data::config::theme::is_dark(label.color) {
-                    iced::Color::WHITE
-                } else {
-                    iced::Color::BLACK
-                };
-                frame.fill_rectangle(rect.position(), rect.size(), label.color);
+                frame.fill_rectangle(rect.position(), rect.size(), background);
                 frame.fill_text(canvas::Text {
                     content: label.text.clone(),
                     position: Point::new(rect.x + Y_AXIS_LABEL_LEFT_INSET, center),
-                    color: text_color,
+                    color: label.color,
                     size: TEXT_SIZE.into(),
                     align_x: iced::Alignment::Start.into(),
                     align_y: iced::Alignment::Center.into(),
