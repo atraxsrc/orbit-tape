@@ -81,12 +81,21 @@ fn saved_alert(alert: &StoredAlert) -> Element<'_, Message> {
         Creator::App => "",
         Creator::Claude => "Claude",
     };
-    let state = if alert.is_done() {
-        "fired"
-    } else if alert.enabled {
-        ""
-    } else {
-        "paused"
+    // When it last fired, in local time; every-time alerts keep firing.
+    let fired = alert.fired_at.and_then(|ms| {
+        chrono::DateTime::from_timestamp_millis(ms as i64).map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%d %b %H:%M")
+                .to_string()
+        })
+    });
+    let state = match (alert.is_done(), alert.enabled, fired) {
+        (true, _, Some(time)) => format!("fired {time}"),
+        (true, _, None) => "fired".to_owned(),
+        (false, true, Some(time)) => format!("last fired {time}"),
+        (false, true, None) => String::new(),
+        (false, false, Some(time)) => format!("paused, last fired {time}"),
+        (false, false, None) => "paused".to_owned(),
     };
     let title = row![
         text(format!(
